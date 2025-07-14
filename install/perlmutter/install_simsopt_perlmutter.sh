@@ -31,7 +31,7 @@ source activate "$env_name" || conda activate "$env_name"
 check_success "Failed to activate conda environment $env_name"
 
 # FIRM3D Installation
-cd simsopt || { echo "Error: firm3d directory not found. Exiting."; exit 1; }
+cd firm3d || { echo "Error: firm3d directory not found. Exiting."; exit 1; }
 export CI=True
 env CC=cc CXX=CC pip install -e .
 check_success "Failed to install FIRM3D"

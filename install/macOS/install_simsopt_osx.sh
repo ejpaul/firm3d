@@ -34,7 +34,7 @@ pip install mpi4py
 check_success "Failed to install FIRM3D dependencies"
 
 # FIRM3D Installation
-cd simsopt || { echo "Error: firm3d directory not found. Exiting."; exit 1; }
+cd firm3d || { echo "Error: firm3d directory not found. Exiting."; exit 1; }
 env CC=$(which mpicc) CXX=$(which mpicxx) pip install -e .
 check_success "Failed to install FIRM3D"
 cd ..
