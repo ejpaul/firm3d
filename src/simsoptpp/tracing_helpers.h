@@ -278,8 +278,8 @@ bool check_stopping_criteria(RHS rhs, int iter, vector<array<double, RHS::Size+2
         double zeta = zetas[i];
         double omega = omega_zetas[i];
         double phase_last = zeta_last - omega*t_last;
-        double phase_current = zeta_current - omega*t_current;
-        if((std::floor((phase_last - zeta)/(2*M_PI)) != std::floor((phase_current-zeta)/(2*M_PI)))) { // check whether zeta+k*2pi for some k was crossed
+        double phase_current = zeta_current - omega*t_current;            
+        if((std::floor((phase_last - zeta)/(2*M_PI)) != std::floor((phase_current-zeta)/(2*M_PI))) && (phase_current != zeta) && (phase_last != zeta)) { // check whether zeta+k*2pi for some k was crossed
             int fak = std::round(((phase_last+phase_current)/2-zeta)/(2*M_PI));
             double phase_shift = fak*2*M_PI + zeta;
             assert((phase_last <= phase_shift && phase_shift <= phase_current) || (phase_current <= phase_shift && phase_shift <= phase_last));
@@ -310,7 +310,7 @@ bool check_stopping_criteria(RHS rhs, int iter, vector<array<double, RHS::Size+2
         double omega = omega_thetas[i];
         double phase_last = theta_last - omega*t_last;
         double phase_current = theta_current - omega*t_current;
-        if((std::floor((phase_last - theta)/(2*M_PI)) != std::floor((phase_current-theta)/(2*M_PI)))) { // check whether theta+k*2pi for some k was crossed
+        if((std::floor((phase_last - theta)/(2*M_PI)) != std::floor((phase_current-theta)/(2*M_PI))) && (phase_current != theta) && (phase_last != theta)) { // check whether theta+k*2pi for some k was crossed
             int fak = std::round(((phase_last+phase_current)/2-theta)/(2*M_PI));
             double phase_shift = fak*2*M_PI + theta;
             assert((phase_last <= phase_shift && phase_shift <= phase_current) || (phase_current <= phase_shift && phase_shift <= phase_last));

@@ -9,7 +9,6 @@ from ..field.tracing import (
 )
 from ..field.boozermagneticfield import ShearAlfvenHarmonic, ShearAlfvenWave
 from .._core.util import parallel_loop_bounds
-from ..util.functions import proc0_print
 
 __all__ = [
     "compute_loss_fraction",
@@ -1271,7 +1270,7 @@ class PassingPerturbedPoincare:
 
         res_hit = res_hits[0][0, :]  # Only check the first hit or stopping criterion
 
-        if res_hit[1] == 0:  # Check that the zetas=[0] plane was hit
+        if ((self.helicity_M != 0 and res_hit[1] == 0) or (self.helicity_M == 0 and res_hit[1] == 1)):  # Check that the zetas or thetas plane was hit
             point[0] = res_hit[2]
             point[1] = self.chi(res_hit[3], res_hit[4])
             point[2] = res_hit[5]
