@@ -1025,7 +1025,8 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
         if self.proc0:
             self.asym = self.bx.asym  # Bool for stellarator asymmetry
-            self.psi0 = self.bx.phi[-1] / (2 * np.pi)
+            self.psi0 = -self.bx.phi[-1] / (2 * np.pi) # Sign flip to account for VMEC convention. 
+            # See https://terpconnect.umd.edu/~mattland/assets/notes/vmec_signs.pdf for phiedge definition
             self.nfp = self.bx.nfp
             self.mpol = self.bx.mboz
             self.ntor = self.bx.nboz
