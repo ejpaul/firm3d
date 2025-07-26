@@ -491,7 +491,7 @@ class BoozerMagneticField(sopp.BoozerMagneticField):
         B = self.modB()[:, 0]
         sqrtg = (G + iota * I) * self.psi0 / (B * B)
         assert np.all(detg > 0), "Metric determinant must be positive"
-        assert np.all(sqrtg > 0), "Jacobian must be positive"
+        assert np.all(sqrtg != 0), "Jacobian must be non-zero"
 
         relative_error = np.abs(np.sqrt(detg) - np.abs(sqrtg)) / np.abs(sqrtg)
         max_relative_error_percent = np.max(relative_error) * 100
