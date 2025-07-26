@@ -1,5 +1,5 @@
 import simsoptpp as sopp
-from scipy.interpolate import InterpolatedUnivariateSpline
+from scipy.interpolate import make_interp_spline
 import numpy as np
 from booz_xform import Booz_xform
 from .._core.util import (
@@ -201,24 +201,24 @@ class CovariantBoozerMetric(BoozerMetric):
         -------
         `LinAlgError`: If the matrix inversion fails, due to the matrix being singular.
         """
-        inv_matrices = np.zeros((len(self.ss), 6))
-        for k in range(len(self.ss)):
-            matrix = np.array(
-                [
-                    [self.ss[k], self.st[k], self.sz[k]],
-                    [self.st[k], self.tt[k], self.tz[k]],
-                    [self.sz[k], self.tz[k], self.zz[k]],
-                ]
-            )
-            inv_matrix = np.linalg.inv(matrix)
-            inv_matrices[k] = [  # gss, gst, gsz, gtt, gtz, gzz
-                inv_matrix[0, 0],
-                inv_matrix[0, 1],
-                inv_matrix[0, 2],
-                inv_matrix[1, 1],
-                inv_matrix[1, 2],
-                inv_matrix[2, 2],
-            ]
+        # Vectorized matrix inversion for better performance
+        n = len(self.ss)
+        matrices = np.zeros((n, 3, 3))
+        matrices[:, 0, 0] = self.ss
+        matrices[:, 0, 1] = matrices[:, 1, 0] = self.st
+        matrices[:, 0, 2] = matrices[:, 2, 0] = self.sz
+        matrices[:, 1, 1] = self.tt
+        matrices[:, 1, 2] = matrices[:, 2, 1] = self.tz
+        matrices[:, 2, 2] = self.zz
+        
+        inv_matrices_full = np.linalg.inv(matrices)
+        inv_matrices = np.zeros((n, 6))
+        inv_matrices[:, 0] = inv_matrices_full[:, 0, 0]  # gss
+        inv_matrices[:, 1] = inv_matrices_full[:, 0, 1]  # gst
+        inv_matrices[:, 2] = inv_matrices_full[:, 0, 2]  # gsz
+        inv_matrices[:, 3] = inv_matrices_full[:, 1, 1]  # gtt
+        inv_matrices[:, 4] = inv_matrices_full[:, 1, 2]  # gtz
+        inv_matrices[:, 5] = inv_matrices_full[:, 2, 2]  # gzz
         return ContravariantBoozerMetric(
             inv_matrices[:, 0],
             inv_matrices[:, 1],
@@ -289,24 +289,24 @@ class ContravariantBoozerMetric(BoozerMetric):
         -------
         `LinAlgError`: If the matrix inversion fails, due to the matrix being singular.
         """
-        inv_matrices = np.zeros((len(self.ss), 6))
-        for k in range(len(self.ss)):
-            matrix = np.array(
-                [
-                    [self.ss[k], self.st[k], self.sz[k]],
-                    [self.st[k], self.tt[k], self.tz[k]],
-                    [self.sz[k], self.tz[k], self.zz[k]],
-                ]
-            )
-            inv_matrix = np.linalg.inv(matrix)
-            inv_matrices[k] = [  # gss, gst, gsz, gtt, gtz, gzz
-                inv_matrix[0, 0],
-                inv_matrix[0, 1],
-                inv_matrix[0, 2],
-                inv_matrix[1, 1],
-                inv_matrix[1, 2],
-                inv_matrix[2, 2],
-            ]
+        # Vectorized matrix inversion for better performance
+        n = len(self.ss)
+        matrices = np.zeros((n, 3, 3))
+        matrices[:, 0, 0] = self.ss
+        matrices[:, 0, 1] = matrices[:, 1, 0] = self.st
+        matrices[:, 0, 2] = matrices[:, 2, 0] = self.sz
+        matrices[:, 1, 1] = self.tt
+        matrices[:, 1, 2] = matrices[:, 2, 1] = self.tz
+        matrices[:, 2, 2] = self.zz
+        
+        inv_matrices_full = np.linalg.inv(matrices)
+        inv_matrices = np.zeros((n, 6))
+        inv_matrices[:, 0] = inv_matrices_full[:, 0, 0]  # gss
+        inv_matrices[:, 1] = inv_matrices_full[:, 0, 1]  # gst
+        inv_matrices[:, 2] = inv_matrices_full[:, 0, 2]  # gsz
+        inv_matrices[:, 3] = inv_matrices_full[:, 1, 1]  # gtt
+        inv_matrices[:, 4] = inv_matrices_full[:, 1, 2]  # gtz
+        inv_matrices[:, 5] = inv_matrices_full[:, 2, 2]  # gzz
         return CovariantBoozerMetric(
             inv_matrices[:, 0],
             inv_matrices[:, 1],
@@ -373,32 +373,28 @@ class BoozerMagneticField(sopp.BoozerMagneticField):
         sopp.BoozerMagneticField.__init__(self, psi0, field_type)
 
     def _modB_derivs_impl(self, modB_derivs):
-        self._dmodBds_impl(np.reshape(modB_derivs[:, 0], (len(modB_derivs[:, 0]), 1)))
-        self._dmodBdtheta_impl(
-            np.reshape(modB_derivs[:, 1], (len(modB_derivs[:, 0]), 1))
-        )
-        self._dmodBdzeta_impl(
-            np.reshape(modB_derivs[:, 2], (len(modB_derivs[:, 0]), 1))
-        )
+        self._dmodBds_impl(modB_derivs[:, 0:1])
+        self._dmodBdtheta_impl(modB_derivs[:, 1:2])
+        self._dmodBdzeta_impl(modB_derivs[:, 2:3])
 
     def _K_derivs_impl(self, K_derivs):
-        self._dKdtheta_impl(np.reshape(K_derivs[:, 0], (len(K_derivs[:, 0]), 1)))
-        self._dKdzeta_impl(np.reshape(K_derivs[:, 1], (len(K_derivs[:, 0]), 1)))
+        self._dKdtheta_impl(K_derivs[:, 0:1])
+        self._dKdzeta_impl(K_derivs[:, 1:2])
 
     def _nu_derivs_impl(self, nu_derivs):
-        self._dnuds_impl(np.reshape(nu_derivs[:, 0], (len(nu_derivs[:, 0]), 1)))
-        self._dnudtheta_impl(np.reshape(nu_derivs[:, 1], (len(nu_derivs[:, 0]), 1)))
-        self._dnudzeta_impl(np.reshape(nu_derivs[:, 2], (len(nu_derivs[:, 0]), 1)))
+        self._dnuds_impl(nu_derivs[:, 0:1])
+        self._dnudtheta_impl(nu_derivs[:, 1:2])
+        self._dnudzeta_impl(nu_derivs[:, 2:3])
 
     def _R_derivs_impl(self, R_derivs):
-        self._dRds_impl(np.reshape(R_derivs[:, 0], (len(R_derivs[:, 0]), 1)))
-        self._dRdtheta_impl(np.reshape(R_derivs[:, 1], (len(R_derivs[:, 0]), 1)))
-        self._dRdzeta_impl(np.reshape(R_derivs[:, 2], (len(R_derivs[:, 0]), 1)))
+        self._dRds_impl(R_derivs[:, 0:1])
+        self._dRdtheta_impl(R_derivs[:, 1:2])
+        self._dRdzeta_impl(R_derivs[:, 2:3])
 
     def _Z_derivs_impl(self, Z_derivs):
-        self._dZds_impl(np.reshape(Z_derivs[:, 0], (len(Z_derivs[:, 0]), 1)))
-        self._dZdtheta_impl(np.reshape(Z_derivs[:, 1], (len(Z_derivs[:, 0]), 1)))
-        self._dZdzeta_impl(np.reshape(Z_derivs[:, 2], (len(Z_derivs[:, 0]), 1)))
+        self._dZds_impl(Z_derivs[:, 0:1])
+        self._dZdtheta_impl(Z_derivs[:, 1:2])
+        self._dZdzeta_impl(Z_derivs[:, 2:3])
 
     def get_covariant_metric(self):
         r"""
@@ -858,7 +854,7 @@ class BoozerAnalytic(BoozerMagneticField):
 class BoozerRadialInterpolant(BoozerMagneticField):
     r"""
      The magnetic field can be computed at any point in Boozer coordinates using radial spline interpolation
-     (``scipy.interpolate.InterpolatedUnivariateSpline``) and an inverse Fourier transform in the two angles.
+     (``scipy.interpolate.make_interp_spline``) and an inverse Fourier transform in the two angles.
      If given a `VMEC` output file, performs a Boozer coordinate transformation using ``BOOZXFORM``.
      If given a ``BOOZXFORM`` output file, the Boozer transformation must be performed with all surfaces on the VMEC
      half grid, and with `phip`, `chi`, `pres`, and `phi` saved in the file.
@@ -1132,22 +1128,12 @@ class BoozerRadialInterpolant(BoozerMagneticField):
         I[1:-1] = self.bx.Boozer_I_all
         if self.rescale:
             s_half_mn = self.bx.s_b[self.ns_delete : :]
-            bmnc = np.zeros((len(self.xm_b), self.bx.ns_b - self.ns_delete))
-            rmnc = np.zeros((len(self.xm_b), self.bx.ns_b - self.ns_delete))
-            zmns = np.zeros((len(self.xm_b), self.bx.ns_b - self.ns_delete))
-            numns = np.zeros((len(self.xm_b), self.bx.ns_b - self.ns_delete))
-
             bmnc = self.bx.bmnc_b[:, self.ns_delete : :]
             rmnc = self.bx.rmnc_b[:, self.ns_delete : :]
             zmns = self.bx.zmns_b[:, self.ns_delete : :]
             numns = self.bx.numns_b[:, self.ns_delete : :]
 
             if self.asym:
-                bmns = np.zeros((len(self.xm_b), self.bx.ns_b - self.ns_delete))
-                rmns = np.zeros((len(self.xm_b), self.bx.ns_b - self.ns_delete))
-                zmnc = np.zeros((len(self.xm_b), self.bx.ns_b - self.ns_delete))
-                numnc = np.zeros((len(self.xm_b), self.bx.ns_b - self.ns_delete))
-
                 bmns = self.bx.bmns_b[:, self.ns_delete : :]
                 rmns = self.bx.rmns_b[:, self.ns_delete : :]
                 zmnc = self.bx.zmnc_b[:, self.ns_delete : :]
@@ -1171,7 +1157,11 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             )
         else:
             s_half_mn = self.s_half_ext
-            bmnc = np.zeros((len(self.xm_b), self.bx.ns_b + 2))
+            # Cache size for efficiency
+            nm_b = len(self.xm_b)
+            ns_b2 = self.bx.ns_b + 2
+            
+            bmnc = np.zeros((nm_b, ns_b2))
             bmnc[:, 1:-1] = self.bx.bmnc_b
             bmnc[:, 0] = 1.5 * bmnc[:, 1] - 0.5 * bmnc[:, 2]
             bmnc[:, -1] = 1.5 * bmnc[:, -2] - 0.5 * bmnc[:, -3]
@@ -1179,9 +1169,9 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             mn_factor = np.ones_like(bmnc)
             d_mn_factor = np.zeros_like(bmnc)
 
-            numns = np.zeros((len(self.xm_b), self.bx.ns_b + 2))
-            rmnc = np.zeros((len(self.xm_b), self.bx.ns_b + 2))
-            zmns = np.zeros((len(self.xm_b), self.bx.ns_b + 2))
+            numns = np.zeros((nm_b, ns_b2))
+            rmnc = np.zeros((nm_b, ns_b2))
+            zmns = np.zeros((nm_b, ns_b2))
             numns[:, 1:-1] = self.bx.numns_b
             numns[:, 0] = 1.5 * numns[:, 1] - 0.5 * numns[:, 2]
             numns[:, -1] = 1.5 * numns[:, -2] - 0.5 * numns[:, -3]
@@ -1197,15 +1187,15 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             dnumnsds = (numns[:, 2:-1] - numns[:, 1:-2]) / ds
 
             if self.asym:
-                bmns = np.zeros((len(self.xm_b), self.bx.ns_b + 2))
+                bmns = np.zeros((nm_b, ns_b2))
                 bmns[:, 1:-1] = self.bx.bmns_b
                 bmns[:, 0] = 1.5 * bmns[:, 1] - 0.5 * bmns[:, 2]
                 bmns[:, -1] = 1.5 * bmns[:, -2] - 0.5 * bmns[:, -3]
                 dbmnsds = (bmns[:, 2:-1] - bmns[:, 1:-2]) / ds
 
-                numnc = np.zeros((len(self.xm_b), self.bx.ns_b + 2))
-                rmns = np.zeros((len(self.xm_b), self.bx.ns_b + 2))
-                zmnc = np.zeros((len(self.xm_b), self.bx.ns_b + 2))
+                numnc = np.zeros((nm_b, ns_b2))
+                rmns = np.zeros((nm_b, ns_b2))
+                zmnc = np.zeros((nm_b, ns_b2))
                 numnc[:, 1:-1] = self.bx.numnc_b
                 numnc[:, 0] = 1.5 * numnc[:, 1] - 0.5 * numnc[:, 2]
                 numnc[:, -1] = 1.5 * numnc[:, -2] - 0.5 * numnc[:, -3]
@@ -1232,204 +1222,141 @@ class BoozerRadialInterpolant(BoozerMagneticField):
         dIds = (I[2:-1] - I[1:-2]) / ds
         diotads = (iota[2:-1] - iota[1:-2]) / ds
 
-        self.psip_spline = InterpolatedUnivariateSpline(s_full, psip, k=self.order)
+        self.psip_spline = make_interp_spline(s_full, psip, k=self.order)
         if not self.enforce_vacuum:
-            self.G_spline = InterpolatedUnivariateSpline(
+            self.G_spline = make_interp_spline(
                 self.s_half_ext, G, k=self.order
             )
-            self.I_spline = InterpolatedUnivariateSpline(
+            self.I_spline = make_interp_spline(
                 self.s_half_ext, I, k=self.order
             )
-            self.dGds_spline = InterpolatedUnivariateSpline(
+            self.dGds_spline = make_interp_spline(
                 s_full[1:-1], dGds, k=self.order
             )
-            self.dIds_spline = InterpolatedUnivariateSpline(
+            self.dIds_spline = make_interp_spline(
                 s_full[1:-1], dIds, k=self.order
             )
         else:
-            self.G_spline = InterpolatedUnivariateSpline(
+            self.G_spline = make_interp_spline(
                 self.s_half_ext,
                 np.mean(G) * np.ones_like(self.s_half_ext),
                 k=self.order,
             )
-            self.I_spline = InterpolatedUnivariateSpline(
+            self.I_spline = make_interp_spline(
                 self.s_half_ext, np.zeros_like(self.s_half_ext), k=self.order
             )
-            self.dGds_spline = InterpolatedUnivariateSpline(
+            self.dGds_spline = make_interp_spline(
                 s_full[1:-1], np.zeros_like(s_full[1:-1]), k=self.order
             )
-            self.dIds_spline = InterpolatedUnivariateSpline(
+            self.dIds_spline = make_interp_spline(
                 s_full[1:-1], np.zeros_like(s_full[1:-1]), k=self.order
             )
         if not self.no_shear:
-            self.iota_spline = InterpolatedUnivariateSpline(
+            self.iota_spline = make_interp_spline(
                 self.s_half_ext, iota, k=self.order
             )
-            self.diotads_spline = InterpolatedUnivariateSpline(
+            self.diotads_spline = make_interp_spline(
                 s_full[1:-1], diotads, k=self.order
             )
         else:
-            self.iota_spline = InterpolatedUnivariateSpline(
+            self.iota_spline = make_interp_spline(
                 self.s_half_ext,
                 np.mean(iota) * np.ones_like(self.s_half_ext),
-                k=self.order,
+                k=self.order
             )
-            self.diotads_spline = InterpolatedUnivariateSpline(
+            self.diotads_spline = make_interp_spline(
                 s_full[1:-1], np.zeros_like(s_full[1:-1]), k=self.order
             )
 
-        self.numns_splines = []
-        self.rmnc_splines = []
-        self.zmns_splines = []
-        self.dnumnsds_splines = []
-        self.drmncds_splines = []
-        self.dzmnsds_splines = []
-        self.bmnc_splines = []
-        self.dbmncds_splines = []
-        self.d_mn_factor_splines = []
-        self.mn_factor_splines = []
-        for im in range(len(self.xm_b)):
-            self.numns_splines.append(
-                InterpolatedUnivariateSpline(
-                    s_half_mn, mn_factor[im, :] * numns[im, :], k=self.order
+        self.numns_splines = make_interp_spline(
+                    s_half_mn, (mn_factor * numns).T, k=self.order, axis=0
                 )
-            )
-            self.rmnc_splines.append(
-                InterpolatedUnivariateSpline(
-                    s_half_mn, mn_factor[im, :] * rmnc[im, :], k=self.order
+        self.rmnc_splines = make_interp_spline(
+                    s_half_mn, (mn_factor * rmnc).T, k=self.order, axis=0
                 )
-            )
-            self.zmns_splines.append(
-                InterpolatedUnivariateSpline(
-                    s_half_mn, mn_factor[im, :] * zmns[im, :], k=self.order
+        self.zmns_splines = make_interp_spline(
+                    s_half_mn, (mn_factor * zmns).T, k=self.order, axis=0
                 )
-            )
-            self.mn_factor_splines.append(
-                InterpolatedUnivariateSpline(s_half_mn, mn_factor[im, :], k=self.order)
-            )
-            self.d_mn_factor_splines.append(
-                InterpolatedUnivariateSpline(
-                    s_half_mn, d_mn_factor[im, :], k=self.order
+        self.mn_factor_splines = make_interp_spline(
+                    s_half_mn, mn_factor.T, k=self.order, axis=0
                 )
+        self.d_mn_factor_splines = make_interp_spline(
+                    s_half_mn, d_mn_factor.T, k=self.order, axis=0
+                )
+        if (self.enforce_qs and (self.helicity_M *self.xn_b != self.helicity_N * self.xm_b)):
+            self.bmnc_splines = make_interp_spline(
+                s_half_mn, (0 * bmnc).T, k=self.order, axis=0
             )
-            if (self.enforce_qs and (self.helicity_M *self.xn_b[im] != self.helicity_N * self.xm_b[im])):
-                self.bmnc_splines.append(
-                    InterpolatedUnivariateSpline(
-                        s_half_mn, 0 * bmnc[im, :], k=self.order
+            self.dbmncds_splines = make_interp_spline(
+                s_full[1:-1], (0 * dbmncds).T, k=self.order, axis=0
+            )
+        else:
+            self.bmnc_splines = make_interp_spline(
+                    s_half_mn, (mn_factor * bmnc).T, k=self.order, axis=0
+                )
+            if self.rescale:
+                self.dbmncds_splines = self.bmnc_splines.derivative()
+            else:
+                self.dbmncds_splines = make_interp_spline(
+                        s_full[1:-1], dbmncds.T, k=self.order, axis=0
                     )
+        if self.rescale:
+            self.dnumnsds_splines = self.numns_splines.derivative()
+            self.drmncds_splines = self.rmnc_splines.derivative()
+            self.dzmnsds_splines = self.zmns_splines.derivative()
+        else:
+            self.dnumnsds_splines = make_interp_spline(
+                    s_full[1:-1], dnumnsds.T, k=self.order, axis=0
                 )
-                self.dbmncds_splines.append(
-                    InterpolatedUnivariateSpline(
-                        s_full[1:-1], 0 * dbmncds[im, :], k=self.order
+            self.drmncds_splines = make_interp_spline(
+                s_full[1:-1], drmncds.T, k=self.order, axis=0
+            )
+            self.dzmnsds_splines = make_interp_spline(
+                s_full[1:-1], dzmnsds.T, k=self.order, axis=0
+            )
+
+        if self.asym:
+            self.numnc_splines = make_interp_spline(
+                s_half_mn, (mn_factor * numnc).T, k=self.order, axis=0
+            )
+            self.rmns_splines = make_interp_spline(
+                s_half_mn, (mn_factor * rmns).T, k=self.order, axis=0
+            )
+            self.zmnc_splines = make_interp_spline(
+                s_half_mn, (mn_factor * zmnc).T, k=self.order, axis=0
+            )
+            if (self.enforce_qs and (self.helicity_M *self.xn_b != self.helicity_N * self.xm_b)):
+                self.bmns_splines = make_interp_spline(
+                        s_half_mn, (0 * bmns).T, k=self.order, axis=0
                     )
+                self.dbmnsds_splines = make_interp_spline(
+                    s_full[1:-1], (0 * dbmnsds).T, k=self.order, axis=0
                 )
             else:
-                self.bmnc_splines.append(
-                    InterpolatedUnivariateSpline(
-                        s_half_mn, mn_factor[im, :] * bmnc[im, :], k=self.order
-                    )
+                self.bmns_splines = make_interp_spline(
+                    s_half_mn, (mn_factor * bmns).T, k=self.order, axis=0
                 )
                 if self.rescale:
-                    self.dbmncds_splines.append(self.bmnc_splines[-1].derivative())
+                    self.dbmnsds_splines = self.bmns_splines.derivative()
                 else:
-                    self.dbmncds_splines.append(
-                        InterpolatedUnivariateSpline(
-                            s_full[1:-1], dbmncds[im, :], k=self.order
-                        )
+                    self.dbmnsds_splines = make_interp_spline(
+                        s_full[1:-1], dbmnsds.T, k=self.order, axis=0
                     )
 
             if self.rescale:
-                self.dnumnsds_splines.append(self.numns_splines[-1].derivative())
-                self.drmncds_splines.append(self.rmnc_splines[-1].derivative())
-                self.dzmnsds_splines.append(self.zmns_splines[-1].derivative())
+                self.dnumncds_splines = self.numnc_splines.derivative()
+                self.drmnsds_splines = self.rmns_splines.derivative()
+                self.dzmncds_splines = self.zmnc_splines.derivative()
             else:
-                self.dnumnsds_splines.append(
-                    InterpolatedUnivariateSpline(
-                        s_full[1:-1], dnumnsds[im, :], k=self.order
+                self.dnumncds_splines = make_interp_spline(
+                        s_full[1:-1], dnumncds.T, k=self.order, axis=0
                     )
+                self.drmnsds_splines = make_interp_spline(
+                    s_full[1:-1], drmnsds.T, k=self.order, axis=0
                 )
-                self.drmncds_splines.append(
-                    InterpolatedUnivariateSpline(
-                        s_full[1:-1], drmncds[im, :], k=self.order
-                    )
+                self.dzmncds_splines = make_interp_spline(
+                    s_full[1:-1], dzmncds.T, k=self.order, axis=0
                 )
-                self.dzmnsds_splines.append(
-                    InterpolatedUnivariateSpline(
-                        s_full[1:-1], dzmnsds[im, :], k=self.order
-                    )
-                )
-
-        if self.asym:
-            self.numnc_splines = []
-            self.rmns_splines = []
-            self.zmnc_splines = []
-            self.dnumncds_splines = []
-            self.drmnsds_splines = []
-            self.dzmncds_splines = []
-            self.bmns_splines = []
-            self.dbmnsds_splines = []
-            for im in range(len(self.xm_b)):
-                self.numnc_splines.append(
-                    InterpolatedUnivariateSpline(
-                        s_half_mn, mn_factor[im, :] * numnc[im, :], k=self.order
-                    )
-                )
-                self.rmns_splines.append(
-                    InterpolatedUnivariateSpline(
-                        s_half_mn, mn_factor[im, :] * rmns[im, :], k=self.order
-                    )
-                )
-                self.zmnc_splines.append(
-                    InterpolatedUnivariateSpline(
-                        s_half_mn, mn_factor[im, :] * zmnc[im, :], k=self.order
-                    )
-                )
-                if (self.enforce_qs and (self.helicity_M *self.xn_b[im] != self.helicity_N * self.xm_b[im])):
-                    self.bmns_splines.append(
-                        InterpolatedUnivariateSpline(
-                            s_half_mn, 0 * bmns[im, :], k=self.order
-                        )
-                    )
-                    self.dbmnsds_splines.append(
-                        InterpolatedUnivariateSpline(
-                            s_full[1:-1], 0 * dbmnsds[im, :], k=self.order
-                        )
-                    )
-                else:
-                    self.bmns_splines.append(
-                        InterpolatedUnivariateSpline(
-                            s_half_mn, mn_factor[im, :] * bmns[im, :], k=self.order
-                        )
-                    )
-                    if self.rescale:
-                        self.dbmnsds_splines.append(self.bmns_splines[-1].derivative())
-                    else:
-                        self.dbmnsds_splines.append(
-                            InterpolatedUnivariateSpline(
-                                s_full[1:-1], dbmnsds[im, :], k=self.order
-                            )
-                        )
-
-                if self.rescale:
-                    self.dnumncds_splines.append(self.numnc_splines[-1].derivative())
-                    self.drmnsds_splines.append(self.rmns_splines[-1].derivative())
-                    self.dzmncds_splines.append(self.zmnc_splines[-1].derivative())
-                else:
-                    self.dnumncds_splines.append(
-                        InterpolatedUnivariateSpline(
-                            s_full[1:-1], dnumncds[im, :], k=self.order
-                        )
-                    )
-                    self.drmnsds_splines.append(
-                        InterpolatedUnivariateSpline(
-                            s_full[1:-1], drmnsds[im, :], k=self.order
-                        )
-                    )
-                    self.dzmncds_splines.append(
-                        InterpolatedUnivariateSpline(
-                            s_full[1:-1], dzmncds[im, :], k=self.order
-                        )
-                    )
 
     def compute_K(self):
         ntheta = 2 * (2 * self.mpol + 1)
@@ -1442,6 +1369,11 @@ class BoozerRadialInterpolant(BoozerMagneticField):
         thetas = thetas.flatten()
         zetas = zetas.flatten()
 
+        # Cache frequently used sizes
+        ns_half = len(self.s_half_ext)
+        nm_b = len(self.xm_b)
+        array_shape = (ns_half, nm_b)
+
         if self.comm is not None:
             size = self.comm.size
             rank = self.comm.rank
@@ -1450,99 +1382,63 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             first, last = angle_idxs[rank], angle_idxs[rank + 1]
 
             if self.asym:
-                kmnc_buffer = allocate_aligned_and_padded_array(
-                    (len(self.s_half_ext), len(self.xm_b))
-                )
-            kmns_buffer = allocate_aligned_and_padded_array(
-                (len(self.s_half_ext), len(self.xm_b))
-            )
+                kmnc_buffer = allocate_aligned_and_padded_array(array_shape)
+            kmns_buffer = allocate_aligned_and_padded_array(array_shape)
             thetas = thetas[first:last]
             zetas = zetas[first:last]
 
-        dzmnsds_half = allocate_aligned_and_padded_array(
-            (len(self.s_half_ext), len(self.xm_b))
-        )
-        drmncds_half = allocate_aligned_and_padded_array(
-            (len(self.s_half_ext), len(self.xm_b))
-        )
-        dnumnsds_half = allocate_aligned_and_padded_array(
-            (len(self.s_half_ext), len(self.xm_b))
-        )
-        bmnc_half = allocate_aligned_and_padded_array(
-            (len(self.s_half_ext), len(self.xm_b))
-        )
-        rmnc_half = allocate_aligned_and_padded_array(
-            (len(self.s_half_ext), len(self.xm_b))
-        )
-        zmns_half = allocate_aligned_and_padded_array(
-            (len(self.s_half_ext), len(self.xm_b))
-        )
-        numns_half = allocate_aligned_and_padded_array(
-            (len(self.s_half_ext), len(self.xm_b))
-        )
-        kmns = allocate_aligned_and_padded_array((len(self.s_half_ext), len(self.xm_b)))
+        dzmnsds_half = allocate_aligned_and_padded_array(array_shape)
+        drmncds_half = allocate_aligned_and_padded_array(array_shape)
+        dnumnsds_half = allocate_aligned_and_padded_array(array_shape)
+        bmnc_half = allocate_aligned_and_padded_array(array_shape)
+        rmnc_half = allocate_aligned_and_padded_array(array_shape)
+        zmns_half = allocate_aligned_and_padded_array(array_shape)
+        numns_half = allocate_aligned_and_padded_array(array_shape)
+        kmns = allocate_aligned_and_padded_array(array_shape)
         if self.asym:
-            dzmncds_half = allocate_aligned_and_padded_array(
-                (len(self.s_half_ext), len(self.xm_b))
-            )
-            drmnsds_half = allocate_aligned_and_padded_array(
-                (len(self.s_half_ext), len(self.xm_b))
-            )
-            dnumncds_half = allocate_aligned_and_padded_array(
-                (len(self.s_half_ext), len(self.xm_b))
-            )
-            bmns_half = allocate_aligned_and_padded_array(
-                (len(self.s_half_ext), len(self.xm_b))
-            )
-            rmns_half = allocate_aligned_and_padded_array(
-                (len(self.s_half_ext), len(self.xm_b))
-            )
-            zmnc_half = allocate_aligned_and_padded_array(
-                (len(self.s_half_ext), len(self.xm_b))
-            )
-            numnc_half = allocate_aligned_and_padded_array(
-                (len(self.s_half_ext), len(self.xm_b))
-            )
-            kmnc = allocate_aligned_and_padded_array(
-                (len(self.s_half_ext), len(self.xm_b))
-            )
+            dzmncds_half = allocate_aligned_and_padded_array(array_shape)
+            drmnsds_half = allocate_aligned_and_padded_array(array_shape)
+            dnumncds_half = allocate_aligned_and_padded_array(array_shape)
+            bmns_half = allocate_aligned_and_padded_array(array_shape)
+            rmns_half = allocate_aligned_and_padded_array(array_shape)
+            zmnc_half = allocate_aligned_and_padded_array(array_shape)
+            numnc_half = allocate_aligned_and_padded_array(array_shape)
+            kmnc = allocate_aligned_and_padded_array(array_shape)
 
-        for im in range(len(self.xm_b)):
-            mn_factor = self.mn_factor_splines[im](self.s_half_ext)
-            d_mn_factor = self.d_mn_factor_splines[im](self.s_half_ext)
-            bmnc_half[:, im] = self.bmnc_splines[im](self.s_half_ext) / mn_factor
-            rmnc_half[:, im] = self.rmnc_splines[im](self.s_half_ext) / mn_factor
-            zmns_half[:, im] = self.zmns_splines[im](self.s_half_ext) / mn_factor
-            numns_half[:, im] = self.numns_splines[im](self.s_half_ext) / mn_factor
-            dnumnsds_half[:, im] = (
-                self.dnumnsds_splines[im](self.s_half_ext)
-                - numns_half[:, im] * d_mn_factor
-            ) / mn_factor
-            drmncds_half[:, im] = (
-                self.drmncds_splines[im](self.s_half_ext)
-                - rmnc_half[:, im] * d_mn_factor
-            ) / mn_factor
-            dzmnsds_half[:, im] = (
-                self.dzmnsds_splines[im](self.s_half_ext)
-                - zmns_half[:, im] * d_mn_factor
-            ) / mn_factor
-            if self.asym:
-                bmns_half[:, im] = self.bmns_splines[im](self.s_half_ext) / mn_factor
-                rmns_half[:, im] = self.rmns_splines[im](self.s_half_ext) / mn_factor
-                zmnc_half[:, im] = self.zmnc_splines[im](self.s_half_ext) / mn_factor
-                numnc_half[:, im] = self.numnc_splines[im](self.s_half_ext) / mn_factor
-                dnumncds_half[:, im] = (
-                    self.dnumncds_splines[im](self.s_half_ext)
-                    - numnc_half[:, im] * d_mn_factor
-                ) / mn_factor
-                drmnsds_half[:, im] = (
-                    self.drmnsds_splines[im](self.s_half_ext)
-                    - rmns_half[:, im] * d_mn_factor
-                ) / mn_factor
-                dzmncds_half[:, im] = (
-                    self.dzmncds_splines[im](self.s_half_ext)
-                    - zmnc_half[:, im] * d_mn_factor
-                ) / mn_factor
+        # Evaluate splines and fill pre-allocated arrays
+        mn_factor = self.mn_factor_splines(self.s_half_ext)
+        d_mn_factor = self.d_mn_factor_splines(self.s_half_ext)
+        
+        # Fill pre-allocated arrays to maintain alignment
+        # Only fill the actual data portion, not the padding
+        n_modes = len(self.xm_b)
+        bmnc_half[:, :n_modes] = self.bmnc_splines(self.s_half_ext) / mn_factor
+        rmnc_half[:, :n_modes] = self.rmnc_splines(self.s_half_ext) / mn_factor
+        zmns_half[:, :n_modes] = self.zmns_splines(self.s_half_ext) / mn_factor
+        numns_half[:, :n_modes] = self.numns_splines(self.s_half_ext) / mn_factor
+        
+        # For derivatives, need to compute the values first
+        dnumnsds_vals = (self.dnumnsds_splines(self.s_half_ext) - numns_half[:, :n_modes] * d_mn_factor) / mn_factor
+        drmncds_vals = (self.drmncds_splines(self.s_half_ext) - rmnc_half[:, :n_modes] * d_mn_factor) / mn_factor
+        dzmnsds_vals = (self.dzmnsds_splines(self.s_half_ext) - zmns_half[:, :n_modes] * d_mn_factor) / mn_factor
+        
+        dnumnsds_half[:, :n_modes] = dnumnsds_vals
+        drmncds_half[:, :n_modes] = drmncds_vals
+        dzmnsds_half[:, :n_modes] = dzmnsds_vals
+        if self.asym:
+            bmns_half[:, :n_modes] = self.bmns_splines(self.s_half_ext) / mn_factor
+            rmns_half[:, :n_modes] = self.rmns_splines(self.s_half_ext) / mn_factor
+            zmnc_half[:, :n_modes] = self.zmnc_splines(self.s_half_ext) / mn_factor
+            numnc_half[:, :n_modes] = self.numnc_splines(self.s_half_ext) / mn_factor
+            
+            # For derivatives, compute values first
+            dnumncds_vals = (self.dnumncds_splines(self.s_half_ext) - numnc_half[:, :n_modes] * d_mn_factor) / mn_factor
+            drmnsds_vals = (self.drmnsds_splines(self.s_half_ext) - rmns_half[:, :n_modes] * d_mn_factor) / mn_factor
+            dzmncds_vals = (self.dzmncds_splines(self.s_half_ext) - zmnc_half[:, :n_modes] * d_mn_factor) / mn_factor
+            
+            dnumncds_half[:, :n_modes] = dnumncds_vals
+            drmnsds_half[:, :n_modes] = drmnsds_vals
+            dzmncds_half[:, :n_modes] = dzmncds_vals
 
         G_half = self.G_spline(self.s_half_ext)
         I_half = self.I_spline(self.s_half_ext)
@@ -1605,42 +1501,30 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             self.comm.Allreduce([kmns, MPI.DOUBLE], kmns_buffer, op=MPI.SUM)
             kmns = kmns_buffer
         if self.proc0:
+            n_modes_actual = len(self.xm_b)  # Get actual number of modes
             self.kmns_splines = []
-            for im in range(len(self.xm_b)):
-                if (self.enforce_qs and (self.helicity_M *self.xn_b[im] != self.helicity_N * self.xm_b[im])):
-                    self.kmns_splines.append(
-                        InterpolatedUnivariateSpline(
-                            self.s_half_ext, 0 * kmns[:, im], k=self.order
-                        )
-                    )
-                else:
-                    self.kmns_splines.append(
-                        InterpolatedUnivariateSpline(
-                            self.s_half_ext,
-                            self.mn_factor_splines[im](self.s_half_ext) * kmns[:, im],
-                            k=self.order,
-                        )
-                    )
+            if (self.enforce_qs and (self.helicity_M * self.xn_b!= self.helicity_N * self.xm_b)):
+                self.kmns_splines = make_interp_spline(
+                    self.s_half_ext, 0 * kmns[:, :n_modes_actual], k=self.order, axis=0
+                )
+            else:
+                self.kmns_splines = make_interp_spline(
+                    self.s_half_ext, self.mn_factor_splines(self.s_half_ext) * kmns[:, :n_modes_actual], 
+                    k=self.order, axis=0
+                )
 
             if self.asym:
-                self.kmnc_splines = []
-                for im in range(len(self.xm_b)):
-                    if (self.enforce_qs and (self.helicity_M *self.xn_b[im] != self.helicity_N * self.xm_b[im])):
-                        self.kmnc_splines.append(
-                            InterpolatedUnivariateSpline(
-                                self.s_half_ext, 0 * kmnc[:, im], k=self.order
-                            )
-                        )
-                    else:
-                        self.kmnc_splines.append(
-                            InterpolatedUnivariateSpline(
-                                self.s_half_ext,
-                                self.mn_factor_splines[im](self.s_half_ext)
-                                * kmnc[:, im],
-                                k=self.order,
-                            )
-                        )
-
+                if (self.enforce_qs and (self.helicity_M *self.xn_b != self.helicity_N * self.xm_b)):
+                    self.kmnc_splines = make_interp_spline(
+                        self.s_half_ext, 0 * kmnc[:, :n_modes_actual], k=self.order, axis=0
+                    )
+                else:
+                    self.kmnc_splines = make_interp_spline(
+                        self.s_half_ext,
+                        self.mn_factor_splines(self.s_half_ext) * kmnc[:, :n_modes_actual],
+                        k=self.order,
+                        axis=0,
+                    )
         if self.comm is not None:
             self.kmns_splines = self.comm.bcast(self.kmns_splines, root=0)
             if self.asym:
@@ -1653,7 +1537,7 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
         @self.iterate_and_invert
         def _harmonics(im, s):
-            return self.kmns_splines[im](s) / self.mn_factor_splines[im](s)
+            return self.kmns_splines(s)[:, im] / self.mn_factor_splines(s)[:, im]
 
         inverse_fourier = sopp.inverse_fourier_transform_odd
 
@@ -1663,7 +1547,7 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
             @self.iterate_and_invert
             def _harmonics(im, s):
-                return self.kmnc_splines[im](s) / self.mn_factor_splines[im](s)
+                return self.kmnc_splines(s)[:, im] / self.mn_factor_splines(s)[:, im]
 
             inverse_fourier = sopp.inverse_fourier_transform_even
 
@@ -1677,7 +1561,7 @@ class BoozerRadialInterpolant(BoozerMagneticField):
         @self.iterate_and_invert
         def _harmonics(im, s):
             return (
-                self.kmns_splines[im](s) * self.xm_b[im] / self.mn_factor_splines[im](s)
+                self.kmns_splines(s)[:, im] * self.xm_b[im] / self.mn_factor_splines(s)[:, im]
             )
 
         inverse_fourier = sopp.inverse_fourier_transform_even
@@ -1689,9 +1573,9 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             @self.iterate_and_invert
             def _harmonics(im, s):
                 return (
-                    -self.kmnc_splines[im](s)
+                    -self.kmnc_splines(s)[:, im]
                     * self.xm_b[im]
-                    / self.mn_factor_splines[im](s)
+                    / self.mn_factor_splines(s)[:, im]
                 )
 
             inverse_fourier = sopp.inverse_fourier_transform_odd
@@ -1706,9 +1590,9 @@ class BoozerRadialInterpolant(BoozerMagneticField):
         @self.iterate_and_invert
         def _harmonics(im, s):
             return (
-                -self.kmns_splines[im](s)
+                -self.kmns_splines(s)[:, im]
                 * self.xn_b[im]
-                / self.mn_factor_splines[im](s)
+                / self.mn_factor_splines(s)[:, im]
             )
 
         inverse_fourier = sopp.inverse_fourier_transform_even
@@ -1720,9 +1604,9 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             @self.iterate_and_invert
             def _harmonics(im, s):
                 return (
-                    self.kmnc_splines[im](s)
+                    self.kmnc_splines(s)[:, im]
                     * self.xn_b[im]
-                    / self.mn_factor_splines[im](s)
+                    / self.mn_factor_splines(s)[:, im]
                 )
 
             inverse_fourier = sopp.inverse_fourier_transform_odd
@@ -1734,7 +1618,7 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
         @self.iterate_and_invert
         def _harmonics(im, s):
-            return self.numns_splines[im](s) / self.mn_factor_splines[im](s)
+            return self.numns_splines(s)[:, im] / self.mn_factor_splines(s)[:, im]
 
         inverse_fourier = sopp.inverse_fourier_transform_odd
 
@@ -1744,7 +1628,7 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
             @self.iterate_and_invert
             def _harmonics(im, s):
-                return self.numnc_splines[im](s) / self.mn_factor_splines[im](s)
+                return self.numnc_splines(s)[:, im] / self.mn_factor_splines(s)[:, im]
 
             inverse_fourier = sopp.inverse_fourier_transform_even
 
@@ -1756,9 +1640,9 @@ class BoozerRadialInterpolant(BoozerMagneticField):
         @self.iterate_and_invert
         def _harmonics(im, s):
             return (
-                self.numns_splines[im](s)
+                self.numns_splines(s)[:, im]
                 * self.xm_b[im]
-                / self.mn_factor_splines[im](s)
+                / self.mn_factor_splines(s)[:, im]
             )
 
         inverse_fourier = sopp.inverse_fourier_transform_even
@@ -1770,9 +1654,9 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             @self.iterate_and_invert
             def _harmonics(im, s):
                 return (
-                    -self.numnc_splines[im](s)
+                    -self.numnc_splines(s)[:, im]
                     * self.xm_b[im]
-                    / self.mn_factor_splines[im](s)
+                    / self.mn_factor_splines(s)[:, im]
                 )
 
             inverse_fourier = sopp.inverse_fourier_transform_odd
@@ -1785,9 +1669,9 @@ class BoozerRadialInterpolant(BoozerMagneticField):
         @self.iterate_and_invert
         def _harmonics(im, s):
             return (
-                -self.numns_splines[im](s)
+                -self.numns_splines(s)[:, im]
                 * self.xn_b[im]
-                / self.mn_factor_splines[im](s)
+                / self.mn_factor_splines(s)[:, im]
             )
 
         inverse_fourier = sopp.inverse_fourier_transform_even
@@ -1799,9 +1683,9 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             @self.iterate_and_invert
             def _harmonics(im, s):
                 return (
-                    self.numnc_splines[im](s)
+                    self.numnc_splines(s)[:, im]
                     * self.xn_b[im]
-                    / self.mn_factor_splines[im](s)
+                    / self.mn_factor_splines(s)[:, im]
                 )
 
             inverse_fourier = sopp.inverse_fourier_transform_odd
@@ -1813,11 +1697,11 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
         @self.iterate_and_invert
         def _harmonics(im, s):
-            d_mn_factor = self.d_mn_factor_splines[im](s)
-            mn_factor = self.mn_factor_splines[im](s)
+            d_mn_factor = self.d_mn_factor_splines(s)[:, im]
+            mn_factor = self.mn_factor_splines(s)[:, im]
             return (
-                self.dnumnsds_splines[im](s)
-                - self.numns_splines[im](s) * d_mn_factor / mn_factor
+                self.dnumnsds_splines(s)[:, im]
+                - self.numns_splines(s)[:, im] * d_mn_factor / mn_factor
             ) / mn_factor
 
         inverse_fourier = sopp.inverse_fourier_transform_odd
@@ -1828,11 +1712,11 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
             @self.iterate_and_invert
             def _harmonics(im, s):
-                d_mn_factor = self.d_mn_factor_splines[im](s)
-                mn_factor = self.mn_factor_splines[im](s)
+                d_mn_factor = self.d_mn_factor_splines(s)[:, im]
+                mn_factor = self.mn_factor_splines(s)[:, im]
                 return (
-                    self.dnumncds_splines[im](s)
-                    - self.numnc_splines[im](s) * d_mn_factor / mn_factor
+                    self.dnumncds_splines(s)[:, im]
+                    - self.numnc_splines(s)[:, im] * d_mn_factor / mn_factor
                 ) / mn_factor
 
             inverse_fourier = sopp.inverse_fourier_transform_even
@@ -1845,9 +1729,9 @@ class BoozerRadialInterpolant(BoozerMagneticField):
         @self.iterate_and_invert
         def _harmonics(im, s):
             return (
-                -self.rmnc_splines[im](s)
+                -self.rmnc_splines(s)[:, im]
                 * self.xm_b[im]
-                / self.mn_factor_splines[im](s)
+                / self.mn_factor_splines(s)[:, im]
             )
 
         inverse_fourier = sopp.inverse_fourier_transform_odd
@@ -1859,9 +1743,9 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             @self.iterate_and_invert
             def _harmonics(im, s):
                 return (
-                    self.rmns_splines[im](s)
+                    self.rmns_splines(s)[:, im]
                     * self.xm_b[im]
-                    / self.mn_factor_splines[im](s)
+                    / self.mn_factor_splines(s)[:, im]
                 )
 
             inverse_fourier = sopp.inverse_fourier_transform_even
@@ -1874,7 +1758,7 @@ class BoozerRadialInterpolant(BoozerMagneticField):
         @self.iterate_and_invert
         def _harmonics(im, s):
             return (
-                self.rmnc_splines[im](s) * self.xn_b[im] / self.mn_factor_splines[im](s)
+                self.rmnc_splines(s)[:, im] * self.xn_b[im] / self.mn_factor_splines(s)[:, im]
             )
 
         inverse_fourier = sopp.inverse_fourier_transform_odd
@@ -1886,9 +1770,9 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             @self.iterate_and_invert
             def _harmonics(im, s):
                 return (
-                    -self.rmns_splines[im](s)
+                    -self.rmns_splines(s)[:, im]
                     * self.xn_b[im]
-                    / self.mn_factor_splines[im](s)
+                    / self.mn_factor_splines(s)[:, im]
                 )
 
             inverse_fourier = sopp.inverse_fourier_transform_even
@@ -1900,11 +1784,11 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
         @self.iterate_and_invert
         def _harmonics(im, s):
-            d_mn_factor = self.d_mn_factor_splines[im](s)
-            mn_factor = self.mn_factor_splines[im](s)
+            d_mn_factor = self.d_mn_factor_splines(s)[:, im]
+            mn_factor = self.mn_factor_splines(s)[:, im]
             return (
-                self.drmncds_splines[im](s)
-                - self.rmnc_splines[im](s) * d_mn_factor / mn_factor
+                self.drmncds_splines(s)[:, im]
+                - self.rmnc_splines(s)[:, im] * d_mn_factor / mn_factor
             ) / mn_factor
 
         inverse_fourier = sopp.inverse_fourier_transform_even
@@ -1915,11 +1799,11 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
             @self.iterate_and_invert
             def _harmonics(im, s):
-                d_mn_factor = self.d_mn_factor_splines[im](s)
-                mn_factor = self.mn_factor_splines[im](s)
+                d_mn_factor = self.d_mn_factor_splines(s)[:, im]
+                mn_factor = self.mn_factor_splines(s)[:, im]
                 return (
-                    self.drmnsds_splines[im](s)
-                    - self.rmns_splines[im](s) * d_mn_factor / mn_factor
+                    self.drmnsds_splines(s)[:, im]
+                    - self.rmns_splines(s)[:, im] * d_mn_factor / mn_factor
                 ) / mn_factor
 
             inverse_fourier = sopp.inverse_fourier_transform_odd
@@ -1931,7 +1815,7 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
         @self.iterate_and_invert
         def _harmonics(im, s):
-            return self.rmnc_splines[im](s) / self.mn_factor_splines[im](s)
+            return self.rmnc_splines(s)[:, im] / self.mn_factor_splines(s)[:, im]
 
         inverse_fourier = sopp.inverse_fourier_transform_even
 
@@ -1941,7 +1825,7 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
             @self.iterate_and_invert
             def _harmonics(im, s):
-                return self.rmns_splines[im](s) / self.mn_factor_splines[im](s)
+                return self.rmns_splines(s)[:, im] / self.mn_factor_splines(s)[:, im]
 
             inverse_fourier = sopp.inverse_fourier_transform_odd
 
@@ -1953,7 +1837,7 @@ class BoozerRadialInterpolant(BoozerMagneticField):
         @self.iterate_and_invert
         def _harmonics(im, s):
             return (
-                self.zmns_splines[im](s) * self.xm_b[im] / self.mn_factor_splines[im](s)
+                self.zmns_splines(s)[:, im] * self.xm_b[im] / self.mn_factor_splines(s)[:, im]
             )
 
         inverse_fourier = sopp.inverse_fourier_transform_even
@@ -1965,9 +1849,9 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             @self.iterate_and_invert
             def _harmonics(im, s):
                 return (
-                    -self.zmnc_splines[im](s)
+                    -self.zmnc_splines(s)[:, im]
                     * self.xm_b[im]
-                    / self.mn_factor_splines[im](s)
+                    / self.mn_factor_splines(s)[:, im]
                 )
 
             inverse_fourier = sopp.inverse_fourier_transform_odd
@@ -1980,9 +1864,9 @@ class BoozerRadialInterpolant(BoozerMagneticField):
         @self.iterate_and_invert
         def _harmonics(im, s):
             return (
-                -self.zmns_splines[im](s)
+                -self.zmns_splines(s)[:, im]
                 * self.xn_b[im]
-                / self.mn_factor_splines[im](s)
+                / self.mn_factor_splines(s)[:, im]
             )
 
         inverse_fourier = sopp.inverse_fourier_transform_even
@@ -1994,9 +1878,9 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             @self.iterate_and_invert
             def _harmonics(im, s):
                 return (
-                    self.zmnc_splines[im](s)
+                    self.zmnc_splines(s)[:, im]
                     * self.xn_b[im]
-                    / self.mn_factor_splines[im](s)
+                    / self.mn_factor_splines(s)[:, im]
                 )
 
             inverse_fourier = sopp.inverse_fourier_transform_odd
@@ -2008,11 +1892,11 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
         @self.iterate_and_invert
         def _harmonics(im, s):
-            d_mn_factor = self.d_mn_factor_splines[im](s)
-            mn_factor = self.mn_factor_splines[im](s)
+            d_mn_factor = self.d_mn_factor_splines(s)[:, im]
+            mn_factor = self.mn_factor_splines(s)[:, im]
             return (
-                self.dzmnsds_splines[im](s)
-                - self.zmns_splines[im](s) * d_mn_factor / mn_factor
+                self.dzmnsds_splines(s)[:, im]
+                - self.zmns_splines(s)[:, im] * d_mn_factor / mn_factor
             ) / mn_factor
 
         inverse_fourier = sopp.inverse_fourier_transform_odd
@@ -2023,11 +1907,11 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
             @self.iterate_and_invert
             def _harmonics(im, s):
-                d_mn_factor = self.d_mn_factor_splines[im](s)
-                mn_factor = self.mn_factor_splines[im](s)
+                d_mn_factor = self.d_mn_factor_splines(s)[:, im]
+                mn_factor = self.mn_factor_splines(s)[:, im]
                 return (
-                    self.dzmncds_splines[im](s)
-                    - self.zmnc_splines[im](s) * d_mn_factor / mn_factor
+                    self.dzmncds_splines(s)[:, im]
+                    - self.zmnc_splines(s)[:, im] * d_mn_factor / mn_factor
                 ) / mn_factor
 
             inverse_fourier = sopp.inverse_fourier_transform_even
@@ -2039,7 +1923,7 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
         @self.iterate_and_invert
         def _harmonics(im, s):
-            return self.zmns_splines[im](s) / self.mn_factor_splines[im](s)
+            return self.zmns_splines(s)[:, im] / self.mn_factor_splines(s)[:, im]
 
         inverse_fourier = sopp.inverse_fourier_transform_odd
 
@@ -2049,7 +1933,7 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
             @self.iterate_and_invert
             def _harmonics(im, s):
-                return self.zmnc_splines[im](s) / self.mn_factor_splines[im](s)
+                return self.zmnc_splines(s)[:, im] / self.mn_factor_splines(s)[:, im]
 
             inverse_fourier = sopp.inverse_fourier_transform_even
 
@@ -2102,7 +1986,7 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
         @self.iterate_and_invert
         def _harmonics(im, s):
-            return self.bmnc_splines[im](s) / self.mn_factor_splines[im](s)
+            return self.bmnc_splines(s)[:, im] / self.mn_factor_splines(s)[:, im]
 
         inverse_fourier = sopp.inverse_fourier_transform_even
 
@@ -2112,7 +1996,7 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
             @self.iterate_and_invert
             def _harmonics(im, s):
-                return self.bmns_splines[im](s) / self.mn_factor_splines[im](s)
+                return self.bmns_splines(s)[:, im] / self.mn_factor_splines(s)[:, im]
 
             inverse_fourier = sopp.inverse_fourier_transform_odd
 
@@ -2125,8 +2009,8 @@ class BoozerRadialInterpolant(BoozerMagneticField):
         def _harmonics(im, s):
             return (
                 -self.xm_b[im]
-                * self.bmnc_splines[im](s)
-                / self.mn_factor_splines[im](s)
+                * self.bmnc_splines(s)[:, im]
+                / self.mn_factor_splines(s)[:, im]
             )
 
         inverse_fourier = sopp.inverse_fourier_transform_odd
@@ -2139,8 +2023,8 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             def _harmonics(im, s):
                 return (
                     self.xm_b[im]
-                    * self.bmns_splines[im](s)
-                    / self.mn_factor_splines[im](s)
+                    * self.bmns_splines(s)[:, im]
+                    / self.mn_factor_splines(s)[:, im]
                 )
 
             inverse_fourier = sopp.inverse_fourier_transform_even
@@ -2153,7 +2037,7 @@ class BoozerRadialInterpolant(BoozerMagneticField):
         @self.iterate_and_invert
         def _harmonics(im, s):
             return (
-                self.xn_b[im] * self.bmnc_splines[im](s) / self.mn_factor_splines[im](s)
+                self.xn_b[im] * self.bmnc_splines(s)[:, im] / self.mn_factor_splines(s)[:, im]
             )
 
         inverse_fourier = sopp.inverse_fourier_transform_odd
@@ -2166,8 +2050,8 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             def _harmonics(im, s):
                 return (
                     -self.xn_b[im]
-                    * self.bmns_splines[im](s)
-                    / self.mn_factor_splines[im](s)
+                    * self.bmns_splines(s)[:, im]
+                    / self.mn_factor_splines(s)[:, im]
                 )
 
             inverse_fourier = sopp.inverse_fourier_transform_even
@@ -2179,11 +2063,11 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
         @self.iterate_and_invert
         def _harmonics(im, s):
-            mn_factor = self.mn_factor_splines[im](s)
-            d_mn_factor = self.d_mn_factor_splines[im](s)
+            mn_factor = self.mn_factor_splines(s)[:, im]
+            d_mn_factor = self.d_mn_factor_splines(s)[:, im]
             return (
-                self.dbmncds_splines[im](s)
-                - self.bmnc_splines[im](s) * d_mn_factor / mn_factor
+                self.dbmncds_splines(s)[:, im]
+                - self.bmnc_splines(s)[:, im] * d_mn_factor / mn_factor
             ) / mn_factor
 
         inverse_fourier = sopp.inverse_fourier_transform_even
@@ -2194,11 +2078,11 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
             @self.iterate_and_invert
             def _harmonics(im, s):
-                mn_factor = self.mn_factor_splines[im](s)
-                d_mn_factor = self.d_mn_factor_splines[im](s)
+                mn_factor = self.mn_factor_splines(s)[:, im]
+                d_mn_factor = self.d_mn_factor_splines(s)[:, im]
                 return (
-                    self.dbmnsds_splines[im](s)
-                    - self.bmns_splines[im](s) * d_mn_factor / mn_factor
+                    self.dbmnsds_splines(s)[:, im]
+                    - self.bmns_splines(s)[:, im] * d_mn_factor / mn_factor
                 ) / mn_factor
 
             inverse_fourier = sopp.inverse_fourier_transform_odd
@@ -2212,7 +2096,17 @@ class BoozerRadialInterpolant(BoozerMagneticField):
 
             mn_idxs = np.array([i * len(self.xm_b) // size for i in range(size + 1)])
             first_mn, last_mn = mn_idxs[rank], mn_idxs[rank + 1]
-            recv_buffer = np.zeros(output.shape)
+            
+            # Pre-allocate and reuse buffers if possible
+            if not hasattr(self, '_compute_buffers'):
+                self._compute_buffers = {}
+            
+            # Reuse recv_buffer if shape matches
+            recv_key = ('recv', output.shape)
+            if recv_key not in self._compute_buffers:
+                self._compute_buffers[recv_key] = np.zeros(output.shape)
+            recv_buffer = self._compute_buffers[recv_key]
+            recv_buffer.fill(0)  # Clear the buffer
         else:
             first_mn, last_mn = 0, len(self.xm_b)
 
@@ -2221,11 +2115,28 @@ class BoozerRadialInterpolant(BoozerMagneticField):
         thetas = points[:, 1]
         zetas = points[:, 2]
         us, inv = np.unique(s, return_inverse=True)
+        
+        # Pre-allocate and reuse buffers if possible
+        if not hasattr(self, '_compute_buffers'):
+            self._compute_buffers = {}
+        
         if len(s) > 1:
             padded_thetas = align_and_pad(thetas)
             padded_zetas = align_and_pad(zetas)
-            padded_buffer = allocate_aligned_and_padded_array(output.shape)
-            chunk_mn = allocate_aligned_and_padded_array((last_mn - first_mn, len(inv)))
+            
+            # Reuse padded_buffer if shape matches
+            buffer_key = ('padded', output.shape)
+            if buffer_key not in self._compute_buffers:
+                self._compute_buffers[buffer_key] = allocate_aligned_and_padded_array(output.shape)
+            padded_buffer = self._compute_buffers[buffer_key]
+            padded_buffer.fill(0)  # Clear the buffer
+            
+            # Reuse chunk_mn if shape matches
+            chunk_key = ('chunk', (last_mn - first_mn, len(inv)))
+            if chunk_key not in self._compute_buffers:
+                self._compute_buffers[chunk_key] = allocate_aligned_and_padded_array((last_mn - first_mn, len(inv)))
+            chunk_mn = self._compute_buffers[chunk_key]
+            
             # release memory manually. maybe not be needed anymore
             s, thetas, zetas = None, None, None
             harmonics(us, chunk_mn, inv, 0, last_mn - first_mn, first_mn)
@@ -2235,7 +2146,13 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             padded_thetas = thetas
             padded_zetas = zetas
             padded_buffer = np.zeros(output.shape)
-            chunk_mn = allocate_aligned_and_padded_array((last_mn - first_mn,))
+            
+            # Reuse chunk_mn for scalar case
+            chunk_key = ('chunk_scalar', (last_mn - first_mn,))
+            if chunk_key not in self._compute_buffers:
+                self._compute_buffers[chunk_key] = allocate_aligned_and_padded_array((last_mn - first_mn,))
+            chunk_mn = self._compute_buffers[chunk_key]
+            
             harmonics(us, chunk_mn, inv, 0, last_mn - first_mn, first_mn)
             xm = align_and_pad(self.xm_b[first_mn:last_mn])
             xn = align_and_pad(self.xn_b[first_mn:last_mn])
@@ -2593,8 +2510,8 @@ class ShearAlfvenHarmonic(sopp.ShearAlfvenHarmonic,ShearAlfvenWave):
                 raise TypeError("s_values and Phihat_values must be lists of floats.")
 
             indices = np.argsort(s_vals)
-            Phihat_vals = np.array(Phihat_vals)[indices].tolist()
-            s_vals = np.array(s_vals)[indices].tolist()
+            Phihat_vals = [Phihat_vals[i] for i in indices]
+            s_vals = [s_vals[i] for i in indices]
 
             if s_vals[0] < 0 or s_vals[-1] > 1:
                 raise ValueError(
@@ -2734,8 +2651,7 @@ class ShearAlfvenWavesSuperposition(sopp.ShearAlfvenWavesSuperposition,ShearAlfv
         #start with arbitrary magnitude SAW, then rescale it:
         unscaled_SAW = ShearAlfvenWavesSuperposition(harmonic_list)
         #Make radial grid that captures all unique radial values for all harmonic:
-        s_unique = list(set(s_list))
-        s_unique.sort()
+        s_unique = sorted(set(s_list))
         #Make angle grids that resolve maxima of highest harmonics
         thetas = np.linspace(0, 2 * np.pi, 5*np.max(np.abs(m_list)))
         zetas  = np.linspace(0, 2 * np.pi, 5*np.max(np.abs(n_list)))
