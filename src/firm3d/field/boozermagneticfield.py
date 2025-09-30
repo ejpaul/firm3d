@@ -5,7 +5,7 @@ import numpy as np
 from booz_xform import Booz_xform
 from scipy.interpolate import make_interp_spline
 
-import simsoptpp as sopp
+import firm3dpp as sopp
 
 from .._core.util import align_and_pad, allocate_aligned_and_padded_array
 from ..saw.ae3d import AE3DEigenvector
@@ -2177,7 +2177,7 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
     ):
         r"""
         Args:
-            field: the underlying :class:`simsopt.field.boozermagneticfield.
+            field: the underlying :class:`firm3d.field.boozermagneticfield.
                 BoozerMagneticField` to be interpolated.
             degree: the degree of the piecewise polynomial interpolant.
             ns_interp: number of grid points in the :math:`s` direction.
