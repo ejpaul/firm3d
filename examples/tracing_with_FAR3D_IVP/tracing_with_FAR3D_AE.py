@@ -2,27 +2,27 @@ import time
 
 import numpy as np
 
-from simsopt.field.boozermagneticfield import (
+from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
     ShearAlfvenWavesSuperposition,
 )
-from simsopt.field.tracing import (
+from firm3d.field.tracing import (
     MaxToroidalFluxStoppingCriterion,
     trace_particles_boozer_perturbed,
 )
-from simsopt.field.tracing_helpers import (
+from firm3d.field.tracing_helpers import (
     initialize_position_profile,
     initialize_velocity_uniform,
 )
-from simsopt.saw.far3d import FAR3DEigenvector
-from simsopt.util.constants import (
+from firm3d.saw.far3d import FAR3DEigenvector
+from firm3d.util.constants import (
     ALPHA_PARTICLE_CHARGE,
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
-from simsopt.util.functions import proc0_print, setup_logging
-from simsopt.util.mpi import comm_size, comm_world, verbose
+from firm3d.util.functions import proc0_print, setup_logging
+from firm3d.util.mpi import comm_size, comm_world, verbose
 
 resolution = 48  # Resolution for field interpolation
 nParticles = 5000  # Number of particles to trace
