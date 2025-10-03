@@ -9,9 +9,10 @@ import firm3dpp as sopp
 
 from .._core.util import align_and_pad, allocate_aligned_and_padded_array
 from ..saw.ae3d import AE3DEigenvector
-
 from ..util.constants import (
     VACUUM_PERMEABILITY as MU0,
+)
+from ..util.constants import (
     VACUUM_PERMITTIVITY as EPS0,
 )
 
@@ -2539,14 +2540,15 @@ class ShearAlfvenHarmonic(sopp.ShearAlfvenHarmonic, ShearAlfvenWave):
         ShearAlfvenWave.__init__(self, B0)
 
     def get_energy(self, grid_factor=10):
-        """
+        r"""
         Calculates total electromagnetic energy of the perturbed field.
 
         The perturbed electric and magnetic fields are given by:
 
         .. math::
 
-            \delta\mathbf{E} = -\nabla\varphi - \frac{\partial \alpha \mathbf{B}_0}{\partial t}
+            \delta\mathbf{E} = -\nabla\varphi
+            - \frac{\partial \alpha \mathbf{B}_0}{\partial t}
 
             \delta\mathbf{B} = \nabla \times (\alpha \mathbf{B}_0)
 
@@ -2554,23 +2556,37 @@ class ShearAlfvenHarmonic(sopp.ShearAlfvenHarmonic, ShearAlfvenWave):
 
         .. math::
 
-            \delta B^s &= \frac{1}{\sqrt{g}}\left(G\frac{\partial\alpha}{\partial\theta} - I\frac{\partial \alpha}{\partial \zeta}\right)
+            \delta B^s &= \frac{1}{\sqrt{g}}\left(
+            G\frac{\partial\alpha}{\partial\theta}
+            - I\frac{\partial \alpha}{\partial \zeta}\right)
 
-            \delta B^\theta &= \frac{1}{\sqrt{g}}\left(K\frac{\partial \alpha}{\partial\zeta} - G\frac{\partial\alpha}{\partial \psi}\right) - \frac{\alpha}{\sqrt{g}}\frac{dG}{d\psi} + \frac{\alpha}{\sqrt{g}}\frac{\partial K}{\partial \zeta}
+            \delta B^\theta &= \frac{1}{\sqrt{g}}\left(
+            K\frac{\partial \alpha}{\partial\zeta}
+            - G\frac{\partial\alpha}{\partial \psi}\right)
+            - \frac{\alpha}{\sqrt{g}}\frac{dG}{d\psi}
+            + \frac{\alpha}{\sqrt{g}}\frac{\partial K}{\partial \zeta}
 
-            \delta B^\zeta &= \frac{1}{\sqrt{g}}\left(I\frac{\partial \alpha}{\partial \psi} - K\frac{\partial \alpha}{\partial \theta}\right) + \frac{\alpha}{\sqrt{g}}\frac{dI}{d\psi} - \frac{\alpha}{\sqrt{g}}\frac{\partial K}{\partial\theta}
+            \delta B^\zeta &= \frac{1}{\sqrt{g}}\left(
+            I\frac{\partial \alpha}{\partial \psi}
+            - K\frac{\partial \alpha}{\partial \theta}\right)
+            + \frac{\alpha}{\sqrt{g}}\frac{dI}{d\psi}
+            - \frac{\alpha}{\sqrt{g}}\frac{\partial K}{\partial\theta}
 
-            \delta E_s &= \frac{\partial\varphi}{\partial s} + K\frac{\partial \alpha}{\partial t}
+            \delta E_s &= \frac{\partial\varphi}{\partial s}
+            + K\frac{\partial \alpha}{\partial t}
 
-            \delta E_\theta &= \frac{\partial\varphi}{\partial \theta} + I\frac{\partial \alpha}{\partial t}
+            \delta E_\theta &= \frac{\partial\varphi}{\partial \theta}
+            + I\frac{\partial \alpha}{\partial t}
 
-            \delta E_\zeta &= \frac{\partial\varphi}{\partial \zeta} + G\frac{\partial\alpha}{\partial t}
+            \delta E_\zeta &= \frac{\partial\varphi}{\partial \zeta}
+            + G\frac{\partial\alpha}{\partial t}
 
         and numerically integrates the field energy density:
 
         .. math::
 
-            \delta u = \frac{1}{2}\left(\varepsilon_0 g^{ij}\delta E_i \delta E_j + \frac{1}{\mu_0}g_{ij}\delta B^i \delta B^j\right)
+            \delta u = \frac{1}{2}\left(\varepsilon_0 g^{ij}\delta E_i \delta E_j
+            + \frac{1}{\mu_0}g_{ij}\delta B^i \delta B^j\right)
 
         Parameters
         ----------
@@ -2785,14 +2801,15 @@ class ShearAlfvenWavesSuperposition(
         return self.size()
 
     def get_energy(self, grid_factor=10, sgridpoints=100):
-        """
+        r"""
         Calculates total electromagnetic energy of the perturbed field.
 
         The perturbed electric and magnetic fields are given by:
 
         .. math::
 
-            \delta\mathbf{E} = -\nabla\varphi - \frac{\partial \alpha \mathbf{B}_0}{\partial t}
+            \delta\mathbf{E} = -\nabla\varphi
+            - \frac{\partial \alpha \mathbf{B}_0}{\partial t}
 
             \delta\mathbf{B} = \nabla \times (\alpha \mathbf{B}_0)
 
@@ -2800,23 +2817,37 @@ class ShearAlfvenWavesSuperposition(
 
         .. math::
 
-            \delta B^s &= \frac{1}{\sqrt{g}}\left(G\frac{\partial\alpha}{\partial\theta} - I\frac{\partial \alpha}{\partial \zeta}\right)
+            \delta B^s &= \frac{1}{\sqrt{g}}\left(
+            G\frac{\partial\alpha}{\partial\theta}
+            - I\frac{\partial \alpha}{\partial \zeta}\right)
 
-            \delta B^\theta &= \frac{1}{\sqrt{g}}\left(K\frac{\partial \alpha}{\partial\zeta} - G\frac{\partial\alpha}{\partial \psi}\right) - \frac{\alpha}{\sqrt{g}}\frac{dG}{d\psi} + \frac{\alpha}{\sqrt{g}}\frac{\partial K}{\partial \zeta}
+            \delta B^\theta &= \frac{1}{\sqrt{g}}\left(
+            K\frac{\partial \alpha}{\partial\zeta}
+            - G\frac{\partial\alpha}{\partial \psi}\right)
+            - \frac{\alpha}{\sqrt{g}}\frac{dG}{d\psi}
+            + \frac{\alpha}{\sqrt{g}}\frac{\partial K}{\partial \zeta}
 
-            \delta B^\zeta &= \frac{1}{\sqrt{g}}\left(I\frac{\partial \alpha}{\partial \psi} - K\frac{\partial \alpha}{\partial \theta}\right) + \frac{\alpha}{\sqrt{g}}\frac{dI}{d\psi} - \frac{\alpha}{\sqrt{g}}\frac{\partial K}{\partial\theta}
+            \delta B^\zeta &= \frac{1}{\sqrt{g}}\left(
+            I\frac{\partial \alpha}{\partial \psi}
+            - K\frac{\partial \alpha}{\partial \theta}\right)
+            + \frac{\alpha}{\sqrt{g}}\frac{dI}{d\psi}
+            - \frac{\alpha}{\sqrt{g}}\frac{\partial K}{\partial\theta}
 
-            \delta E_s &= \frac{\partial\varphi}{\partial s} + K\frac{\partial \alpha}{\partial t}
+            \delta E_s &= \frac{\partial\varphi}{\partial s}
+            + K\frac{\partial \alpha}{\partial t}
 
-            \delta E_\theta &= \frac{\partial\varphi}{\partial \theta} + I\frac{\partial \alpha}{\partial t}
+            \delta E_\theta &= \frac{\partial\varphi}{\partial \theta}
+            + I\frac{\partial \alpha}{\partial t}
 
-            \delta E_\zeta &= \frac{\partial\varphi}{\partial \zeta} + G\frac{\partial\alpha}{\partial t}
+            \delta E_\zeta &= \frac{\partial\varphi}{\partial \zeta}
+            + G\frac{\partial\alpha}{\partial t}
 
         and numerically integrates the field energy density:
 
         .. math::
 
-            \delta u = \frac{1}{2}\left(\varepsilon_0 g^{ij}\delta E_i \delta E_j + \frac{1}{\mu_0}g_{ij}\delta B^i \delta B^j\right)
+            \delta u = \frac{1}{2}\left(\varepsilon_0 g^{ij}\delta E_i \delta E_j
+            + \frac{1}{\mu_0}g_{ij}\delta B^i \delta B^j\right)
 
         Parameters
         ----------
