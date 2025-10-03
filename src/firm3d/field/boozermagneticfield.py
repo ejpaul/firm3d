@@ -2795,7 +2795,7 @@ class ShearAlfvenWavesSuperposition(
         """
         Get the number of waves in the superposition.
 
-        Returns"
+        Returns:
             Number of waves in the superposition
         """
         return self.size()
