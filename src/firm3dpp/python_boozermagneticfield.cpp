@@ -612,5 +612,11 @@ void init_boozermagneticfields(py::module_ &m){
         .def(py::init<shared_ptr<ShearAlfvenWave>>())
         .def("add_wave", &ShearAlfvenWavesSuperposition::add_wave)
         .def("set_points", &ShearAlfvenWavesSuperposition::set_points)
+        .def("get_wave", &ShearAlfvenWavesSuperposition::get_wave)
+        .def("size", &ShearAlfvenWavesSuperposition::size)
+        .def("__len__", &ShearAlfvenWavesSuperposition::size)
+        .def("__getitem__", [](const ShearAlfvenWavesSuperposition& self, size_t index) {
+            return self.get_wave(index);
+        })
         .def_property_readonly("B0", &ShearAlfvenWavesSuperposition::get_B0);
 }

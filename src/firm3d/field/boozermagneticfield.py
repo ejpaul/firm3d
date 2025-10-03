@@ -2705,3 +2705,24 @@ class ShearAlfvenWavesSuperposition(
             )
             harmonic_list.append(sah)
         return ShearAlfvenWavesSuperposition(harmonic_list)
+
+    def __getitem__(self, index):
+        """
+        Get a wave by index.
+        
+        Args:
+            index : (int) Index of the ShearAlfvenHarmonic to retrieve
+            
+        Returns:
+            ShearAlfvenHarmonic at the specified index
+        """
+        return self.get_wave(index)
+    
+    def __len__(self):
+        """
+        Get the number of waves in the superposition.
+        
+        Returns"
+            Number of waves in the superposition
+        """
+        return self.size()
