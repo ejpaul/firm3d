@@ -2539,7 +2539,60 @@ class ShearAlfvenHarmonic(sopp.ShearAlfvenHarmonic, ShearAlfvenWave):
             self, phihat_object, Phim, Phin, omega, phase, B0
         )
         ShearAlfvenWave.__init__(self, B0)
-
+        
+    def get_energy(self, grid_factor=10):
+        """
+        Calculates total electromagnetic energy of the perturbed field.
+        
+        The perturbed electric and magnetic fields are given by:
+        
+        .. math::
+        
+            \delta\mathbf{E} = -\nabla\varphi - \frac{\partial \alpha \mathbf{B}_0}{\partial t}
+            
+            \delta\mathbf{B} = \nabla \times (\alpha \mathbf{B}_0)
+        
+        The method evaluates components of the wave field in Boozer coordinates:
+        
+        .. math::
+        
+            \delta B^s &= \frac{1}{\sqrt{g}}\left(G\frac{\partial\alpha}{\partial\theta} - I\frac{\partial \alpha}{\partial \zeta}\right)
+            
+            \delta B^\theta &= \frac{1}{\sqrt{g}}\left(K\frac{\partial \alpha}{\partial\zeta} - G\frac{\partial\alpha}{\partial \psi}\right) - \frac{\alpha}{\sqrt{g}}\frac{dG}{d\psi} + \frac{\alpha}{\sqrt{g}}\frac{\partial K}{\partial \zeta}
+            
+            \delta B^\zeta &= \frac{1}{\sqrt{g}}\left(I\frac{\partial \alpha}{\partial \psi} - K\frac{\partial \alpha}{\partial \theta}\right) + \frac{\alpha}{\sqrt{g}}\frac{dI}{d\psi} - \frac{\alpha}{\sqrt{g}}\frac{\partial K}{\partial\theta}
+            
+            \delta E_s &= \frac{\partial\varphi}{\partial s} + K\frac{\partial \alpha}{\partial t}
+            
+            \delta E_\theta &= \frac{\partial\varphi}{\partial \theta} + I\frac{\partial \alpha}{\partial t}
+            
+            \delta E_\zeta &= \frac{\partial\varphi}{\partial \zeta} + G\frac{\partial\alpha}{\partial t}
+    
+        and numerically integrates the field energy density:
+        
+        .. math::
+            
+            \delta u = \frac{1}{2}\left(\varepsilon_0 g^{ij}\delta E_i \delta E_j + \frac{1}{\mu_0}g_{ij}\delta B^i \delta B^j\right)
+        
+        Parameters
+        ----------
+        grid_factor : int, optional
+            Controls the grid resolution for numerical integration. The grid 
+            resolution is set to grid_factor times the maximum poloidal and 
+            toroidal Fourier harmonic numbers in the superposition. Default is 10.
+        
+        Returns
+        -------
+        tuple
+            A tuple containing:
+            
+            - dE_energy (float): Electric energy of the wave perturbation in Joules
+            - dB_energy (float): Magnetic energy of the wave perturbation in Joules  
+            - B0_energy (float): Magnetic energy of the background field in Joules
+        """
+        saws = ShearAlfvenWavesSuperposition([self])
+        dE_energy, dB_energy, B0_energy = saws.get_energy(grid_factor)
+        return dE_energy, dB_energy, B0_energy 
 
 class ShearAlfvenWavesSuperposition(
     sopp.ShearAlfvenWavesSuperposition, ShearAlfvenWave
