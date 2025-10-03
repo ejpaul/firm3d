@@ -2835,7 +2835,8 @@ class ShearAlfvenWavesSuperposition(
             - dB_energy (float): Magnetic energy of the wave perturbation in Joules  
             - B0_energy (float): Magnetic energy of the background field in Joules
         """
-        
+        if not isinstance(grid_factor, int) or grid_factor < 1:
+            raise ValueError("grid_factor must be an integer >= 1")
         # remember the points if set already, to set back after calculation
         original_points = self.get_points()
         
@@ -2856,8 +2857,9 @@ class ShearAlfvenWavesSuperposition(
         if s_list[0] == 0.0:
             s_list[0] = s_list[1] / 2
             
-        theta_list = np.linspace(0, 2*np.pi, grid_factor*max_Phim)
-        zeta_list = np.linspace(0, 2*np.pi, grid_factor*max_Phin)
+        theta_list = np.linspace(0, 2*np.pi, grid_factor*max(1,max_Phim))
+        zeta_list = np.linspace(0, 2*np.pi, grid_factor*max(1,max_Phin))
+
         thetas2d, zetas2d, s2d = np.meshgrid(
             theta_list, 
             zeta_list, 
