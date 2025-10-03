@@ -384,7 +384,7 @@ class BoozerMagneticField(sopp.BoozerMagneticField):
     """
 
     def __init__(self, psi0, field_type="vac", nfp=1, stellsym=True):
-        self.psi0 = -psi0
+        self.psi0 = psi0
         self.nfp = nfp
         self.stellsym = stellsym
         field_type = field_type.lower()
@@ -502,16 +502,14 @@ class BoozerMagneticField(sopp.BoozerMagneticField):
             - gstheta * (gstheta * gzetazeta - gthetazeta * gszeta)
             + gszeta * (gstheta * gthetazeta - gszeta * gthetatheta)
         )
-
         G = self.G()[:, 0]
         I = self.I()[:, 0]
         iota = self.iota()[:, 0]
         B = self.modB()[:, 0]
         sqrtg = (G + iota * I) * self.psi0 / (B * B)
-        assert np.all(detg > 0), "Metric determinant must be positive"
         assert np.all(sqrtg != 0), "Jacobian must be non-zero"
 
-        relative_error = np.abs(np.sqrt(detg) - np.abs(sqrtg)) / np.abs(sqrtg)
+        relative_error = np.abs(np.sqrt(np.abs(detg)) - np.abs(sqrtg)) / np.abs(sqrtg)
         max_relative_error_percent = np.max(relative_error) * 100
         if max_relative_error_percent > 0.1:
             # Find the location of maximum error
@@ -2904,8 +2902,7 @@ class ShearAlfvenWavesSuperposition(
             +2*g_cov.tz * Bth * Bzt
         )
 
-
-        B2_grid = (det * B2).reshape(len(theta_list), len(zeta_list), len(s_list))
+        B2_grid = (np.abs(det) * B2).reshape(len(theta_list), len(zeta_list), len(s_list))
         
         integrated_s = np.trapz(B2_grid, x=s_list, axis=2)
         integrated_sz = np.trapz(integrated_s, x=zeta_list, axis=1)
@@ -2931,7 +2928,7 @@ class ShearAlfvenWavesSuperposition(
             +2*g_cont.tz * Eth * Ezt
         )
 
-        E2_grid = (det * E2).reshape(len(theta_list), len(zeta_list), len(s_list))
+        E2_grid = (np.abs(det) * E2).reshape(len(theta_list), len(zeta_list), len(s_list))
         
         integrated_E_s = np.trapz(E2_grid, x=s_list, axis=2)
         integrated_E_sz = np.trapz(integrated_E_s, x=zeta_list, axis=1)
@@ -2947,7 +2944,7 @@ class ShearAlfvenWavesSuperposition(
             +2*g_cont.tz * I * G
         )
 
-        B02_grid = (det * B02).reshape(len(theta_list), len(zeta_list), len(s_list))
+        B02_grid = (np.abs(det) * B02).reshape(len(theta_list), len(zeta_list), len(s_list))
         integrated_B0_s = np.trapz(B02_grid, x=s_list, axis=2)
         integrated_B0_sz = np.trapz(integrated_B0_s, x=zeta_list, axis=1)
         B0_energy = np.trapz(integrated_B0_sz, x=theta_list) / MU0 / 2
