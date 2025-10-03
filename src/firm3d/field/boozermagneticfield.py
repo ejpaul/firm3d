@@ -2783,7 +2783,7 @@ class ShearAlfvenWavesSuperposition(
         """
         return self.size()
     
-    def get_energy(self, grid_factor=10):
+    def get_energy(self, grid_factor=10, sgridpoints=100):
         """
         Calculates total electromagnetic energy of the perturbed field.
         
@@ -2840,14 +2840,13 @@ class ShearAlfvenWavesSuperposition(
         
         max_Phim = 0
         max_Phin = 0
-        s_set = set()
         
         for sah in self:
             max_Phim = max(np.abs(sah.Phim), max_Phim)
             max_Phin = max(np.abs(sah.Phin), max_Phin)
-            s_set.update(sah.phihat.get_s_basis())
+
+        s_list = np.linspace(0,1,sgridpoints+1)[1:]
         
-        s_list = sorted(s_set)
         for s in s_list:
             assert 0.0 <= s <= 1, f"{s=} is out of allowed [0,1] range"
         
