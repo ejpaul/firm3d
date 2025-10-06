@@ -22,6 +22,7 @@ class FAR3DHarmonic:
         m (int): Poloidal mode number.
         n (int): Toroidal mode number.
         amplitudes (np.ndarray): Array of amplitudes corresponding to radial points.
+        phase (float): Phase of harmonic. pi/2 for cosine and 0 for sine.
     """
 
     m: int
@@ -93,6 +94,8 @@ class FAR3DEigenvector:
             num_harmonics (int, optional): The number of harmonics to
                 export (in order of peak amplitude if 'sort_by_amplitude' is
                 set to true). If None, all harmonics are exported.
+            resolution_step (int): Number of indices to skip in the flux label
+                "s". The full resolution is used when this is set to 1.
         """
         num_harmonics = num_harmonics or len(self.harmonics)
         harmonics_data = {
@@ -116,6 +119,10 @@ class FAR3DEigenvector:
 
         Args:
             filename (str): The name of the file to load from.
+            sort_by_amplitude (bool): Sorts the harmonics by peak amplitude
+                (highest to lowest) if set to true. If set to true, a number of
+                harmonics with the highest peak amplitude can be chosen with
+                'num_harmonics'.
 
         Returns:
             FAR3DEigenvector: An instance of FAR3DEigenvector with loaded data.

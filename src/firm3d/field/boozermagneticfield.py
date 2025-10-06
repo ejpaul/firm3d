@@ -2680,7 +2680,6 @@ class ShearAlfvenWavesSuperposition(
             / ((iota * I + G) * minor_radius_meters)
             * (G * unscaled_SAW.dalphadtheta() - I * unscaled_SAW.dalphadzeta())
         )
-        np.max(np.abs(Bpsi_default))
         max_index = np.argmax(np.abs(Bpsi_default))
         _max_s, _max_theta, _max_zeta = (
             points[max_index, 0],
@@ -2729,6 +2728,8 @@ class ShearAlfvenWavesSuperposition(
                 from SAW mode over B0 field
             minor_radius_meters (float): Stellarator's minor radius, in meters.
                 User can get this from VMEC wout equilibrium
+            phase (float): Phase to add to the harmonic. Adds to an existing
+                phase rather than replacing it.
 
         Returns:
             ShearAlfvenWavesSuperposition: A superposition of ShearAlfvenHarmonics.
@@ -2780,7 +2781,6 @@ class ShearAlfvenWavesSuperposition(
             / ((iota * I + G) * minor_radius_meters)
             * (G * unscaled_SAW.dalphadtheta() - I * unscaled_SAW.dalphadzeta())
         )
-        np.max(np.abs(Bpsi_default))
         max_index = np.argmax(np.abs(Bpsi_default))
         _max_s, _max_theta, _max_zeta = (
             points[max_index, 0],
