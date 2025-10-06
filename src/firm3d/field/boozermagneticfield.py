@@ -2561,25 +2561,25 @@ class ShearAlfvenHarmonic(sopp.ShearAlfvenHarmonic, ShearAlfvenWave):
             - I\frac{\partial \alpha}{\partial \zeta}\right)
 
             \delta B^\theta &= \frac{1}{\sqrt{g}}\left(
-            K\frac{\partial \alpha}{\partial\zeta}
-            - G\frac{\partial\alpha}{\partial \psi}\right)
-            - \frac{\alpha}{\sqrt{g}}\frac{dG}{d\psi}
-            + \frac{\alpha}{\sqrt{g}}\frac{\partial K}{\partial \zeta}
+            K\psi_0\frac{\partial \alpha}{\partial\zeta}
+            - G\frac{\partial\alpha}{\partial s}\right)
+            - \frac{\alpha}{\sqrt{g}}\frac{dG}{ds}
+            + \frac{\alpha\psi_0}{\sqrt{g}}\frac{\partial K}{\partial \zeta}
 
             \delta B^\zeta &= \frac{1}{\sqrt{g}}\left(
-            I\frac{\partial \alpha}{\partial \psi}
-            - K\frac{\partial \alpha}{\partial \theta}\right)
-            + \frac{\alpha}{\sqrt{g}}\frac{dI}{d\psi}
-            - \frac{\alpha}{\sqrt{g}}\frac{\partial K}{\partial\theta}
+            I\frac{\partial \alpha}{\partial s}
+            - K\frac{\partial \alpha \psi_0}{\partial \theta}\right)
+            + \frac{\alpha}{\sqrt{g}}\frac{dI}{ds}
+            - \frac{\alpha\psi_0}{\sqrt{g}}\frac{\partial K}{\partial\theta}
 
-            \delta E_s &= \frac{\partial\varphi}{\partial s}
-            + K\frac{\partial \alpha}{\partial t}
+            \delta E_s &= -\frac{\partial\varphi}{\partial s}
+            - K\psi_0\frac{\partial \alpha}{\partial t}
 
-            \delta E_\theta &= \frac{\partial\varphi}{\partial \theta}
-            + I\frac{\partial \alpha}{\partial t}
+            \delta E_\theta &= -\frac{\partial\varphi}{\partial \theta}
+            - I\frac{\partial \alpha}{\partial t}
 
-            \delta E_\zeta &= \frac{\partial\varphi}{\partial \zeta}
-            + G\frac{\partial\alpha}{\partial t}
+            \delta E_\zeta &= -\frac{\partial\varphi}{\partial \zeta}
+            - G\frac{\partial\alpha}{\partial t}
 
         and numerically integrates the field energy density:
 
@@ -2822,25 +2822,25 @@ class ShearAlfvenWavesSuperposition(
             - I\frac{\partial \alpha}{\partial \zeta}\right)
 
             \delta B^\theta &= \frac{1}{\sqrt{g}}\left(
-            K\frac{\partial \alpha}{\partial\zeta}
-            - G\frac{\partial\alpha}{\partial \psi}\right)
-            - \frac{\alpha}{\sqrt{g}}\frac{dG}{d\psi}
-            + \frac{\alpha}{\sqrt{g}}\frac{\partial K}{\partial \zeta}
+            K\psi_0\frac{\partial \alpha}{\partial\zeta}
+            - G\frac{\partial\alpha}{\partial s}\right)
+            - \frac{\alpha}{\sqrt{g}}\frac{dG}{ds}
+            + \frac{\alpha\psi_0}{\sqrt{g}}\frac{\partial K}{\partial \zeta}
 
             \delta B^\zeta &= \frac{1}{\sqrt{g}}\left(
-            I\frac{\partial \alpha}{\partial \psi}
-            - K\frac{\partial \alpha}{\partial \theta}\right)
-            + \frac{\alpha}{\sqrt{g}}\frac{dI}{d\psi}
-            - \frac{\alpha}{\sqrt{g}}\frac{\partial K}{\partial\theta}
+            I\frac{\partial \alpha}{\partial s}
+            - K\frac{\partial \alpha \psi_0}{\partial \theta}\right)
+            + \frac{\alpha}{\sqrt{g}}\frac{dI}{ds}
+            - \frac{\alpha\psi_0}{\sqrt{g}}\frac{\partial K}{\partial\theta}
 
-            \delta E_s &= \frac{\partial\varphi}{\partial s}
-            + K\frac{\partial \alpha}{\partial t}
+            \delta E_s &= -\frac{\partial\varphi}{\partial s}
+            - K\psi_0\frac{\partial \alpha}{\partial t}
 
-            \delta E_\theta &= \frac{\partial\varphi}{\partial \theta}
-            + I\frac{\partial \alpha}{\partial t}
+            \delta E_\theta &= -\frac{\partial\varphi}{\partial \theta}
+            - I\frac{\partial \alpha}{\partial t}
 
-            \delta E_\zeta &= \frac{\partial\varphi}{\partial \zeta}
-            + G\frac{\partial\alpha}{\partial t}
+            \delta E_\zeta &= -\frac{\partial\varphi}{\partial \zeta}
+            - G\frac{\partial\alpha}{\partial t}
 
         and numerically integrates the field energy density:
 
@@ -2886,8 +2886,18 @@ class ShearAlfvenWavesSuperposition(
         if s_list[0] == 0.0:
             s_list[0] = s_list[1] / 2
 
-        theta_list = np.linspace(0, 2 * np.pi, grid_factor * max(1, max_Phim))
-        zeta_list = np.linspace(0, 2 * np.pi, grid_factor * max(1, max_Phin))
+        theta_list = np.linspace(
+            0,
+            2 * np.pi, 
+            num=grid_factor * max(1, max_Phim),
+            endpoint=False
+        )
+        zeta_list = np.linspace(
+            0,
+            2 * np.pi,
+            num=grid_factor * max(1, max_Phin),
+            endpoint=False
+        )
 
         thetas2d, zetas2d, s2d = np.meshgrid(
             theta_list, zeta_list, s_list, indexing="ij"
@@ -2918,8 +2928,18 @@ class ShearAlfvenWavesSuperposition(
         det = B * B / (iota * I + G) / self.B0.psi0
 
         Bs = det * (G * dadth - I * dadzt)
-        Bth = det * (K * dadzt - G * dads - a * dGds + a * dKdzt)
-        Bzt = det * (I * dads - K * dadth + a * dIds + a * dKdth)
+        Bth = det * (
+            self.B0.psi0 * K * dadzt
+            - G * dads
+            - a * dGds
+            + a * self.B0.psi0 * dKdzt
+        )
+        Bzt = det * (
+            I * dads
+            - self.B0.psi0 * K * dadth
+            + a * dIds
+            - a * self.B0.psi0 * dKdth
+        )
 
         B2 = (
             g_cov.ss * Bs * Bs
@@ -2943,9 +2963,9 @@ class ShearAlfvenWavesSuperposition(
         dphidth = self.dPhidtheta()[:, 0]
         dphidzt = self.dPhidzeta()[:, 0]
         dadt = self.alphadot()[:, 0]
-        Es = dphids + K * dadt
-        Eth = dphidth + I * dadt
-        Ezt = dphidzt + G * dadt
+        Es = -dphids - K * self.B0.psi0 * dadt
+        Eth = -dphidth - I * dadt
+        Ezt =-dphidzt - G * dadt
 
         g_cont = g_cov.to_contravariant()
 
@@ -2968,11 +2988,11 @@ class ShearAlfvenWavesSuperposition(
 
         # Equilibrium magnetic energy:
         B02 = (
-            g_cont.ss * K * K
+            g_cont.ss * (self.B0.psi0 * K)**2
             + g_cont.tt * I * I
             + g_cont.zz * G * G
-            + 2 * g_cont.st * K * I
-            + 2 * g_cont.sz * K * G
+            + 2 * g_cont.st * (self.B0.psi0 * K) * I
+            + 2 * g_cont.sz * (self.B0.psi0 * K) * G
             + 2 * g_cont.tz * I * G
         )
 
