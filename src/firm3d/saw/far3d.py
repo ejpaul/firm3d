@@ -1,8 +1,6 @@
-import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
-import plotly.graph_objects as go
 
 __all__ = [
     "FAR3DHarmonic",
@@ -66,20 +64,16 @@ class FAR3DEigenvector:
         peak_amplitudes = np.zeros(len(self.harmonics))
 
         # obtain array of peak amplitudes
-        count = 0
-        for h in self.harmonics:
+        for count, h in enumerate(self.harmonics):
             peak_amplitudes[count] = np.max(h.amplitudes)
-            count += 1
 
         # sort by peak amplitude
         indices_sorted = np.argsort(peak_amplitudes)
 
         sorted_harmonics = self.harmonics.copy()
 
-        count = 0
-        for i in indices_sorted:
+        for count, i in enumerate(indices_sorted):
             sorted_harmonics[count] = self.harmonics[i]
-            count += 1
 
         self.harmonics = sorted_harmonics
 
