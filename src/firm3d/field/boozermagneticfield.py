@@ -2887,16 +2887,10 @@ class ShearAlfvenWavesSuperposition(
             s_list[0] = s_list[1] / 2
 
         theta_list = np.linspace(
-            0,
-            2 * np.pi, 
-            num=grid_factor * max(1, max_Phim),
-            endpoint=False
+            0, 2 * np.pi, num=grid_factor * max(1, max_Phim), endpoint=False
         )
         zeta_list = np.linspace(
-            0,
-            2 * np.pi,
-            num=grid_factor * max(1, max_Phin),
-            endpoint=False
+            0, 2 * np.pi, num=grid_factor * max(1, max_Phin), endpoint=False
         )
 
         thetas2d, zetas2d, s2d = np.meshgrid(
@@ -2929,16 +2923,10 @@ class ShearAlfvenWavesSuperposition(
 
         Bs = det * (G * dadth - I * dadzt)
         Bth = det * (
-            self.B0.psi0 * K * dadzt
-            - G * dads
-            - a * dGds
-            + a * self.B0.psi0 * dKdzt
+            self.B0.psi0 * K * dadzt - G * dads - a * dGds + a * self.B0.psi0 * dKdzt
         )
         Bzt = det * (
-            I * dads
-            - self.B0.psi0 * K * dadth
-            + a * dIds
-            - a * self.B0.psi0 * dKdth
+            I * dads - self.B0.psi0 * K * dadth + a * dIds - a * self.B0.psi0 * dKdth
         )
 
         B2 = (
@@ -2965,7 +2953,7 @@ class ShearAlfvenWavesSuperposition(
         dadt = self.alphadot()[:, 0]
         Es = -dphids - K * self.B0.psi0 * dadt
         Eth = -dphidth - I * dadt
-        Ezt =-dphidzt - G * dadt
+        Ezt = -dphidzt - G * dadt
 
         g_cont = g_cov.to_contravariant()
 
@@ -2988,7 +2976,7 @@ class ShearAlfvenWavesSuperposition(
 
         # Equilibrium magnetic energy:
         B02 = (
-            g_cont.ss * (self.B0.psi0 * K)**2
+            g_cont.ss * (self.B0.psi0 * K) ** 2
             + g_cont.tt * I * I
             + g_cont.zz * G * G
             + 2 * g_cont.st * (self.B0.psi0 * K) * I
