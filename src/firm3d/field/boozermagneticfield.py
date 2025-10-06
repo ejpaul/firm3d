@@ -2714,7 +2714,7 @@ class ShearAlfvenWavesSuperposition(
         B0: BoozerMagneticField,
         max_dB_normal_by_B0: float = 1e-3,
         minor_radius_meters=1.7,
-        phase=0.0
+        phase=0.0,
     ):
         """
         Converts FAR3DEigenvector harmonics into ShearAlfvenHarmonics submerged
@@ -2751,7 +2751,7 @@ class ShearAlfvenWavesSuperposition(
                 Phim=harmonic.m,
                 Phin=harmonic.n,
                 omega=omega,
-                phase=harmonic.phase+phase,
+                phase=harmonic.phase + phase,
                 B0=B0,
             )
             m_list.append(harmonic.m)

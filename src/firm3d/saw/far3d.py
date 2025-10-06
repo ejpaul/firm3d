@@ -12,6 +12,7 @@ __all__ = [
 
 # Note that this current module only handles the FAR3D initial value problem output.
 
+
 @dataclass
 class FAR3DHarmonic:
     """
@@ -28,6 +29,7 @@ class FAR3DHarmonic:
     amplitudes: np.ndarray
     phase: float
 
+
 @dataclass
 class FAR3DEigenvector:
     """
@@ -41,8 +43,13 @@ class FAR3DEigenvector:
     harmonics: list[FAR3DHarmonic]
     sort_by_amplitude: bool = True
 
-    def __init__(self, eigenvalue: float, s_coords: np.ndarray, 
-                 harmonics: list[FAR3DHarmonic], sort_by_amplitude: bool = True):
+    def __init__(
+        self,
+        eigenvalue: float,
+        s_coords: np.ndarray,
+        harmonics: list[FAR3DHarmonic],
+        sort_by_amplitude: bool = True,
+    ):
         self.eigenvalue = eigenvalue
         self.s_coords = s_coords
         self.harmonics = harmonics
@@ -83,8 +90,8 @@ class FAR3DEigenvector:
 
         Args:
             filename (str): The name of the file to export to.
-            num_harmonics (int, optional): The number of harmonics to 
-                export (in order of peak amplitude if 'sort_by_amplitude' is 
+            num_harmonics (int, optional): The number of harmonics to
+                export (in order of peak amplitude if 'sort_by_amplitude' is
                 set to true). If None, all harmonics are exported.
         """
         num_harmonics = num_harmonics or len(self.harmonics)
@@ -125,10 +132,11 @@ class FAR3DEigenvector:
             sort_by_amplitude=sort_by_amplitude,
         )
 
+
 @dataclass
 class FAR3DParser:
     """
-    A class to handle the parsing and storage of eigenmode data from 
+    A class to handle the parsing and storage of eigenmode data from
     FAR3D. It currently parses the 'phi_####' files for eigenvectors
     and the corresponding modes.
     """
@@ -137,7 +145,7 @@ class FAR3DParser:
     def from_file(cls, filename, eigenvalue):
         """
         Load harmonics data from a file.
-        
+
         Parameters:
         -----------
         filename : str
@@ -145,45 +153,47 @@ class FAR3DParser:
         eigenvalue : str
             The growth rate (imaginary component of the eigenvalue) from
             FAR3D 'tmp_grwth_omega'.
-            
+
         Returns:
         --------
         Harmonics
             A new Harmonics instance with data loaded from the file
         """
         harmonics = []
-        
+
         with open(filename) as f:
             head = f.readline()
-        
+
         phiarr = np.loadtxt(filename, skiprows=1)
-        
-        columns = head.split('\t')
+
+        columns = head.split("\t")
         for nc, c in enumerate(columns):
             # special case for the first column
-            if c == 'r':
+            if c == "r":
                 # convert from rho to s
-                s_coords = np.array(phiarr[:, nc]**2)
+                s_coords = np.array(phiarr[:, nc] ** 2)
                 # skips the current loop iteration
                 continue
-            
-            m = int(c.split(' ')[-2][:-1])
-            n = int(c.split(' ')[-1][0])
-            
+
+            m = int(c.split(" ")[-2][:-1])
+            n = int(c.split(" ")[-1][0])
+
             phase = 0.0
-            if c[0] == 'R':
+            if c[0] == "R":
                 # cosine
                 phase = np.pi / 2.0
-            elif c[0] == 'I':
+            elif c[0] == "I":
                 # sine
                 phase = 0.0
             else:
                 raise ValueError("Failed to parse first line")
-            
-            temp_harmonic = FAR3DHarmonic(m, n, amplitudes=np.array(phiarr[:, nc]), phase=phase)
 
-            harmonics.append(
-                temp_harmonic
+            temp_harmonic = FAR3DHarmonic(
+                m, n, amplitudes=np.array(phiarr[:, nc]), phase=phase
             )
 
-        return FAR3DEigenvector(eigenvalue=eigenvalue,s_coords=s_coords,harmonics=harmonics)
+            harmonics.append(temp_harmonic)
+
+        return FAR3DEigenvector(
+            eigenvalue=eigenvalue, s_coords=s_coords, harmonics=harmonics
+        )
