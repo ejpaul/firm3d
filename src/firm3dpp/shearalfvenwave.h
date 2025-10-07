@@ -578,6 +578,17 @@ public:
     }
   }
 
+  std::shared_ptr<ShearAlfvenWave> get_wave(size_t index) const {
+    if (index >= waves.size()) {
+      throw std::out_of_range("Wave index out of range");
+    }
+    return waves[index];
+  }
+
+  size_t size() const {
+    return waves.size();
+  }
+  
 protected:
   void _Phi_impl(Array2& Phi) override {
     Phi.fill(0.0);
