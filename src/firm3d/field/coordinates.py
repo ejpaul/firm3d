@@ -210,14 +210,14 @@ class BoozerCoordinateTransformer:
             success = False
 
             # Get multiple grid-based guesses
-            target_point = points_cyl[i,:]
+            target_point = points_cyl[i, :]
             initial_guesses = get_grid_guesses(target_point, n_guesses)
 
             for x0 in initial_guesses:
                 sol = root(
                     objective_function,
                     x0,
-                    args=(points_cyl[i,:]),
+                    args=(points_cyl[i, :]),
                     method="hybr",
                     tol=ftol,
                 )
@@ -328,9 +328,7 @@ class VMECCoordinateTransformer:
         vmec_coords[:, 2] = phi_mesh
 
         # Convert to cylindrical coordinates using vmec_to_cylindrical
-        points_cyl = vmec_to_cylindrical(
-            self.wout_filename, vmec_coords
-        )
+        points_cyl = vmec_to_cylindrical(self.wout_filename, vmec_coords)
 
         return vmec_coords, points_cyl
 
@@ -383,6 +381,7 @@ class VMECCoordinateTransformer:
             s_full = np.linspace(0, 1, ns)
 
         points_vmec = np.zeros((npoints, 3))
+
         def objective_function(x_norm, points_cyl_target):
             """
             Objective function using normalized coordinates
@@ -415,7 +414,7 @@ class VMECCoordinateTransformer:
 
             return [
                 R_computed - points_cyl_target[0],
-                Z_computed - points_cyl_target[2]
+                Z_computed - points_cyl_target[2],
             ]
 
         def convert_to_normalized(s, theta):
@@ -475,13 +474,13 @@ class VMECCoordinateTransformer:
             success = False
 
             # Get multiple grid-based guesses
-            initial_guesses_normalized = get_grid_guesses(points_cyl[i,:], n_guesses)
+            initial_guesses_normalized = get_grid_guesses(points_cyl[i, :], n_guesses)
             for x0_norm in initial_guesses_normalized:
                 try:
                     sol = root(
                         objective_function,
                         x0_norm,
-                        args=(points_cyl[i,:]),
+                        args=(points_cyl[i, :]),
                         method="hybr",
                         tol=ftol,
                     )
@@ -502,7 +501,7 @@ class VMECCoordinateTransformer:
             if not success:
                 raise RuntimeError(
                     f"Root finding failed for point {i} with coordinates "
-                    f"R={points_cyl[i,0]}, phi={points_cyl[i,1]}, Z={points_cyl[i,2]}"
+                    f"R={points_cyl[i, 0]}, phi={points_cyl[i, 1]}, Z={points_cyl[i, 2]}"
                 )
 
         return points_vmec
@@ -860,6 +859,7 @@ def vmec_to_cylindrical(wout_filename, points_vmec):
     points_cyl[:, 1] = points_vmec[:, 2]
 
     return points_cyl
+
 
 def cylindrical_to_vmec(
     wout_filename,

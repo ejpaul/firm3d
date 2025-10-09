@@ -29,18 +29,22 @@ class TestCoordinates(unittest.TestCase):
         self.field = BoozerRadialInterpolant(filename_vac, 1, comm=None)
 
         # Test points in Boozer coordinates (npoints, 3) format
-        self.points_boozer_test = np.column_stack([
-            [0.5, 0.7, 0.3],  # s
-            [0.0, np.pi / 2, np.pi],  # theta
-            [0.0, np.pi / 4, np.pi / 2]  # zeta
-        ])
+        self.points_boozer_test = np.column_stack(
+            [
+                [0.5, 0.7, 0.3],  # s
+                [0.0, np.pi / 2, np.pi],  # theta
+                [0.0, np.pi / 4, np.pi / 2],  # zeta
+            ]
+        )
 
         # Test points in cylindrical coordinates (npoints, 3) format
-        self.points_cyl_test = np.column_stack([
-            [1.5, 1.7, 1.3],  # R
-            [0.0, np.pi / 4, np.pi / 2],  # phi
-            [0.1, 0.2, -0.1]  # Z
-        ])
+        self.points_cyl_test = np.column_stack(
+            [
+                [1.5, 1.7, 1.3],  # R
+                [0.0, np.pi / 4, np.pi / 2],  # phi
+                [0.1, 0.2, -0.1],  # Z
+            ]
+        )
 
     def test_boozer_to_cylindrical_basic(self):
         """Test basic Boozer to cylindrical coordinate transformation."""
@@ -89,15 +93,15 @@ class TestCoordinates(unittest.TestCase):
     def test_cylindrical_to_boozer_basic(self):
         """Test basic cylindrical to Boozer coordinate transformation."""
         # Use coordinates that are known to work from the roundtrip test
-        points_cyl = np.column_stack([
-            [1.27177872, 0.92842923, 0.71525574],
-            [0.0, 0.67037294, 1.57079633],
-            [0.00000000e00, 3.11030751e-01, 2.87512917e-17]
-        ])
-
-        points_boozer = cylindrical_to_boozer(
-            self.field, points_cyl, n_guesses=10
+        points_cyl = np.column_stack(
+            [
+                [1.27177872, 0.92842923, 0.71525574],
+                [0.0, 0.67037294, 1.57079633],
+                [0.00000000e00, 3.11030751e-01, 2.87512917e-17],
+            ]
         )
+
+        points_boozer = cylindrical_to_boozer(self.field, points_cyl, n_guesses=10)
 
         # Check output shape
         self.assertEqual(points_boozer.shape, (3, 3))
@@ -117,11 +121,13 @@ class TestCoordinates(unittest.TestCase):
     def test_cylindrical_to_boozer_n_guesses(self):
         """Test cylindrical to Boozer with custom number of initial guesses."""
         # Use coordinates that are known to work
-        points_cyl = np.column_stack([
-            [1.27177872, 0.92842923, 0.71525574],
-            [0.0, 0.67037294, 1.57079633],
-            [0.00000000e00, 3.11030751e-01, 2.87512917e-17]
-        ])
+        points_cyl = np.column_stack(
+            [
+                [1.27177872, 0.92842923, 0.71525574],
+                [0.0, 0.67037294, 1.57079633],
+                [0.00000000e00, 3.11030751e-01, 2.87512917e-17],
+            ]
+        )
 
         # Test with different numbers of guesses
         for n_guesses in [10, 20]:
@@ -144,11 +150,9 @@ class TestCoordinates(unittest.TestCase):
         print("\n=== Boozer -> Cylindrical vs Boozer -> VMEC -> Cylindrical Test ===")
 
         # Test with multiple points
-        points_boozer = np.column_stack([
-            [0.3, 0.5, 0.7],
-            [0.0, np.pi / 2, np.pi],
-            [0.0, np.pi / 4, np.pi / 2]
-        ])
+        points_boozer = np.column_stack(
+            [[0.3, 0.5, 0.7], [0.0, np.pi / 2, np.pi], [0.0, np.pi / 4, np.pi / 2]]
+        )
 
         print("Original Boozer coordinates:")
         print(f"  s: {points_boozer[:, 0]}")
@@ -163,9 +167,7 @@ class TestCoordinates(unittest.TestCase):
         print(f"  Z: {points_cyl_direct[:, 2]}")
 
         # Two-step transformation: Boozer -> VMEC -> Cylindrical
-        points_vmec = boozer_to_vmec(
-            filename_vac_wout, self.field, points_boozer
-        )
+        points_vmec = boozer_to_vmec(filename_vac_wout, self.field, points_boozer)
         points_cyl_vmec = vmec_to_cylindrical(filename_vac_wout, points_vmec)
         print("\nTwo-step transformation (Boozer -> VMEC -> Cylindrical):")
         print(f"  R: {points_cyl_vmec[:, 0]}")
@@ -198,11 +200,13 @@ class TestCoordinates(unittest.TestCase):
         """Test roundtrip transformation: Boozer -> Cylindrical -> Boozer."""
         print("\n=== Boozer -> Cylindrical -> Boozer Roundtrip Test ===")
         # Test with multiple points that are known to work well
-        points_boozer = np.column_stack([
-            [0.3, 0.5, 0.7, 0.9],
-            [0.0, np.pi / 2, np.pi, np.pi / 4],
-            [0.0, np.pi / 4, np.pi / 2, np.pi / 3]
-        ])
+        points_boozer = np.column_stack(
+            [
+                [0.3, 0.5, 0.7, 0.9],
+                [0.0, np.pi / 2, np.pi, np.pi / 4],
+                [0.0, np.pi / 4, np.pi / 2, np.pi / 3],
+            ]
+        )
 
         print("Original Boozer coordinates:")
         print(f"  s: {points_boozer[:, 0]}")
@@ -217,9 +221,7 @@ class TestCoordinates(unittest.TestCase):
         print(f"  Z: {points_cyl[:, 2]}")
 
         # Reverse transformation
-        points_boozer_back = cylindrical_to_boozer(
-            self.field, points_cyl, n_guesses=20
-        )
+        points_boozer_back = cylindrical_to_boozer(self.field, points_cyl, n_guesses=20)
         print("\nFinal Boozer coordinates (after roundtrip):")
         print(f"  s: {points_boozer_back[:, 0]}")
         print(f"  theta: {points_boozer_back[:, 1]}")
@@ -253,21 +255,17 @@ class TestCoordinates(unittest.TestCase):
         # Test with a single point
         points_vmec = np.array([[0.5, 0.0, 0.0]])
 
-        points_boozer = vmec_to_boozer(
-            filename_vac_wout, self.field, points_vmec
-        )
+        points_boozer = vmec_to_boozer(filename_vac_wout, self.field, points_vmec)
 
         # Check output shape
         self.assertEqual(points_boozer.shape, (1, 3))
 
         # Check that angles are in reasonable range
-        theta_in_range = (
-            np.all(points_boozer[:, 1] >= -2 * np.pi) and
-            np.all(points_boozer[:, 1] <= 2 * np.pi)
+        theta_in_range = np.all(points_boozer[:, 1] >= -2 * np.pi) and np.all(
+            points_boozer[:, 1] <= 2 * np.pi
         )
-        zeta_in_range = (
-            np.all(points_boozer[:, 2] >= -2 * np.pi) and
-            np.all(points_boozer[:, 2] <= 2 * np.pi)
+        zeta_in_range = np.all(points_boozer[:, 2] >= -2 * np.pi) and np.all(
+            points_boozer[:, 2] <= 2 * np.pi
         )
         self.assertTrue(theta_in_range)
         self.assertTrue(zeta_in_range)
@@ -277,21 +275,17 @@ class TestCoordinates(unittest.TestCase):
         # Test with a single point
         points_boozer = np.array([[0.5, 0.0, 0.0]])
 
-        points_vmec = boozer_to_vmec(
-            filename_vac_wout, self.field, points_boozer
-        )
+        points_vmec = boozer_to_vmec(filename_vac_wout, self.field, points_boozer)
 
         # Check output shape
         self.assertEqual(points_vmec.shape, (1, 3))
 
         # Check that angles are in reasonable range
-        theta_in_range = (
-            np.all(points_vmec[:, 1] >= -2 * np.pi) and
-            np.all(points_vmec[:, 1] <= 2 * np.pi)
+        theta_in_range = np.all(points_vmec[:, 1] >= -2 * np.pi) and np.all(
+            points_vmec[:, 1] <= 2 * np.pi
         )
-        phi_in_range = (
-            np.all(points_vmec[:, 2] >= -2 * np.pi) and
-            np.all(points_vmec[:, 2] <= 2 * np.pi)
+        phi_in_range = np.all(points_vmec[:, 2] >= -2 * np.pi) and np.all(
+            points_vmec[:, 2] <= 2 * np.pi
         )
         self.assertTrue(theta_in_range)
         self.assertTrue(phi_in_range)
@@ -302,14 +296,10 @@ class TestCoordinates(unittest.TestCase):
         points_vmec = np.array([[0.5, np.pi / 4, np.pi / 2]])
 
         # Forward transformation
-        points_boozer = vmec_to_boozer(
-            filename_vac_wout, self.field, points_vmec
-        )
+        points_boozer = vmec_to_boozer(filename_vac_wout, self.field, points_vmec)
 
         # Reverse transformation
-        points_vmec_back = boozer_to_vmec(
-            filename_vac_wout, self.field, points_boozer
-        )
+        points_vmec_back = boozer_to_vmec(filename_vac_wout, self.field, points_boozer)
 
         # Check that we get back close to original values
         # Take modulus of angles with 2π to ensure they are in the same range
@@ -348,9 +338,7 @@ class TestCoordinates(unittest.TestCase):
         self.assertEqual(points_vmec.shape, (1, 3))
 
         # Check that s is in [0, 1]
-        s_in_range = (
-            np.all(points_vmec[:, 0] >= 0) and np.all(points_vmec[:, 0] <= 1)
-        )
+        s_in_range = np.all(points_vmec[:, 0] >= 0) and np.all(points_vmec[:, 0] <= 1)
         self.assertTrue(s_in_range)
 
     def test_vmec_cylindrical_roundtrip(self):
@@ -413,11 +401,9 @@ class TestCoordinates(unittest.TestCase):
         """Test transformations with multiple points."""
         print("\n=== Multiple Points Test ===")
         # Test Boozer to cylindrical with multiple points
-        points_boozer = np.column_stack([
-            [0.3, 0.5, 0.7],
-            [0.0, np.pi / 2, np.pi],
-            [0.0, np.pi / 4, np.pi / 2]
-        ])
+        points_boozer = np.column_stack(
+            [[0.3, 0.5, 0.7], [0.0, np.pi / 2, np.pi], [0.0, np.pi / 4, np.pi / 2]]
+        )
 
         print("Original Boozer coordinates (multiple points):")
         print(f"  s: {points_boozer[:, 0]}")
@@ -431,9 +417,7 @@ class TestCoordinates(unittest.TestCase):
         print(f"  Z: {points_cyl[:, 2]}")
 
         # Test cylindrical to Boozer with multiple points
-        points_boozer_back = cylindrical_to_boozer(
-            self.field, points_cyl, n_guesses=10
-        )
+        points_boozer_back = cylindrical_to_boozer(self.field, points_cyl, n_guesses=10)
         print("\nFinal Boozer coordinates (after roundtrip):")
         print(f"  s: {points_boozer_back[:, 0]}")
         print(f"  theta: {points_boozer_back[:, 1]}")
@@ -516,4 +500,3 @@ class TestCoordinates(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
