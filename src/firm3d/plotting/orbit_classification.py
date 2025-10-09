@@ -27,8 +27,17 @@ class OrbitClassification:
     statistics between trapping states.
     """
 
-    def __init__(self, field, Ekin, mass, charge, helicity_M, helicity_N,
-                 barely_trapped_crit=2*np.pi*1.25, ripple_trapped_crit=0.5):
+    def __init__(
+        self,
+        field,
+        Ekin,
+        mass,
+        charge,
+        helicity_M,
+        helicity_N,
+        barely_trapped_crit=2 * np.pi * 1.25,
+        ripple_trapped_crit=0.5,
+    ):
         r"""
         Initialize the OrbitClassification class.
 
@@ -201,28 +210,30 @@ class OrbitClassification:
         # Compute all of the times when the particle bounces off vpar plane
         # These are mirror points where particle reverses direction
         bounce_times = []
-        nhits = len(res_hit[:,0])
+        nhits = len(res_hit[:, 0])
         for j in range(nhits):
-            if (res_hit[j,1]==0): # vpar plane was hit
-                bounce_times.append(res_hit[j,0])
+            if res_hit[j, 1] == 0:  # vpar plane was hit
+                bounce_times.append(res_hit[j, 0])
 
         nbounce = len(bounce_times)
 
         # Unwrap theta to handle periodic boundary crossings (prevents jumps at ±π)
-        thetas = np.unwrap(res_ty[:,2])
+        thetas = np.unwrap(res_ty[:, 2])
 
         # Extract initial conditions
         point = np.zeros((1, 3))
-        point[0,:] = res_ty[0,1:4]  # Initial position [s, theta, zeta]
-        vpar_init = res_ty[0,4]  # Initial parallel velocity [m/s]
+        point[0, :] = res_ty[0, 1:4]  # Initial position [s, theta, zeta]
+        vpar_init = res_ty[0, 4]  # Initial parallel velocity [m/s]
 
         # Compute trapping parameter λ = v_perp^2 / (v^2 * B)
         # From energy conservation: v^2 = vpar^2 + vperp^2 = 2*Ekin/mass
         # At mirror point: vpar=0, so vperp^2 = v^2, giving B_mirror = v^2/(λ*v^2) = 1/λ
         self.field.set_points(point)
-        modB_0 = self.field.modB()[0,0]
-        lam = (2*self.Ekin/self.mass - vpar_init**2)/(modB_0*2*self.Ekin/self.mass)
-        modB_crit = 1/lam  # Critical |B| at mirror points
+        modB_0 = self.field.modB()[0, 0]
+        lam = (2 * self.Ekin / self.mass - vpar_init**2) / (
+            modB_0 * 2 * self.Ekin / self.mass
+        )
+        modB_crit = 1 / lam  # Critical |B| at mirror points
 
         # Initialize arrays to store per-bounce-segment diagnostics
         Jpars = []  # Parallel action variable for each half-bounce
@@ -234,48 +245,48 @@ class OrbitClassification:
         dalphas = []  # Change in field line label alpha for each bounce
 
         # Iterate over bounce segments (from mirror point j to mirror point j+1)
-        for j in range(nbounce-1):
+        for j in range(nbounce - 1):
             # Find trajectory indices corresponding to this bounce segment
-            index_start = np.argmin(np.abs(bounce_times[j] - res_ty[:,0]))
-            index_end = np.argmin(np.abs(bounce_times[j+1] - res_ty[:,0]))
+            index_start = np.argmin(np.abs(bounce_times[j] - res_ty[:, 0]))
+            index_end = np.argmin(np.abs(bounce_times[j + 1] - res_ty[:, 0]))
 
             # Compute radial excursion during this bounce
-            ds = res_ty[index_end,1] - res_ty[index_start,1]
+            ds = res_ty[index_end, 1] - res_ty[index_start, 1]
             dss.append(ds)
 
             # Compute change in helical angle chi = M*theta - N*zeta
             # This is the primary quantity used for classification
             dtheta = thetas[index_end] - thetas[index_start]
-            dzeta = res_ty[index_end,3] - res_ty[index_start,3]
-            dchi = self.helicity_M*dtheta - self.helicity_N*dzeta
+            dzeta = res_ty[index_end, 3] - res_ty[index_start, 3]
+            dchi = self.helicity_M * dtheta - self.helicity_N * dzeta
             dchis.append(np.abs(dchi))
 
             # Compute mean radial position during this bounce segment
-            mean_s = np.mean(res_ty[index_start:index_end+1,1])
+            mean_s = np.mean(res_ty[index_start : index_end + 1, 1])
 
             # Predict dchi based on mirror point locations on constant-s
             # Sample modB on a chi grid at fixed s and eta=0
-            chi_grid = np.linspace(0,2*np.pi,100)
+            chi_grid = np.linspace(0, 2 * np.pi, 100)
             theta, zeta = self.chi_eta_to_theta_zeta(chi_grid, np.zeros_like(chi_grid))
-            points = np.zeros((len(chi_grid.flatten()),3))
-            points[:,0] = mean_s
-            points[:,1] = theta
-            points[:,2] = zeta
+            points = np.zeros((len(chi_grid.flatten()), 3))
+            points[:, 0] = mean_s
+            points[:, 1] = theta
+            points[:, 2] = zeta
             self.field.set_points(points)
-            iota_s = self.field.iota()[0,0]
+            iota_s = self.field.iota()[0, 0]
 
             # Compute change in field line label alpha = theta - iota*zeta
             # This characterizes motion across flux surfaces
-            dalpha = dtheta - iota_s*dzeta
+            dalpha = dtheta - iota_s * dzeta
             dalphas.append(dalpha)
 
             # Compute gamma_c parameter that characterizes orbit width
             # gamma_c → 0 for thin orbits, gamma_c → 1 for wide orbits
-            gammac = (2/np.pi)*np.arctan(np.abs(ds)/np.abs(dalpha))
+            gammac = (2 / np.pi) * np.arctan(np.abs(ds) / np.abs(dalpha))
             gammacs.append(gammac)
 
             # Find mirror point (where |B| = B_critical) and min |B|
-            modB = self.field.modB()[:,0]
+            modB = self.field.modB()[:, 0]
             mirror_loc = np.argmin(np.abs(modB - modB_crit))
             chi_mirror = chi_grid[mirror_loc]
             min_loc = np.argmin(modB)
@@ -283,29 +294,32 @@ class OrbitClassification:
 
             # Predicted dchi = 2 * (chi_mirror - chi_min)
             # Factor of 2 from bouncing between mirror points
-            dchi_predicted = np.min([
-                np.abs(2*(chi_mirror - chi_min)),
-                np.abs(2*(chi_mirror - (chi_min+2*np.pi))),
-                np.abs(2*(chi_mirror - (chi_min-2*np.pi)))])
+            dchi_predicted = np.min(
+                [
+                    np.abs(2 * (chi_mirror - chi_min)),
+                    np.abs(2 * (chi_mirror - (chi_min + 2 * np.pi))),
+                    np.abs(2 * (chi_mirror - (chi_min - 2 * np.pi))),
+                ]
+            )
             dchis_predicted.append(dchi_predicted)
 
             # Compute parallel action variable J_|| = ∮ v_|| dℓ_|| / (2π)
             # Using the canonical form: J_|| = ∫ v_|| dζ / (B·∇ζ)
             # where B·∇ζ = B / (G + ιI) in Boozer coordinates
-            points = np.zeros((index_end-index_start+1,3))
-            points[:,0] = res_ty[index_start:index_end+1,1]
-            points[:,1] = res_ty[index_start:index_end+1,2]
-            points[:,2] = res_ty[index_start:index_end+1,3]
+            points = np.zeros((index_end - index_start + 1, 3))
+            points[:, 0] = res_ty[index_start : index_end + 1, 1]
+            points[:, 1] = res_ty[index_start : index_end + 1, 2]
+            points[:, 2] = res_ty[index_start : index_end + 1, 3]
             self.field.set_points(points)
-            bdotgradzeta = self.field.modB()[:,0] / (
-                self.field.G()[:,0] + self.field.iota()[:,0]*self.field.I()[:,0]
+            bdotgradzeta = self.field.modB()[:, 0] / (
+                self.field.G()[:, 0] + self.field.iota()[:, 0] * self.field.I()[:, 0]
             )
-            vpar = res_ty[index_start:index_end+1,4]
+            vpar = res_ty[index_start : index_end + 1, 4]
 
             # Integrate using trapezoidal rule
-            vpar_center = 0.5*(vpar[1::]+vpar[0:-1])
-            bdotgradzeta_center = 0.5*(bdotgradzeta[1::]+bdotgradzeta[0:-1])
-            delta_zeta = points[1::,2]-points[0:-1,2]
+            vpar_center = 0.5 * (vpar[1::] + vpar[0:-1])
+            bdotgradzeta_center = 0.5 * (bdotgradzeta[1::] + bdotgradzeta[0:-1])
+            delta_zeta = points[1::, 2] - points[0:-1, 2]
             Jpar = np.sum(vpar_center * delta_zeta / bdotgradzeta_center)
             Jpars.append(Jpar)
 
@@ -336,13 +350,14 @@ class OrbitClassification:
 
             # Compute fraction of time in each trapping state
             barely_trapped_frac = np.count_nonzero(
-                dchis > self.barely_trapped_crit) / len(dchis)
+                dchis > self.barely_trapped_crit
+            ) / len(dchis)
             ripple_trapped_frac = np.count_nonzero(
                 dchis < self.ripple_trapped_crit * dchis_predicted
             ) / len(dchis)
             banana_frac = np.count_nonzero(
-                (dchis <= self.barely_trapped_crit) *
-                (dchis >= self.ripple_trapped_crit)
+                (dchis <= self.barely_trapped_crit)
+                * (dchis >= self.ripple_trapped_crit)
             ) / len(dchis)
 
             # Count transitions between different trapping states
@@ -359,34 +374,32 @@ class OrbitClassification:
                 # Sum consecutive half-bounces
                 Jpar_full = Jpars[0:-1] + Jpars[1::]
                 # Normalized std deviation
-                Jpar_var = np.std(Jpar_full)/np.mean(Jpar_full)
+                Jpar_var = np.std(Jpar_full) / np.mean(Jpar_full)
             else:
                 Jpar_var = 0.0
 
         particle_dict = {
-            'losttime': res_ty[-1,0],
-            'nbounce': nbounce,
-            'bounce_times': bounce_times,
-            'lam': lam,
-            'point0': point,
-            'vpar0': vpar_init,
-
+            "losttime": res_ty[-1, 0],
+            "nbounce": nbounce,
+            "bounce_times": bounce_times,
+            "lam": lam,
+            "point0": point,
+            "vpar0": vpar_init,
             # All of these quantities have length nbounce-1
-            'status': status,
-            'dss': dss,
-            'dalphas': dalphas,
-            'dchis': dchis,
-            'dchis_predicted': dchis_predicted,
-            'gammacs': gammacs,
-            'Jpars': Jpars,
-            's_means': s_means,
-
+            "status": status,
+            "dss": dss,
+            "dalphas": dalphas,
+            "dchis": dchis,
+            "dchis_predicted": dchis_predicted,
+            "gammacs": gammacs,
+            "Jpars": Jpars,
+            "s_means": s_means,
             # Cumulative statistics
-            'banana_frac': banana_frac,
-            'barely_trapped_frac': barely_trapped_frac,
-            'ripple_trapped_frac': ripple_trapped_frac,
-            'ntransitions': ntransitions,
-            'Jpar_var': Jpar_var,
-            'gammac_mean': gammac_mean,
+            "banana_frac": banana_frac,
+            "barely_trapped_frac": barely_trapped_frac,
+            "ripple_trapped_frac": ripple_trapped_frac,
+            "ntransitions": ntransitions,
+            "Jpar_var": Jpar_var,
+            "gammac_mean": gammac_mean,
         }
         return particle_dict
