@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FIRM3D Paper Preview - JOSS Submission</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f5f5f5;
+            color: #333;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem 0;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 2.5rem;
+            font-weight: 300;
+        }
+        
+        .header p {
+            margin: 0.5rem 0 0 0;
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        
+        .paper-info {
+            background: white;
+            border-radius: 8px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .download-section {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            margin: 2rem 0;
+            flex-wrap: wrap;
+        }
+        
+        .download-btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background: #007cba;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 500;
+            transition: background 0.3s ease;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        .download-btn:hover {
+            background: #005a87;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+        }
+        
+        .pdf-viewer {
+            background: white;
+            border-radius: 8px;
+            padding: 1rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-top: 2rem;
+        }
+        
+        .pdf-viewer iframe {
+            width: 100%;
+            height: 800px;
+            border: none;
+            border-radius: 4px;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            background: #28a745;
+            color: white;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            margin-left: 1rem;
+        }
+        
+        .meta-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        
+        .meta-item {
+            padding: 1rem;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border-left: 4px solid #007cba;
+        }
+        
+        .meta-item h4 {
+            margin: 0 0 0.5rem 0;
+            color: #007cba;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .meta-item p {
+            margin: 0;
+            font-size: 0.95rem;
+        }
+        
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .container {
+                padding: 1rem;
+            }
+            
+            .download-section {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .pdf-viewer iframe {
+                height: 600px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>FIRM3D: Fast ion reduced models in 3D</h1>
+        <p>Journal of Open Source Software (JOSS) Submission Preview</p>
+        <span class="status-badge">✓ Validated</span>
+    </div>
+    
+    <div class="container">
+        <div class="paper-info">
+            <h2>Paper Information</h2>
+            <div class="meta-info">
+                <div class="meta-item">
+                    <h4>Authors</h4>
+                    <p>Elizabeth Paul, Alexey Knyazev, Michael Czekanski, William Fei</p>
+                </div>
+                <div class="meta-item">
+                    <h4>Affiliations</h4>
+                    <p>Columbia University, Cornell University</p>
+                </div>
+                <div class="meta-item">
+                    <h4>Tags</h4>
+                    <p>Python, plasma physics, stellarators, fusion</p>
+                </div>
+                <div class="meta-item">
+                    <h4>Build Date</h4>
+                    <p>${CIRCLE_BUILD_NUM} - ${CIRCLE_SHA1}</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="download-section">
+            <a href="paper.pdf" class="download-btn">📄 Download PDF</a>
+            <a href="paper.md" class="download-btn">📝 View Markdown</a>
+            <a href="paper.bib" class="download-btn">📚 Bibliography</a>
+        </div>
+        
+        <div class="pdf-viewer">
+            <h3>Paper Preview</h3>
+            <iframe src="paper.pdf" title="FIRM3D Paper PDF Preview"></iframe>
+        </div>
+    </div>
+</body>
+</html>

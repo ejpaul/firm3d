@@ -1,0 +1,123 @@
+version: 2.1
+
+defaults: &defaults
+  docker:
+    - image: openbases/openbases-pdf:latest
+  working_directory: /tmp/src
+  environment:
+    - OPENBASES_VALIDATE_ARGS: ""
+    - OPENBASES_PAPER_ARGS: ""
+
+jobs:
+  build:
+    <<: *defaults
+    steps:
+      - checkout
+      - run:
+          name: Validate paper metadata and references
+          command: |
+            cd paper
+            echo "Validating paper.md and paper.bib..."
+            ob-validate paper.md ${OPENBASES_VALIDATE_ARGS}
+      - run:
+          name: Build PDF
+          command: |
+            cd paper
+            echo "Building PDF from paper.md..."
+            /bin/bash /code/entrypoint.sh paper.md ${OPENBASES_PAPER_ARGS}
+      - store_artifacts:
+          path: paper/paper.pdf
+          destination: paper.pdf
+      - store_artifacts:
+          path: paper/
+          destination: paper-output
+
+  deploy:
+    <<: *defaults
+    steps:
+      - checkout
+      - add_ssh_keys:
+          fingerprints:
+            - "{{ SSH_FINGERPRINT }}"
+      - run:
+          name: Validate and build paper
+          command: |
+            cd paper
+            ob-validate paper.md ${OPENBASES_VALIDATE_ARGS}
+            /bin/bash /code/entrypoint.sh paper.md ${OPENBASES_PAPER_ARGS}
+      - run:
+          name: Generate GitHub Pages content
+          command: |
+            # Create output directory
+            mkdir -p /tmp/out
+            
+            # Copy paper artifacts
+            cp paper/paper.pdf /tmp/out/
+            cp paper/paper.md /tmp/out/
+            cp paper/paper.bib /tmp/out/
+            
+            # Generate HTML preview using template
+            if [ -f ".circleci/template.html" ]; then
+              envsubst < .circleci/template.html > /tmp/out/index.html
+            else
+              echo "<!DOCTYPE html>
+              <html>
+              <head>
+                <title>FIRM3D Paper Preview</title>
+                <meta charset='utf-8'>
+                <style>
+                  body { font-family: Arial, sans-serif; margin: 40px; }
+                  .header { text-align: center; margin-bottom: 30px; }
+                  .download-links { text-align: center; margin: 20px 0; }
+                  .download-links a { margin: 0 10px; padding: 10px 20px; background: #007cba; color: white; text-decoration: none; border-radius: 5px; }
+                </style>
+              </head>
+              <body>
+                <div class='header'>
+                  <h1>FIRM3D: Fast ion reduced models in 3D</h1>
+                  <p>JOSS Paper Preview</p>
+                </div>
+                <div class='download-links'>
+                  <a href='paper.pdf'>Download PDF</a>
+                  <a href='paper.md'>View Markdown</a>
+                  <a href='paper.bib'>View Bibliography</a>
+                </div>
+                <iframe src='paper.pdf' width='100%' height='800px'></iframe>
+              </body>
+              </html>" > /tmp/out/index.html
+            fi
+      - run:
+          name: Deploy to GitHub Pages
+          command: |
+            # Configure git
+            git config --global user.email "${GITHUB_EMAIL}"
+            git config --global user.name "${GITHUB_USER}"
+            
+            # Clone gh-pages branch or create it
+            git clone $CIRCLE_REPOSITORY_URL out
+            cd out
+            git checkout gh-pages || git checkout --orphan gh-pages
+            git rm -rf . || echo "No files to remove"
+            
+            # Copy generated content
+            cp -r /tmp/out/* .
+            
+            # Commit and push
+            git add -A
+            git commit -m "Update paper preview [ci skip]" || echo "No changes to commit"
+            git push origin gh-pages
+
+workflows:
+  version: 2
+  build_and_deploy:
+    jobs:
+      - build:
+          filters:
+            branches:
+              ignore: gh-pages
+      - deploy:
+          requires:
+            - build
+          filters:
+            branches:
+              only: master
