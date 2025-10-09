@@ -501,7 +501,8 @@ class VMECCoordinateTransformer:
             if not success:
                 raise RuntimeError(
                     f"Root finding failed for point {i} with coordinates "
-                    f"R={points_cyl[i, 0]}, phi={points_cyl[i, 1]}, Z={points_cyl[i, 2]}"
+                    f"R={points_cyl[i, 0]}, phi={points_cyl[i, 1]}, "
+                    f"Z={points_cyl[i, 2]}"
                 )
 
         return points_vmec
