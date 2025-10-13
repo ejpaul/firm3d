@@ -944,9 +944,9 @@ def compute_peta(
         vpar = np.array([vpar])
     if isinstance(vpar, list):
         vpar = np.array(vpar)
-    assert (
-        vpar.shape[0] == points.shape[0]
-    ), "vpar must have the same number of points as points"
+    assert vpar.shape[0] == points.shape[0], (
+        "vpar must have the same number of points as points"
+    )
 
     if isinstance(field_or_saw, ShearAlfvenWave):
         field = field_or_saw.B0
@@ -1007,9 +1007,9 @@ def compute_Eprime(saw, points, vpar, mu, mass, charge, helicity_M, helicity_N):
         vpar = np.array([vpar])
     if isinstance(vpar, list):
         vpar = np.array(vpar)
-    assert (
-        vpar.shape[0] == points.shape[0]
-    ), "vpar must have the same number of points as points"
+    assert vpar.shape[0] == points.shape[0], (
+        "vpar must have the same number of points as points"
+    )
     if vpar.shape[0] != points.shape[0]:
         raise ValueError("vpar must have the same number of points as points")
     if isinstance(saw, ShearAlfvenHarmonic) is False:
@@ -1249,12 +1249,10 @@ class PassingPerturbedPoincare:
 
         self.DA_poinc = DA_poinc
         if DA_poinc:
-
             if nconvergence_points == None:
                 self.nconvergence_points = 1
                 self.WBA_transit_steps = [Nmaps - 1]
             else:
-
                 self.nconvergence_points = nconvergence_points
                 # set list of transits for each WBA evaluation
                 transits_per_average = int(Nmaps / (nconvergence_points))
