@@ -2161,8 +2161,8 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
 
     def __init__(
         self,
-        field,
-        degree,
+        field_or_json_path,
+        degree=None,
         srange=None,
         thetarange=None,
         zetarange=None,
@@ -2176,9 +2176,10 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
     ):
         r"""
         Args:
-            field: the underlying :class:`simsopt.field.boozermagneticfield.
-                BoozerMagneticField` to be interpolated.
-            degree: the degree of the piecewise polynomial interpolant.
+            field_or_json_path: Either the underlying :class:`simsopt.field.boozermagneticfield.
+                BoozerMagneticField` to be interpolated, or a string path to a JSON file
+                containing saved field data.
+            degree: the degree of the piecewise polynomial interpolant (required for new fields).
             ns_interp: number of grid points in the :math:`s` direction.
             ntheta_interp: number of grid points in the :math:`\theta` direction.
             nzeta_interp: number of grid points in the :math:`\zeta` direction
@@ -2204,6 +2205,17 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
                 interpolant is created.
                 By default, this list is determined by field.field_type.
         """
+        # Check if first argument is a string (JSON file path)
+        if isinstance(field_or_json_path, str):
+            # This is a JSON file path - use the C++ JSON constructor
+            sopp.InterpolatedBoozerField.__init__(self, field_or_json_path)
+            return
+        
+        # Otherwise, this is the normal field creation path
+        field = field_or_json_path
+        if degree is None:
+            raise ValueError("degree parameter is required when creating a new field")
+        
         if initialize is None:
             initialize = []
         field_type = field.field_type.lower()
@@ -2311,6 +2323,19 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
         if initialize:
             for item in initialize:
                 getattr(self, item)()
+
+    @classmethod
+    def from_json(cls, json_file_path):
+        """
+        Load an InterpolatedBoozerField from a JSON file.
+        
+        Args:
+            json_file_path: Path to the JSON file containing the saved field data.
+            
+        Returns:
+            InterpolatedBoozerField: A new instance loaded from the JSON file.
+        """
+        return cls(json_file_path)
 
 
 class ShearAlfvenWave(sopp.ShearAlfvenWave):
