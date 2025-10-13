@@ -156,18 +156,17 @@ pybind11_add_module(${PROJECT_NAME}
     ${GSL_TARGETS}
 )
 
-if(APPLE)
-  target_compile_definitions(${PROJECT_NAME} PRIVATE
-    _LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION
-  )
-endif()
-
 set_target_properties(${PROJECT_NAME}
     PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON)
 
-target_include_directories(${PROJECT_NAME} PRIVATE "thirdparty/xtensor/include" "thirdparty/xtensor-python/include" "thirdparty/xsimd/include" "thirdparty/xtl/include" ${Python_NumPy_INCLUDE_DIRS} "src/simsoptpp/")
+# Add nlohmann-json include directory if provided
+if(nlohmann_json_INCLUDE_DIR)
+    target_include_directories(${PROJECT_NAME} PRIVATE "thirdparty/xtensor/include" "thirdparty/xtensor-python/include" "thirdparty/xsimd/include" "thirdparty/xtl/include" ${Python_NumPy_INCLUDE_DIRS} "src/simsoptpp/" ${nlohmann_json_INCLUDE_DIR})
+else()
+    target_include_directories(${PROJECT_NAME} PRIVATE "thirdparty/xtensor/include" "thirdparty/xtensor-python/include" "thirdparty/xsimd/include" "thirdparty/xtl/include" ${Python_NumPy_INCLUDE_DIRS} "src/simsoptpp/")
+endif()
 
 if(NOT Boost_FOUND)
     add_dependencies(${PROJECT_NAME} ${boost_target})
