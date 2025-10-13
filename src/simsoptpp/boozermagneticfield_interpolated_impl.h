@@ -1,13 +1,17 @@
 #pragma once
 
 #include "boozermagneticfield_interpolated.h"
+#include <nlohmann/json.hpp>
+#include <fstream>
 
 // Implementation of save/load methods for InterpolatedBoozerField
+// These methods enable efficient serialization of interpolated field data to avoid recomputation
 
 std::map<std::string, std::map<std::string, std::vector<double>>> InterpolatedBoozerField::get_all_interpolant_data() const {
     std::map<std::string, std::map<std::string, std::vector<double>>> all_data;
     
-    // Save data for each interpolant that exists
+    // Save data for each interpolant that exists and has been computed
+    // Only save interpolants that have actual data (vals array is not empty)
     if (interp_modB && interp_modB->is_computed()) {
         all_data["modB"] = interp_modB->get_interpolant_data();
     }
@@ -106,78 +110,184 @@ std::map<std::string, std::map<std::string, std::vector<double>>> InterpolatedBo
 }
 
 void InterpolatedBoozerField::set_all_interpolant_data(const std::map<std::string, std::map<std::string, std::vector<double>>>& data) {
-    // Load data for each interpolant
+    // Load data for each interpolant, creating interpolant objects as needed
+    // This method is called during field loading to restore saved interpolant data
     for (const auto& pair : data) {
         const std::string& quantity = pair.first;
         const std::map<std::string, std::vector<double>>& interpolant_data = pair.second;
         
-        if (quantity == "modB" && interp_modB) {
+        // Create interpolant object if it doesn't exist, then load data
+        // This lazy creation matches the original behavior where interpolants are created on demand
+        if (quantity == "modB") {
+            if (!interp_modB) {
+                interp_modB = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_modB->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dmodBdtheta" && interp_dmodBdtheta) {
+        } else if (quantity == "dmodBdtheta") {
+            if (!interp_dmodBdtheta) {
+                interp_dmodBdtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_dmodBdtheta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dmodBdzeta" && interp_dmodBdzeta) {
+        } else if (quantity == "dmodBdzeta") {
+            if (!interp_dmodBdzeta) {
+                interp_dmodBdzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_dmodBdzeta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dmodBds" && interp_dmodBds) {
+        } else if (quantity == "dmodBds") {
+            if (!interp_dmodBds) {
+                interp_dmodBds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_dmodBds->set_interpolant_data(interpolant_data);
-        } else if (quantity == "G" && interp_G) {
+        } else if (quantity == "G") {
+            if (!interp_G) {
+                interp_G = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_G->set_interpolant_data(interpolant_data);
-        } else if (quantity == "I" && interp_I) {
+        } else if (quantity == "I") {
+            if (!interp_I) {
+                interp_I = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_I->set_interpolant_data(interpolant_data);
-        } else if (quantity == "iota" && interp_iota) {
+        } else if (quantity == "iota") {
+            if (!interp_iota) {
+                interp_iota = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_iota->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dGds" && interp_dGds) {
+        } else if (quantity == "dGds") {
+            if (!interp_dGds) {
+                interp_dGds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_dGds->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dIds" && interp_dIds) {
+        } else if (quantity == "dIds") {
+            if (!interp_dIds) {
+                interp_dIds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_dIds->set_interpolant_data(interpolant_data);
-        } else if (quantity == "diotads" && interp_diotads) {
+        } else if (quantity == "diotads") {
+            if (!interp_diotads) {
+                interp_diotads = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_diotads->set_interpolant_data(interpolant_data);
-        } else if (quantity == "psip" && interp_psip) {
+        } else if (quantity == "psip") {
+            if (!interp_psip) {
+                interp_psip = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_psip->set_interpolant_data(interpolant_data);
-        } else if (quantity == "R" && interp_R) {
+        } else if (quantity == "R") {
+            if (!interp_R) {
+                interp_R = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_R->set_interpolant_data(interpolant_data);
-        } else if (quantity == "Z" && interp_Z) {
+        } else if (quantity == "Z") {
+            if (!interp_Z) {
+                interp_Z = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_Z->set_interpolant_data(interpolant_data);
-        } else if (quantity == "nu" && interp_nu) {
+        } else if (quantity == "nu") {
+            if (!interp_nu) {
+                interp_nu = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_nu->set_interpolant_data(interpolant_data);
-        } else if (quantity == "K" && interp_K) {
+        } else if (quantity == "K") {
+            if (!interp_K) {
+                interp_K = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_K->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dRdtheta" && interp_dRdtheta) {
+        } else if (quantity == "dRdtheta") {
+            if (!interp_dRdtheta) {
+                interp_dRdtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_dRdtheta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dRdzeta" && interp_dRdzeta) {
+        } else if (quantity == "dRdzeta") {
+            if (!interp_dRdzeta) {
+                interp_dRdzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_dRdzeta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dRds" && interp_dRds) {
+        } else if (quantity == "dRds") {
+            if (!interp_dRds) {
+                interp_dRds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_dRds->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dZdtheta" && interp_dZdtheta) {
+        } else if (quantity == "dZdtheta") {
+            if (!interp_dZdtheta) {
+                interp_dZdtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_dZdtheta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dZdzeta" && interp_dZdzeta) {
+        } else if (quantity == "dZdzeta") {
+            if (!interp_dZdzeta) {
+                interp_dZdzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_dZdzeta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dZds" && interp_dZds) {
+        } else if (quantity == "dZds") {
+            if (!interp_dZds) {
+                interp_dZds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_dZds->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dnudtheta" && interp_dnudtheta) {
+        } else if (quantity == "dnudtheta") {
+            if (!interp_dnudtheta) {
+                interp_dnudtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_dnudtheta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dnudzeta" && interp_dnudzeta) {
+        } else if (quantity == "dnudzeta") {
+            if (!interp_dnudzeta) {
+                interp_dnudzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_dnudzeta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dnuds" && interp_dnuds) {
+        } else if (quantity == "dnuds") {
+            if (!interp_dnuds) {
+                interp_dnuds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_dnuds->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dKdtheta" && interp_dKdtheta) {
+        } else if (quantity == "dKdtheta") {
+            if (!interp_dKdtheta) {
+                interp_dKdtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_dKdtheta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dKdzeta" && interp_dKdzeta) {
+        } else if (quantity == "dKdzeta") {
+            if (!interp_dKdzeta) {
+                interp_dKdzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
             interp_dKdzeta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "K_derivs" && interp_K_derivs) {
+        } else if (quantity == "K_derivs") {
+            if (!interp_K_derivs) {
+                interp_K_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 3, extrapolate);
+            }
             interp_K_derivs->set_interpolant_data(interpolant_data);
-        } else if (quantity == "nu_derivs" && interp_nu_derivs) {
+        } else if (quantity == "nu_derivs") {
+            if (!interp_nu_derivs) {
+                interp_nu_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 3, extrapolate);
+            }
             interp_nu_derivs->set_interpolant_data(interpolant_data);
-        } else if (quantity == "R_derivs" && interp_R_derivs) {
+        } else if (quantity == "R_derivs") {
+            if (!interp_R_derivs) {
+                interp_R_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 3, extrapolate);
+            }
             interp_R_derivs->set_interpolant_data(interpolant_data);
-        } else if (quantity == "Z_derivs" && interp_Z_derivs) {
+        } else if (quantity == "Z_derivs") {
+            if (!interp_Z_derivs) {
+                interp_Z_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 3, extrapolate);
+            }
             interp_Z_derivs->set_interpolant_data(interpolant_data);
-        } else if (quantity == "modB_derivs" && interp_modB_derivs) {
+        } else if (quantity == "modB_derivs") {
+            if (!interp_modB_derivs) {
+                interp_modB_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 3, extrapolate);
+            }
             interp_modB_derivs->set_interpolant_data(interpolant_data);
         }
     }
+    
+    // CRITICAL: Reset load mode flag and clear static load mode after data is loaded
+    // This allows the field to function normally for calculations
+    // Without this, the field would always return zeros instead of actual values
+    is_load_mode_constructor = false;
+    
+    // Automatically clear the static load mode to restore normal operation
+    RegularGridInterpolant3D<Array2>::set_load_mode(false);
 }
 
 std::map<std::string, bool> InterpolatedBoozerField::get_status_flags() const {
+    // Return all status flags indicating which interpolants have been computed
+    // These flags are used to restore the field state after loading
     std::map<std::string, bool> flags;
     flags["status_modB"] = status_modB;
     flags["status_dmodBdtheta"] = status_dmodBdtheta;
@@ -214,6 +324,8 @@ std::map<std::string, bool> InterpolatedBoozerField::get_status_flags() const {
 }
 
 void InterpolatedBoozerField::set_status_flags(const std::map<std::string, bool>& flags) {
+    // Restore status flags after loading interpolant data
+    // This ensures the field knows which quantities are available for evaluation
     if (flags.find("status_modB") != flags.end()) status_modB = flags.at("status_modB");
     if (flags.find("status_dmodBdtheta") != flags.end()) status_dmodBdtheta = flags.at("status_dmodBdtheta");
     if (flags.find("status_dmodBdzeta") != flags.end()) status_dmodBdzeta = flags.at("status_dmodBdzeta");
@@ -245,4 +357,75 @@ void InterpolatedBoozerField::set_status_flags(const std::map<std::string, bool>
     if (flags.find("status_Z_derivs") != flags.end()) status_Z_derivs = flags.at("status_Z_derivs");
     if (flags.find("status_nu_derivs") != flags.end()) status_nu_derivs = flags.at("status_nu_derivs");
     if (flags.find("status_modB_derivs") != flags.end()) status_modB_derivs = flags.at("status_modB_derivs");
+}
+
+// Implementation of to_json method
+void InterpolatedBoozerField::to_json(const std::string& json_file_path) const {
+    // Get the actual interpolated data from C++ objects (only already computed ones)
+    auto interpolant_data = get_all_interpolant_data();
+    auto status_flags = get_status_flags();
+    
+    // Find which quantities are actually computed
+    std::vector<std::string> computed_quantities;
+    for (const auto& [quantity, data] : interpolant_data) {
+        if (!data.empty()) {
+            computed_quantities.push_back(quantity);
+        }
+    }
+    
+    // Get the interpolation grid information
+    auto s_range = this->s_range;
+    auto theta_range = this->theta_range;  
+    auto zeta_range = this->zeta_range;
+    auto rule = this->rule;
+    
+    // Save grid and rule information
+    nlohmann::json grid_info = {
+        {"s_range", {std::get<0>(s_range), std::get<1>(s_range), std::get<2>(s_range)}},
+        {"theta_range", {std::get<0>(theta_range), std::get<1>(theta_range), std::get<2>(theta_range)}}, 
+        {"zeta_range", {std::get<0>(zeta_range), std::get<1>(zeta_range), std::get<2>(zeta_range)}},
+        {"rule_degree", rule.degree},
+        {"rule_nodes", rule.nodes},
+        {"rule_scalings", rule.scalings}
+    };
+    
+    // Convert interpolant data to JSON-serializable format
+    nlohmann::json json_interpolant_data;
+    for (const auto& [quantity, data] : interpolant_data) {
+        nlohmann::json json_data;
+        for (const auto& [key, value] : data) {
+            json_data[key] = value;
+        }
+        json_interpolant_data[quantity] = json_data;
+    }
+    
+    // Save configuration, interpolant data, and status
+    nlohmann::json save_dict = {
+        {"config", {
+            {"boozmn_filename", "saved_field"},  // Placeholder since we don't have access to original filename
+            {"order", 3},  // Placeholder
+            {"no_K", true},  // Placeholder
+            {"degree", rule.degree},
+            {"ns_interp", 48},  // Placeholder
+            {"ntheta_interp", 48},  // Placeholder
+            {"nzeta_interp", 48},  // Placeholder
+            {"extrapolate", extrapolate},
+            {"nfp", nfp},
+            {"stellsym", stellsym},
+            {"field_type", field_type},
+            {"psi0", psi0}  // Save the psi0 value from the original field
+        }},
+        {"grid_info", grid_info},
+        {"interpolant_data", json_interpolant_data},
+        {"status_flags", status_flags},
+        {"computed_quantities", computed_quantities}
+    };
+    
+    // Write to file
+    std::ofstream file(json_file_path);
+    if (!file.is_open()) {
+        throw std::runtime_error("Could not open JSON file for writing: " + json_file_path);
+    }
+    file << save_dict.dump(2);
+    file.close();
 }
