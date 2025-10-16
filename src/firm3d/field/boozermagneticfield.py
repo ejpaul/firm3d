@@ -32,6 +32,7 @@ try:
 except ImportError:
     MPI = None
 
+
 class BoozerMetric:
     r"""
      A generic class representing the metric tensor in normalized Boozer coordinates
