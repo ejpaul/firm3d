@@ -10,99 +10,99 @@
 std::map<std::string, std::map<std::string, std::vector<double>>> InterpolatedBoozerField::get_all_interpolant_data() const {
     std::map<std::string, std::map<std::string, std::vector<double>>> all_data;
     
-    // Save data for each interpolant that exists and has been computed
-    // Only save interpolants that have actual data (vals array is not empty)
-    if (interp_modB && interp_modB->is_computed()) {
+    // Save data for each interpolant that has been computed
+    // Use status flags for efficient checking - no need for is_computed() calls
+    if (status_modB) {
         all_data["modB"] = interp_modB->get_interpolant_data();
     }
-    if (interp_dmodBdtheta && interp_dmodBdtheta->is_computed()) {
+    if (status_dmodBdtheta) {
         all_data["dmodBdtheta"] = interp_dmodBdtheta->get_interpolant_data();
     }
-    if (interp_dmodBdzeta && interp_dmodBdzeta->is_computed()) {
+    if (status_dmodBdzeta) {
         all_data["dmodBdzeta"] = interp_dmodBdzeta->get_interpolant_data();
     }
-    if (interp_dmodBds && interp_dmodBds->is_computed()) {
+    if (status_dmodBds) {
         all_data["dmodBds"] = interp_dmodBds->get_interpolant_data();
     }
-    if (interp_G && interp_G->is_computed()) {
+    if (status_G) {
         all_data["G"] = interp_G->get_interpolant_data();
     }
-    if (interp_I && interp_I->is_computed()) {
+    if (status_I) {
         all_data["I"] = interp_I->get_interpolant_data();
     }
-    if (interp_iota && interp_iota->is_computed()) {
+    if (status_iota) {
         all_data["iota"] = interp_iota->get_interpolant_data();
     }
-    if (interp_dGds && interp_dGds->is_computed()) {
+    if (status_dGds) {
         all_data["dGds"] = interp_dGds->get_interpolant_data();
     }
-    if (interp_dIds && interp_dIds->is_computed()) {
+    if (status_dIds) {
         all_data["dIds"] = interp_dIds->get_interpolant_data();
     }
-    if (interp_diotads && interp_diotads->is_computed()) {
+    if (status_diotads) {
         all_data["diotads"] = interp_diotads->get_interpolant_data();
     }
-    if (interp_psip && interp_psip->is_computed()) {
+    if (status_psip) {
         all_data["psip"] = interp_psip->get_interpolant_data();
     }
-    if (interp_R && interp_R->is_computed()) {
+    if (status_R) {
         all_data["R"] = interp_R->get_interpolant_data();
     }
-    if (interp_Z && interp_Z->is_computed()) {
+    if (status_Z) {
         all_data["Z"] = interp_Z->get_interpolant_data();
     }
-    if (interp_nu && interp_nu->is_computed()) {
+    if (status_nu) {
         all_data["nu"] = interp_nu->get_interpolant_data();
     }
-    if (interp_K && interp_K->is_computed()) {
+    if (status_K) {
         all_data["K"] = interp_K->get_interpolant_data();
     }
-    if (interp_dRdtheta && interp_dRdtheta->is_computed()) {
+    if (status_dRdtheta) {
         all_data["dRdtheta"] = interp_dRdtheta->get_interpolant_data();
     }
-    if (interp_dRdzeta && interp_dRdzeta->is_computed()) {
+    if (status_dRdzeta) {
         all_data["dRdzeta"] = interp_dRdzeta->get_interpolant_data();
     }
-    if (interp_dRds && interp_dRds->is_computed()) {
+    if (status_dRds) {
         all_data["dRds"] = interp_dRds->get_interpolant_data();
     }
-    if (interp_dZdtheta && interp_dZdtheta->is_computed()) {
+    if (status_dZdtheta) {
         all_data["dZdtheta"] = interp_dZdtheta->get_interpolant_data();
     }
-    if (interp_dZdzeta && interp_dZdzeta->is_computed()) {
+    if (status_dZdzeta) {
         all_data["dZdzeta"] = interp_dZdzeta->get_interpolant_data();
     }
-    if (interp_dZds && interp_dZds->is_computed()) {
+    if (status_dZds) {
         all_data["dZds"] = interp_dZds->get_interpolant_data();
     }
-    if (interp_dnudtheta && interp_dnudtheta->is_computed()) {
+    if (status_dnudtheta) {
         all_data["dnudtheta"] = interp_dnudtheta->get_interpolant_data();
     }
-    if (interp_dnudzeta && interp_dnudzeta->is_computed()) {
+    if (status_dnudzeta) {
         all_data["dnudzeta"] = interp_dnudzeta->get_interpolant_data();
     }
-    if (interp_dnuds && interp_dnuds->is_computed()) {
+    if (status_dnuds) {
         all_data["dnuds"] = interp_dnuds->get_interpolant_data();
     }
-    if (interp_dKdtheta && interp_dKdtheta->is_computed()) {
+    if (status_dKdtheta) {
         all_data["dKdtheta"] = interp_dKdtheta->get_interpolant_data();
     }
-    if (interp_dKdzeta && interp_dKdzeta->is_computed()) {
+    if (status_dKdzeta) {
         all_data["dKdzeta"] = interp_dKdzeta->get_interpolant_data();
     }
-    if (interp_K_derivs && interp_K_derivs->is_computed()) {
+    if (status_K_derivs) {
         all_data["K_derivs"] = interp_K_derivs->get_interpolant_data();
     }
-    if (interp_nu_derivs && interp_nu_derivs->is_computed()) {
+    if (status_nu_derivs) {
         all_data["nu_derivs"] = interp_nu_derivs->get_interpolant_data();
     }
-    if (interp_R_derivs && interp_R_derivs->is_computed()) {
+    if (status_R_derivs) {
         all_data["R_derivs"] = interp_R_derivs->get_interpolant_data();
     }
-    if (interp_Z_derivs && interp_Z_derivs->is_computed()) {
+    if (status_Z_derivs) {
         all_data["Z_derivs"] = interp_Z_derivs->get_interpolant_data();
     }
-    if (interp_modB_derivs && interp_modB_derivs->is_computed()) {
+    if (status_modB_derivs) {
         all_data["modB_derivs"] = interp_modB_derivs->get_interpolant_data();
     }
     
@@ -406,9 +406,9 @@ void InterpolatedBoozerField::to_json(const std::string& json_file_path) const {
             {"order", 3},  // Placeholder
             {"no_K", true},  // Placeholder
             {"degree", rule.degree},
-            {"ns_interp", 48},  // Placeholder
-            {"ntheta_interp", 48},  // Placeholder
-            {"nzeta_interp", 48},  // Placeholder
+            {"ns_interp", std::get<2>(s_range)},    
+            {"ntheta_interp", std::get<2>(theta_range)}, 
+            {"nzeta_interp", std::get<2>(zeta_range)},
             {"extrapolate", extrapolate},
             {"nfp", nfp},
             {"stellsym", stellsym},
