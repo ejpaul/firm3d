@@ -10,6 +10,12 @@ import firm3dpp as sopp
 from .._core.util import align_and_pad, allocate_aligned_and_padded_array
 from ..saw.ae3d import AE3DEigenvector
 from ..saw.far3d import FAR3DEigenvector
+from ..util.constants import (
+    VACUUM_PERMEABILITY as MU0,
+)
+from ..util.constants import (
+    VACUUM_PERMITTIVITY as EPS0,
+)
 
 __all__ = [
     "BoozerMagneticField",
@@ -25,7 +31,6 @@ try:
     from mpi4py import MPI
 except ImportError:
     MPI = None
-
 
 class BoozerMetric:
     r"""
@@ -498,16 +503,14 @@ class BoozerMagneticField(sopp.BoozerMagneticField):
             - gstheta * (gstheta * gzetazeta - gthetazeta * gszeta)
             + gszeta * (gstheta * gthetazeta - gszeta * gthetatheta)
         )
-
         G = self.G()[:, 0]
         I = self.I()[:, 0]
         iota = self.iota()[:, 0]
         B = self.modB()[:, 0]
         sqrtg = (G + iota * I) * self.psi0 / (B * B)
-        assert np.all(detg > 0), "Metric determinant must be positive"
         assert np.all(sqrtg != 0), "Jacobian must be non-zero"
 
-        relative_error = np.abs(np.sqrt(detg) - np.abs(sqrtg)) / np.abs(sqrtg)
+        relative_error = np.abs(np.sqrt(np.abs(detg)) - np.abs(sqrtg)) / np.abs(sqrtg)
         max_relative_error_percent = np.max(relative_error) * 100
         if max_relative_error_percent > 0.1:
             # Find the location of maximum error
@@ -2536,6 +2539,75 @@ class ShearAlfvenHarmonic(sopp.ShearAlfvenHarmonic, ShearAlfvenWave):
         )
         ShearAlfvenWave.__init__(self, B0)
 
+    def get_energy(self, grid_factor=10):
+        r"""
+        Calculates total electromagnetic energy of the perturbed field.
+
+        The perturbed electric and magnetic fields are given by:
+
+        .. math::
+
+            \delta\mathbf{E} = -\nabla\varphi
+            - \frac{\partial \alpha \mathbf{B}_0}{\partial t}
+
+            \delta\mathbf{B} = \nabla \times (\alpha \mathbf{B}_0)
+
+        The method evaluates components of the wave field in Boozer coordinates:
+
+        .. math::
+
+            \delta B^s &= \frac{1}{\sqrt{g}}\left(
+            G\frac{\partial\alpha}{\partial\theta}
+            - I\frac{\partial \alpha}{\partial \zeta}\right)
+
+            \delta B^\theta &= \frac{1}{\sqrt{g}}\left(
+            K\psi_0\frac{\partial \alpha}{\partial\zeta}
+            - G\frac{\partial\alpha}{\partial s}\right)
+            - \frac{\alpha}{\sqrt{g}}\frac{dG}{ds}
+            + \frac{\alpha\psi_0}{\sqrt{g}}\frac{\partial K}{\partial \zeta}
+
+            \delta B^\zeta &= \frac{1}{\sqrt{g}}\left(
+            I\frac{\partial \alpha}{\partial s}
+            - K\frac{\partial \alpha \psi_0}{\partial \theta}\right)
+            + \frac{\alpha}{\sqrt{g}}\frac{dI}{ds}
+            - \frac{\alpha\psi_0}{\sqrt{g}}\frac{\partial K}{\partial\theta}
+
+            \delta E_s &= -\frac{\partial\varphi}{\partial s}
+            - K\psi_0\frac{\partial \alpha}{\partial t}
+
+            \delta E_\theta &= -\frac{\partial\varphi}{\partial \theta}
+            - I\frac{\partial \alpha}{\partial t}
+
+            \delta E_\zeta &= -\frac{\partial\varphi}{\partial \zeta}
+            - G\frac{\partial\alpha}{\partial t}
+
+        and numerically integrates the field energy density:
+
+        .. math::
+
+            \delta u = \frac{1}{2}\left(\varepsilon_0 g^{ij}\delta E_i \delta E_j
+            + \frac{1}{\mu_0}g_{ij}\delta B^i \delta B^j\right)
+
+        Parameters
+        ----------
+        grid_factor : int, optional
+            Controls the grid resolution for numerical integration. The grid
+            resolution is set to grid_factor times the maximum poloidal and
+            toroidal Fourier harmonic numbers in the superposition. Default is 10.
+
+        Returns
+        -------
+        tuple
+            A tuple containing:
+
+            - dE_energy (float): Electric energy of the wave perturbation in Joules
+            - dB_energy (float): Magnetic energy of the wave perturbation in Joules
+            - B0_energy (float): Magnetic energy of the background field in Joules
+        """
+        saws = ShearAlfvenWavesSuperposition([self])
+        dE_energy, dB_energy, B0_energy = saws.get_energy(grid_factor)
+        return dE_energy, dB_energy, B0_energy
+
 
 class ShearAlfvenWavesSuperposition(
     sopp.ShearAlfvenWavesSuperposition, ShearAlfvenWave
@@ -2806,3 +2878,219 @@ class ShearAlfvenWavesSuperposition(
             )
             harmonic_list.append(sah)
         return ShearAlfvenWavesSuperposition(harmonic_list)
+
+    def __getitem__(self, index):
+        """
+        Get a wave by index.
+
+        Args:
+            index : (int) Index of the ShearAlfvenHarmonic to retrieve
+
+        Returns:
+            ShearAlfvenHarmonic at the specified index
+        """
+        return self.get_wave(index)
+
+    def __len__(self):
+        """
+        Get the number of waves in the superposition.
+
+        Returns:
+            Number of waves in the superposition
+        """
+        return self.size()
+
+    def get_energy(self, grid_factor=10, sgridpoints=100):
+        r"""
+        Calculates total electromagnetic energy of the perturbed field.
+
+        The perturbed electric and magnetic fields are given by:
+
+        .. math::
+
+            \delta\mathbf{E} = -\nabla\varphi
+            - \frac{\partial \alpha \mathbf{B}_0}{\partial t}
+
+            \delta\mathbf{B} = \nabla \times (\alpha \mathbf{B}_0)
+
+        The method evaluates components of the wave field in Boozer coordinates:
+
+        .. math::
+
+            \delta B^s &= \frac{1}{\sqrt{g}}\left(
+            G\frac{\partial\alpha}{\partial\theta}
+            - I\frac{\partial \alpha}{\partial \zeta}\right)
+
+            \delta B^\theta &= \frac{1}{\sqrt{g}}\left(
+            K\psi_0\frac{\partial \alpha}{\partial\zeta}
+            - G\frac{\partial\alpha}{\partial s}\right)
+            - \frac{\alpha}{\sqrt{g}}\frac{dG}{ds}
+            + \frac{\alpha\psi_0}{\sqrt{g}}\frac{\partial K}{\partial \zeta}
+
+            \delta B^\zeta &= \frac{1}{\sqrt{g}}\left(
+            I\frac{\partial \alpha}{\partial s}
+            - K\frac{\partial \alpha \psi_0}{\partial \theta}\right)
+            + \frac{\alpha}{\sqrt{g}}\frac{dI}{ds}
+            - \frac{\alpha\psi_0}{\sqrt{g}}\frac{\partial K}{\partial\theta}
+
+            \delta E_s &= -\frac{\partial\varphi}{\partial s}
+            - K\psi_0\frac{\partial \alpha}{\partial t}
+
+            \delta E_\theta &= -\frac{\partial\varphi}{\partial \theta}
+            - I\frac{\partial \alpha}{\partial t}
+
+            \delta E_\zeta &= -\frac{\partial\varphi}{\partial \zeta}
+            - G\frac{\partial\alpha}{\partial t}
+
+        and numerically integrates the field energy density:
+
+        .. math::
+
+            \delta u = \frac{1}{2}\left(\varepsilon_0 g^{ij}\delta E_i \delta E_j
+            + \frac{1}{\mu_0}g_{ij}\delta B^i \delta B^j\right)
+
+        Parameters
+        ----------
+        grid_factor : int, optional
+            Controls the grid resolution for numerical integration. The grid
+            resolution is set to grid_factor times the maximum poloidal and
+            toroidal Fourier harmonic numbers in the superposition. Default is 10.
+
+        Returns
+        -------
+        tuple
+            A tuple containing:
+
+            - dE_energy (float): Electric energy of the wave perturbation in Joules
+            - dB_energy (float): Magnetic energy of the wave perturbation in Joules
+            - B0_energy (float): Magnetic energy of the background field in Joules
+        """
+        if not isinstance(grid_factor, int) or grid_factor < 1:
+            raise ValueError("grid_factor must be an integer >= 1")
+        # remember the points if set already, to set back after calculation
+        original_points = self.get_points()
+
+        max_Phim = 0
+        max_Phin = 0
+
+        for sah in self:
+            max_Phim = max(np.abs(sah.Phim), max_Phim)
+            max_Phin = max(np.abs(sah.Phin), max_Phin)
+
+        s_list = np.linspace(0, 1, sgridpoints + 1)[1:]
+
+        for s in s_list:
+            assert 0.0 <= s <= 1, f"{s=} is out of allowed [0,1] range"
+
+        # ignore the point on axis since metric is singular there
+        if s_list[0] == 0.0:
+            s_list[0] = s_list[1] / 2
+
+        theta_list = np.linspace(
+            0, 2 * np.pi, num=grid_factor * max(1, max_Phim), endpoint=False
+        )
+        zeta_list = np.linspace(
+            0, 2 * np.pi, num=grid_factor * max(1, max_Phin), endpoint=False
+        )
+
+        thetas2d, zetas2d, s2d = np.meshgrid(
+            theta_list, zeta_list, s_list, indexing="ij"
+        )
+
+        points = np.zeros((len(thetas2d.flatten()), 4))  # s theta zeta time
+        points[:, 0] = s2d.flatten()
+        points[:, 1] = thetas2d.flatten()
+        points[:, 2] = zetas2d.flatten()
+
+        self.set_points(points)
+        g_cov = self.B0.get_covariant_metric()
+
+        # Magnetic perturbation energy:
+        dads = self.dalphadpsi()[:, 0] * self.B0.psi0
+        dadth = self.dalphadtheta()[:, 0]
+        dadzt = self.dalphadzeta()[:, 0]
+        a = self.alpha()[:, 0]
+        G = self.B0.G()[:, 0]
+        I = self.B0.I()[:, 0]
+        K = self.B0.K()[:, 0]
+        dGds = self.B0.dGds()[:, 0]
+        dKdzt = self.B0.dKdzeta()[:, 0]
+        dKdth = self.B0.dKdtheta()[:, 0]
+        dIds = self.B0.dIds()[:, 0]
+        iota = self.B0.iota()[:, 0]
+        B = self.B0.modB()[:, 0]
+        det = B * B / (iota * I + G) / self.B0.psi0
+
+        Bs = det * (G * dadth - I * dadzt)
+        Bth = det * (
+            self.B0.psi0 * K * dadzt - G * dads - a * dGds + a * self.B0.psi0 * dKdzt
+        )
+        Bzt = det * (
+            I * dads - self.B0.psi0 * K * dadth + a * dIds - a * self.B0.psi0 * dKdth
+        )
+
+        B2 = (
+            g_cov.ss * Bs * Bs
+            + g_cov.tt * Bth * Bth
+            + g_cov.zz * Bzt * Bzt
+            + 2 * g_cov.st * Bs * Bth
+            + 2 * g_cov.sz * Bs * Bzt
+            + 2 * g_cov.tz * Bth * Bzt
+        )
+
+        B2_grid = (np.abs(det) * B2).reshape(
+            len(theta_list), len(zeta_list), len(s_list)
+        )
+
+        integrated_s = np.trapz(B2_grid, x=s_list, axis=2)
+        integrated_sz = np.trapz(integrated_s, x=zeta_list, axis=1)
+        dB_energy = np.trapz(integrated_sz, x=theta_list) / MU0 / 2
+
+        # Electric perturbation energy:
+        dphids = self.dPhidpsi()[:, 0] * self.B0.psi0
+        dphidth = self.dPhidtheta()[:, 0]
+        dphidzt = self.dPhidzeta()[:, 0]
+        dadt = self.alphadot()[:, 0]
+        Es = -dphids - K * self.B0.psi0 * dadt
+        Eth = -dphidth - I * dadt
+        Ezt = -dphidzt - G * dadt
+
+        g_cont = g_cov.to_contravariant()
+
+        E2 = (
+            g_cont.ss * Es * Es
+            + g_cont.tt * Eth * Eth
+            + g_cont.zz * Ezt * Ezt
+            + 2 * g_cont.st * Es * Eth
+            + 2 * g_cont.sz * Es * Ezt
+            + 2 * g_cont.tz * Eth * Ezt
+        )
+
+        E2_grid = (np.abs(det) * E2).reshape(
+            len(theta_list), len(zeta_list), len(s_list)
+        )
+
+        integrated_E_s = np.trapz(E2_grid, x=s_list, axis=2)
+        integrated_E_sz = np.trapz(integrated_E_s, x=zeta_list, axis=1)
+        dE_energy = EPS0 * np.trapz(integrated_E_sz, x=theta_list) / 2
+
+        # Equilibrium magnetic energy:
+        B02 = (
+            g_cont.ss * (self.B0.psi0 * K) ** 2
+            + g_cont.tt * I * I
+            + g_cont.zz * G * G
+            + 2 * g_cont.st * (self.B0.psi0 * K) * I
+            + 2 * g_cont.sz * (self.B0.psi0 * K) * G
+            + 2 * g_cont.tz * I * G
+        )
+
+        B02_grid = (np.abs(det) * B02).reshape(
+            len(theta_list), len(zeta_list), len(s_list)
+        )
+        integrated_B0_s = np.trapz(B02_grid, x=s_list, axis=2)
+        integrated_B0_sz = np.trapz(integrated_B0_s, x=zeta_list, axis=1)
+        B0_energy = np.trapz(integrated_B0_sz, x=theta_list) / MU0 / 2
+
+        self.set_points(original_points)
+
+        return dE_energy, dB_energy, B0_energy

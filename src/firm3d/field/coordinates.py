@@ -29,12 +29,12 @@ class BoozerCoordinateTransformer:
 
     Example:
         transformer = BoozerCoordinateTransformer(field, grid_resolution=(15, 30, 30))
-        s, theta, zeta = transformer.cylindrical_to_boozer(R, phi, Z)
+        points_boozer = transformer.cylindrical_to_boozer(points_cyl)
         # Grid is reused for subsequent calls
-        s2, theta2, zeta2 = transformer.cylindrical_to_boozer(R2, phi2, Z2)
+        points_boozer2 = transformer.cylindrical_to_boozer(points_cyl2)
     """
 
-    def __init__(self, field, grid_resolution=(10, 20, 20)):
+    def __init__(self, field, grid_resolution=(50, 50, 50)):
         self.field = field
         self.grid_resolution = grid_resolution
         self._grid_coords = None
@@ -116,45 +116,35 @@ class BoozerCoordinateTransformer:
             except Exception as e:
                 raise RuntimeError(f"Failed to build coordinate grid: {e}") from e
 
-    def cylindrical_to_boozer(self, R, phi, Z, n_guesses=4, ftol=1e-6):
+    def cylindrical_to_boozer(self, points_cyl, n_guesses=10, ftol=1e-6):
         """
         Convert from cylindrical coordinates to Boozer coordinates.
         All initial guesses are generated from the coordinate grid.
 
         Args:
-            R: Radial coordinate(s)
-            phi: Azimuthal angle(s)
-            Z: Vertical coordinate(s)
+            points_cyl: A numpy array of shape (npoints, 3) containing the
+                cylindrical coordinates (R, phi, Z).
             n_guesses: Number of grid-based initial guesses to try per point
             ftol: Tolerance for root finding convergence
 
         Returns:
-            s, theta, zeta: Boozer coordinates
+            points_boozer: A numpy array of shape (npoints, 3) containing the
+                Boozer coordinates (s, theta, zeta).
         """
         # Ensure grid is built
         self._ensure_grid_built()
 
-        # Convert inputs to arrays
-        R = np.asarray(R)
-        phi = np.asarray(phi)
-        Z = np.asarray(Z)
+        # Validate input shape
+        if len(points_cyl.shape) != 2 or points_cyl.shape[1] != 3:
+            raise ValueError("points_cyl must have shape (npoints, 3)")
 
-        # Handle scalar inputs
-        input_scalar = np.isscalar(R) or np.isscalar(phi) or np.isscalar(Z)
-
-        # Ensure all arrays have the same shape
-        if R.shape != phi.shape or R.shape != Z.shape:
-            raise ValueError("R, phi, and Z must have the same shape")
-
-        npoints = R.size
+        npoints = points_cyl.shape[0]
         if npoints == 0:
             raise ValueError("Input arrays cannot be empty")
 
-        s = np.zeros(npoints)
-        theta = np.zeros(npoints)
-        zeta = np.zeros(npoints)
+        points_boozer = np.zeros((npoints, 3))
 
-        def objective_function(x, R_target, phi_target, Z_target):
+        def objective_function(x, points_cyl_target):
             """Objective function for root finding."""
             s_val, theta_val, zeta_val = x
             s_val = np.clip(s_val, 0.0, 1.0)
@@ -172,11 +162,12 @@ class BoozerCoordinateTransformer:
             phi_computed = zeta_val - nu_computed
 
             return [
-                R_computed - R_target,
+                R_computed - points_cyl_target[0],
                 np.arctan2(
-                    np.sin(phi_computed - phi_target), np.cos(phi_computed - phi_target)
+                    np.sin(phi_computed - points_cyl_target[1]),
+                    np.cos(phi_computed - points_cyl_target[1]),
                 ),
-                Z_computed - Z_target,
+                Z_computed - points_cyl_target[2],
             ]
 
         def get_grid_guesses(target_point, n_guesses):
@@ -184,19 +175,34 @@ class BoozerCoordinateTransformer:
             # Build KDTree for efficient nearest neighbor search
             tree = KDTree(self._grid_cylindrical)
 
-            # Map target phi to fundamental domain [0, 2*pi/nfp)
+            # Map target phi to fundamental domain for KDTree search only
+            # Record how many field periods (integer multiples of 2π/nfp) to add back
             nfp = getattr(self.field, "nfp", 1)
-            target_mapped = target_point.copy()
             phi_period = 2 * np.pi / nfp
-            target_mapped[1] = target_point[1] % phi_period
+
+            # Calculate number of complete field periods in target phi
+            n_field_periods = int(np.floor(target_point[1] / phi_period))
+
+            # Map to fundamental domain [0, 2π/nfp)
+            target_phi_mapped = target_point[1] - n_field_periods * phi_period
+            target_mapped = target_point.copy()
+            target_mapped[1] = target_phi_mapped
 
             # Find k nearest neighbors (more than n_guesses to have options)
             n_guesses = min(n_guesses * 2, len(self._grid_coords))
             distances, indices = tree.query(target_mapped, k=n_guesses)
 
+            # Add back the field periods that were subtracted
+            # Grid coords are in Boozer: (s, theta, zeta)
+            # We need to adjust zeta to account for the field periods
+            zeta_offset = n_field_periods * phi_period
+
             selected_guesses = []
             for idx in indices:
-                selected_guesses.append(self._grid_coords[idx])
+                guess = self._grid_coords[idx].copy()
+                # Add back the n_field_periods * (2π/nfp) to zeta coordinate
+                guess[2] = guess[2] + zeta_offset
+                selected_guesses.append(guess)
 
             return selected_guesses
 
@@ -204,49 +210,46 @@ class BoozerCoordinateTransformer:
             success = False
 
             # Get multiple grid-based guesses
-            target_point = np.array([R.flat[i], phi.flat[i], Z.flat[i]])
+            target_point = points_cyl[i, :]
             initial_guesses = get_grid_guesses(target_point, n_guesses)
 
             for x0 in initial_guesses:
                 sol = root(
                     objective_function,
                     x0,
-                    args=(R.flat[i], phi.flat[i], Z.flat[i]),
-                    method="lm",
-                    options={"ftol": ftol},
+                    args=(points_cyl[i, :]),
+                    method="hybr",
+                    tol=ftol,
                 )
-                if sol.success and np.all(np.abs(sol.fun) < ftol):
-                    s[i] = np.clip(sol.x[0], 0.0, 1.0)
-                    theta[i] = sol.x[1]
-                    zeta[i] = sol.x[2]
+                if sol.success:
+                    points_boozer[i, 0] = np.clip(sol.x[0], 0.0, 1.0)
+                    points_boozer[i, 1] = sol.x[1]
+                    points_boozer[i, 2] = sol.x[2]
                     success = True
                     break
 
             if not success:
                 raise RuntimeError(
                     f"Root finding failed for point {i} with coordinates "
-                    f"R={R.flat[i]}, phi={phi.flat[i]}, Z={Z.flat[i]}"
+                    f"R={points_cyl[i, 0]}, phi={points_cyl[i, 1]}, "
+                    f"Z={points_cyl[i, 2]}"
                 )
 
-        # Return scalars for scalar inputs
-        if input_scalar:
-            return s[0], theta[0], zeta[0]
-        else:
-            return s, theta, zeta
+        return points_boozer
 
-    def boozer_to_cylindrical(self, s, theta, zeta):
+    def boozer_to_cylindrical(self, points_boozer):
         """
         Convert from Boozer coordinates to cylindrical coordinates.
 
         Args:
-            s: Normalized toroidal flux
-            theta: Boozer poloidal angle
-            zeta: Boozer toroidal angle
+            points_boozer: A numpy array of shape (npoints, 3) containing the
+                Boozer coordinates (s, theta, zeta).
 
         Returns:
-            R, phi, Z: Cylindrical coordinates
+            points_cyl: A numpy array of shape (npoints, 3) containing the
+                cylindrical coordinates (R, phi, Z).
         """
-        return boozer_to_cylindrical(self.field, s, theta, zeta)
+        return boozer_to_cylindrical(self.field, points_boozer)
 
 
 class VMECCoordinateTransformer:
@@ -263,12 +266,12 @@ class VMECCoordinateTransformer:
 
     Example:
         transformer = VMECCoordinateTransformer("wout.nc", grid_resolution=(15, 30, 30))
-        s, theta, phi = transformer.cylindrical_to_vmec(R, phi_cyl, Z)
+        points_vmec = transformer.cylindrical_to_vmec(points_cyl)
         # Grid is reused for subsequent calls
-        s2, theta2, phi2 = transformer.cylindrical_to_vmec(R2, phi_cyl2, Z2)
+        points_vmec2 = transformer.cylindrical_to_vmec(points_cyl2)
     """
 
-    def __init__(self, wout_filename, grid_resolution=(10, 20, 20)):
+    def __init__(self, wout_filename, grid_resolution=(50, 50, 50)):
         self.wout_filename = wout_filename
         self.grid_resolution = grid_resolution
         self._grid_coords = None
@@ -325,16 +328,9 @@ class VMECCoordinateTransformer:
         vmec_coords[:, 2] = phi_mesh
 
         # Convert to cylindrical coordinates using vmec_to_cylindrical
-        R, phi_cyl, Z = vmec_to_cylindrical(
-            self.wout_filename, vmec_coords[:, 0], vmec_coords[:, 1], vmec_coords[:, 2]
-        )
+        points_cyl = vmec_to_cylindrical(self.wout_filename, vmec_coords)
 
-        cylindrical_coords = np.zeros((n_points, 3))
-        cylindrical_coords[:, 0] = R
-        cylindrical_coords[:, 1] = phi_cyl
-        cylindrical_coords[:, 2] = Z
-
-        return vmec_coords, cylindrical_coords
+        return vmec_coords, points_cyl
 
     def _ensure_grid_built(self):
         """Build the coordinate grid if not already built."""
@@ -348,38 +344,30 @@ class VMECCoordinateTransformer:
             except Exception as e:
                 raise RuntimeError(f"Failed to build coordinate grid: {e}") from e
 
-    def cylindrical_to_vmec(self, R, phi, Z, n_guesses=4, ftol=1e-6):
+    def cylindrical_to_vmec(self, points_cyl, n_guesses=10, ftol=1e-6):
         """
         Convert from cylindrical coordinates to VMEC coordinates using robust
         pseudo-Cartesian coordinates x = sqrt(s)*cos(theta), y = sqrt(s)*sin(theta).
         All initial guesses are generated from the coordinate grid.
 
         Args:
-            R: Radial coordinate(s)
-            phi: Azimuthal angle(s)
-            Z: Vertical coordinate(s)
+            points_cyl: A numpy array of shape (npoints, 3) containing the
+                cylindrical coordinates (R, phi, Z).
             n_guesses: Number of grid-based initial guesses to try per point
             ftol: Tolerance for root finding convergence
 
         Returns:
-            s_vmec, theta_vmec, phi_vmec: VMEC coordinates
+            points_vmec: A numpy array of shape (npoints, 3) containing the
+                VMEC coordinates (s_vmec, theta_vmec, phi_vmec).
         """
         # Ensure grid is built
         self._ensure_grid_built()
 
-        # Convert inputs to arrays
-        R = np.asarray(R)
-        phi = np.asarray(phi)
-        Z = np.asarray(Z)
+        # Validate input shape
+        if len(points_cyl.shape) != 2 or points_cyl.shape[1] != 3:
+            raise ValueError("points_cyl must have shape (npoints, 3)")
 
-        # Handle scalar inputs
-        input_scalar = np.isscalar(R) or np.isscalar(phi) or np.isscalar(Z)
-
-        # Ensure all arrays have the same shape
-        if R.shape != phi.shape or R.shape != Z.shape:
-            raise ValueError("R, phi, and Z must have the same shape")
-
-        npoints = R.size
+        npoints = points_cyl.shape[0]
         if npoints == 0:
             raise ValueError("Input arrays cannot be empty")
 
@@ -392,11 +380,9 @@ class VMECCoordinateTransformer:
             ns = int(f.variables["ns"][()])
             s_full = np.linspace(0, 1, ns)
 
-        s_vmec = np.zeros(npoints)
-        theta_vmec = np.zeros(npoints)
-        phi_vmec = np.zeros(npoints)
+        points_vmec = np.zeros((npoints, 3))
 
-        def objective_function(x_norm, R_target, phi_target, Z_target):
+        def objective_function(x_norm, points_cyl_target):
             """
             Objective function using normalized coordinates
             x = sqrt(s)*cos(theta), y = sqrt(s)*sin(theta).
@@ -422,11 +408,14 @@ class VMECCoordinateTransformer:
             R_computed = 0.0
             Z_computed = 0.0
             for j in range(len(xm)):
-                angle = xm[j] * theta_i - xn[j] * phi_target
+                angle = xm[j] * theta_i - xn[j] * points_cyl_target[1]
                 R_computed += rmnc_s[j] * np.cos(angle)
                 Z_computed += zmns_s[j] * np.sin(angle)
 
-            return [R_computed - R_target, Z_computed - Z_target]
+            return [
+                R_computed - points_cyl_target[0],
+                Z_computed - points_cyl_target[2],
+            ]
 
         def convert_to_normalized(s, theta):
             """Convert (s, theta, phi) to normalized (x, y, phi) coordinates."""
@@ -447,10 +436,17 @@ class VMECCoordinateTransformer:
             # Build KDTree for efficient nearest neighbor search
             tree = KDTree(self._grid_cylindrical)
 
-            # Map target phi to fundamental domain [0, 2*pi/nfp)
-            target_mapped = target_point.copy()
+            # Map target phi to fundamental domain for KDTree search only
+            # Record how many field periods (integer multiples of 2π/nfp) to add back
             phi_period = 2 * np.pi / self._nfp
-            target_mapped[1] = target_point[1] % phi_period
+
+            # Calculate number of complete field periods in target phi
+            n_field_periods = int(np.floor(target_point[1] / phi_period))
+
+            # Map to fundamental domain [0, 2π/nfp)
+            target_phi_mapped = target_point[1] - n_field_periods * phi_period
+            target_mapped = target_point.copy()
+            target_mapped[1] = target_phi_mapped
 
             # Find k nearest neighbors (more than n_guesses to have options)
             distances, indices = tree.query(target_mapped, k=n_guesses)
@@ -459,9 +455,16 @@ class VMECCoordinateTransformer:
             if n_guesses == 1:
                 indices = [indices]
 
+            # Add back the field periods that were subtracted
+            # Grid coords are in VMEC: (s, theta, phi)
+            # We need to adjust phi to account for the field periods
+            phi_offset = n_field_periods * phi_period
+
             selected_guesses = []
             for idx in indices:
-                grid_coords = self._grid_coords[idx]
+                grid_coords = self._grid_coords[idx].copy()
+                # Add back the n_field_periods * (2π/nfp) to phi coordinate
+                grid_coords[2] = grid_coords[2] + phi_offset
                 guess_norm = convert_to_normalized(grid_coords[0], grid_coords[1])
                 selected_guesses.append(guess_norm)
 
@@ -471,27 +474,25 @@ class VMECCoordinateTransformer:
             success = False
 
             # Get multiple grid-based guesses
-            target_point = np.array([R.flat[i], phi.flat[i], Z.flat[i]])
-            initial_guesses_normalized = get_grid_guesses(target_point, n_guesses)
-
+            initial_guesses_normalized = get_grid_guesses(points_cyl[i, :], n_guesses)
             for x0_norm in initial_guesses_normalized:
                 try:
                     sol = root(
                         objective_function,
                         x0_norm,
-                        args=(R.flat[i], phi.flat[i], Z.flat[i]),
-                        method="lm",
-                        options={"ftol": ftol},
+                        args=(points_cyl[i, :]),
+                        method="hybr",
+                        tol=ftol,
                     )
 
-                    if sol.success and np.all(np.abs(sol.fun) < ftol):
+                    if sol.success:
                         # Convert solution back to (s, theta, phi)
                         s_result, theta_result = convert_from_normalized(
                             sol.x[0], sol.x[1]
                         )
-                        s_vmec[i] = s_result
-                        theta_vmec[i] = theta_result
-                        phi_vmec[i] = phi.flat[i]
+                        points_vmec[i, 0] = s_result
+                        points_vmec[i, 1] = theta_result
+                        points_vmec[i, 2] = points_cyl[i, 1]
                         success = True
                         break
                 except Exception:
@@ -500,148 +501,97 @@ class VMECCoordinateTransformer:
             if not success:
                 raise RuntimeError(
                     f"Root finding failed for point {i} with coordinates "
-                    f"R={R.flat[i]}, phi={phi.flat[i]}, Z={Z.flat[i]}"
+                    f"R={points_cyl[i, 0]}, phi={points_cyl[i, 1]}, "
+                    f"Z={points_cyl[i, 2]}"
                 )
 
-        # Return scalars for scalar inputs
-        if input_scalar:
-            return s_vmec[0], theta_vmec[0], phi_vmec[0]
-        else:
-            return s_vmec, theta_vmec, phi_vmec
+        return points_vmec
 
-    def vmec_to_cylindrical(self, s_vmec, theta_vmec, phi_vmec):
+    def vmec_to_cylindrical(self, points_vmec):
         """
         Convert from VMEC coordinates to cylindrical coordinates.
 
         Args:
-            s_vmec: Normalized toroidal flux
-            theta_vmec: VMEC poloidal angle
-            phi_vmec: VMEC cylindrical angle
+            points_vmec: A numpy array of shape (npoints, 3) containing the
+                VMEC coordinates (s_vmec, theta_vmec, phi_vmec).
 
         Returns:
-            R, phi_cyl, Z: Cylindrical coordinates
+            points_cyl: A numpy array of shape (npoints, 3) containing the
+                cylindrical coordinates (R, phi_cyl, Z).
         """
-        return vmec_to_cylindrical(self.wout_filename, s_vmec, theta_vmec, phi_vmec)
+        return vmec_to_cylindrical(self.wout_filename, points_vmec)
 
 
-def boozer_to_cylindrical(field, s, theta, zeta):
+def boozer_to_cylindrical(field, points):
     r"""
     Convert from Boozer coordinates to cylindrical coordinates.
 
     Args:
         field : The :class:`BoozerMagneticField` instance used for field evaluation.
-        s : A scalar or a numpy array of shape (npoints,) containing the
-            normalized toroidal flux.
-        theta : A scalar or a numpy array of shape (npoints,) containing the
-            Boozer poloidal angle.
-        zeta : A scalar or a numpy array of shape (npoints,) containing the
-            Boozer toroidal angle.
+        points : A numpy array of shape (npoints, 3) containing the
+            Boozer coordinates (s, theta, zeta).
 
     Returns:
-        R : A scalar or a numpy array of shape (npoints,) containing the
-            radial coordinate.
-        phi : A scalar or a numpy array of shape (npoints,) containing the
-            azimuthal angle.
-        Z : A scalar or a numpy array of shape (npoints,) containing the
-            vertical coordinate.
+        points_cylindrical : A numpy array of shape (npoints, 3) containing the
+            cylindrical coordinates (R, phi, Z).
     """
-    if not isinstance(s, np.ndarray):
-        s = np.asarray(s)
-    if not isinstance(theta, np.ndarray):
-        theta = np.asarray(theta)
-    if not isinstance(zeta, np.ndarray):
-        zeta = np.asarray(zeta)
+    # Validate input shape
+    if len(points.shape) != 2 or points.shape[1] != 3:
+        raise ValueError("points must have shape (npoints, 3)")
 
-    # Handle scalar inputs - return scalars if any input is a scalar
-    input_scalar = np.isscalar(s) or np.isscalar(theta) or np.isscalar(zeta)
-
-    # Ensure all arrays have the same shape
-    if s.shape != theta.shape or s.shape != zeta.shape:
-        raise ValueError("s, theta, and zeta must have the same shape")
-
-    npoints = s.size
-
-    # Validate that arrays are not empty
+    npoints = points.shape[0]
     if npoints == 0:
         raise ValueError("Input arrays cannot be empty")
 
-    points = np.zeros((npoints, 3))
-    points[:, 0] = s.flatten()
-    points[:, 1] = theta.flatten()
-    points[:, 2] = zeta.flatten()
-
     field.set_points(points)
 
-    R = field.R()[:, 0]
-    Z = field.Z()[:, 0]
-    nu = field.nu()[:, 0]
-    phi = zeta - nu
+    points_cyl = np.zeros((npoints, 3))
+    points_cyl[:, 0] = field.R()[:, 0]
+    points_cyl[:, 1] = points[:, 2] - field.nu()[:, 0]
+    points_cyl[:, 2] = field.Z()[:, 0]
 
-    # Return scalars for scalar inputs, arrays for array inputs
-    if input_scalar:
-        return R[0], phi[0], Z[0]
-    else:
-        return R, phi, Z
+    return points_cyl
 
 
 def cylindrical_to_boozer(
     field,
-    R,
-    phi,
-    Z,
-    n_guesses=4,
+    points_cyl,
+    n_guesses=10,
     ftol=1e-6,
-    grid_resolution=(10, 20, 20),
+    grid_resolution=(50, 50, 50),
 ):
     r"""
     Convert from cylindrical coordinates to Boozer coordinates using root finding.
 
     Args:
         field : The :class:`BoozerMagneticField` instance used for field evaluation.
-        R : A scalar or a numpy array of shape (npoints,) containing the
-            radial coordinate.
-        phi : A scalar or a numpy array of shape (npoints,) containing the
-            azimuthal angle.
-        Z : A scalar or a numpy array of shape (npoints,) containing the
-            vertical coordinate.
+        points_cyl : A numpy array of shape (npoints, 3) containing the
+            cylindrical coordinates (R, phi, Z).
         n_guesses : int, optional
-            Number of grid-based initial guesses to try for each point (default: 4).
+            Number of grid-based initial guesses to try for each point (default: 10).
             Must be a positive integer.
         ftol : float, optional
             Tolerance for root finding convergence (default: 1e-6).
         grid_resolution : tuple of int, optional
-            Grid resolution as (n_s, n_theta, n_zeta) (default: (10, 20, 20)).
+            Grid resolution as (n_s, n_theta, n_zeta) (default: (50, 50, 50)).
 
     Returns:
-        s : A scalar or a numpy array of shape (npoints,) containing the
-            normalized toroidal flux.
-        theta : A scalar or a numpy array of shape (npoints,) containing the
-            Boozer poloidal angle.
-        zeta : A scalar or a numpy array of shape (npoints,) containing the
-            Boozer toroidal angle.
+        points_boozer : A numpy array of shape (npoints, 3) containing the
+            Boozer coordinates (s, theta, zeta).
     """
-    if not isinstance(R, np.ndarray):
-        R = np.asarray(R)
-    if not isinstance(phi, np.ndarray):
-        phi = np.asarray(phi)
-    if not isinstance(Z, np.ndarray):
-        Z = np.asarray(Z)
+    # Validate input shape
+    if len(points_cyl.shape) != 2 or points_cyl.shape[1] != 3:
+        raise ValueError("points_cyl must have shape (npoints, 3)")
 
-    # Ensure all arrays have the same shape
-    if R.shape != phi.shape or R.shape != Z.shape:
-        raise ValueError("R, phi, and Z must have the same shape")
-
-    npoints = R.size
-
-    # Validate that arrays are not empty
+    npoints = points_cyl.shape[0]
     if npoints == 0:
         raise ValueError("Input arrays cannot be empty")
 
     transformer = BoozerCoordinateTransformer(field, grid_resolution)
-    return transformer.cylindrical_to_boozer(R, phi, Z, n_guesses=n_guesses, ftol=ftol)
+    return transformer.cylindrical_to_boozer(points_cyl, n_guesses=n_guesses, ftol=ftol)
 
 
-def vmec_to_boozer(wout_filename, field, s_vmec, theta_vmec, phi_vmec, ftol=1e-6):
+def vmec_to_boozer(wout_filename, field, points_vmec, ftol=1e-6):
     r"""
     Convert from VMEC coordinates to Boozer coordinates.
 
@@ -649,22 +599,21 @@ def vmec_to_boozer(wout_filename, field, s_vmec, theta_vmec, phi_vmec, ftol=1e-6
         wout_filename : str
             The name of the VMEC wout file.
         field : The :class:`BoozerMagneticField` instance used for field evaluation.
-        s_vmec : A scalar or a numpy array of shape (npoints,) containing the
-            normalized toroidal flux.
-        theta_vmec : A scalar or a numpy array of shape (npoints,) containing
-            the VMEC poloidal angle.
-        phi_vmec : A scalar or a numpy array of shape (npoints,) containing
-            the VMEC cylindrical angle.
+        points_vmec : A numpy array of shape (npoints, 3) containing the
+            VMEC coordinates (s_vmec, theta_vmec, phi_vmec).
         ftol : float, optional
             Tolerance for root finding convergence (default: 1e-6).
 
     Returns:
-        theta_b : A numpy array of shape (npoints,) containing the Boozer
-            poloidal angle.
-        zeta_b : A numpy array of shape (npoints,) containing the Boozer toroidal angle.
+        points_boozer : A numpy array of shape (npoints, 3) containing the
+            Boozer coordinates (s, theta, zeta).
     """
-    # Validate that arrays are not empty
-    if len(s_vmec) == 0:
+    # Validate input shape
+    if len(points_vmec.shape) != 2 or points_vmec.shape[1] != 3:
+        raise ValueError("points_vmec must have shape (npoints, 3)")
+
+    npoints = points_vmec.shape[0]
+    if npoints == 0:
         raise ValueError("Input arrays cannot be empty")
 
     # Load VMEC and booz_xform data
@@ -721,30 +670,34 @@ def vmec_to_boozer(wout_filename, field, s_vmec, theta_vmec, phi_vmec, ftol=1e-6
         phi_diff = np.arctan2(np.sin(phi - phi_target), np.cos(phi - phi_target))
         return [vartheta_diff, phi_diff]
 
-    theta_b = []
-    zeta_b = []
-    for i in range(len(s_vmec)):
-        vartheta = vartheta_vmec(s_vmec[i], theta_vmec[i], phi_vmec[i])
+    points_boozer = np.zeros((npoints, 3))
+    for i in range(npoints):
+        s_vmec = points_vmec[i, 0]
+        theta_vmec = points_vmec[i, 1]
+        phi_vmec = points_vmec[i, 2]
+
+        vartheta = vartheta_vmec(s_vmec, theta_vmec, phi_vmec)
         sol = root(
             func_root,
-            [vartheta, phi_vmec[i]],
-            args=(s_vmec[i], vartheta, phi_vmec[i]),
-            method="lm",
-            options={"ftol": ftol},
+            [vartheta, phi_vmec],
+            args=(s_vmec, vartheta, phi_vmec),
+            method="hybr",
+            tol=ftol,
         )
-        if sol.success and np.all(np.abs(sol.fun) < ftol):
-            theta_b.append(sol.x[0])
-            zeta_b.append(sol.x[1])
+        if sol.success:
+            points_boozer[i, 0] = s_vmec
+            points_boozer[i, 1] = sol.x[0]
+            points_boozer[i, 2] = sol.x[1]
         else:
             raise RuntimeError(
                 f"Root finding failed for point {i} with coordinates "
-                f"s={s_vmec[i]}, theta_vmec={theta_vmec[i]}, phi_vmec={phi_vmec[i]}. "
+                f"s={s_vmec}, theta_vmec={theta_vmec}, phi_vmec={phi_vmec}. "
             )
 
-    return np.array(theta_b), np.array(zeta_b)
+    return points_boozer
 
 
-def boozer_to_vmec(wout_filename, field, s, theta_b, zeta_b, ftol=1e-6):
+def boozer_to_vmec(wout_filename, field, points_boozer, ftol=1e-6):
     r"""
     Convert from Boozer coordinates to VMEC coordinates.
 
@@ -752,35 +705,21 @@ def boozer_to_vmec(wout_filename, field, s, theta_b, zeta_b, ftol=1e-6):
         wout_filename : str
             The name of the VMEC wout file.
         field : The :class:`BoozerMagneticField` instance used for field evaluation.
-        s : A scalar or a numpy array of shape (npoints,) containing the
-            normalized toroidal flux.
-        theta_b : A scalar or a numpy array of shape (npoints,) containing
-            the Boozer poloidal angle.
-        zeta_b : A scalar or a numpy array of shape (npoints,) containing
-            the Boozer toroidal angle.
+        points_boozer : A numpy array of shape (npoints, 3) containing the
+            Boozer coordinates (s, theta, zeta).
         ftol : float, optional
             Tolerance for root finding convergence (default: 1e-6).
 
     Returns:
-        theta_vmec : A scalar or a numpy array of shape (npoints,) containing
-            the VMEC poloidal angle.
-        phi_vmec : A scalar or a numpy array of shape (npoints,) containing
-            the VMEC cylindrical angle.
+        points_vmec : A numpy array of shape (npoints, 3) containing the
+            VMEC coordinates (s_vmec, theta_vmec, phi_vmec).
     """
-    # Handle scalar inputs - return scalars if any input is a scalar
-    input_scalar = np.isscalar(s) or np.isscalar(theta_b) or np.isscalar(zeta_b)
+    # Validate input shape
+    if len(points_boozer.shape) != 2 or points_boozer.shape[1] != 3:
+        raise ValueError("points_boozer must have shape (npoints, 3)")
 
-    # Convert to arrays if needed
-    s = np.asarray(s)
-    theta_b = np.asarray(theta_b)
-    zeta_b = np.asarray(zeta_b)
-
-    # Ensure all inputs have the same shape
-    if s.shape != theta_b.shape or s.shape != zeta_b.shape:
-        raise ValueError("s, theta_b, and zeta_b must have the same shape")
-
-    # Validate that arrays are not empty
-    if s.size == 0:
+    npoints = points_boozer.shape[0]
+    if npoints == 0:
         raise ValueError("Input arrays cannot be empty")
 
     # Load VMEC and booz_xform data
@@ -838,66 +777,52 @@ def boozer_to_vmec(wout_filename, field, s, theta_b, zeta_b, ftol=1e-6):
         )
         return [vartheta_diff]
 
-    theta_vmec = np.zeros_like(s)
-    phi_vmec = np.zeros_like(s)
-    for i in range(s.size):
+    points_vmec = np.zeros((npoints, 3))
+    for i in range(npoints):
+        s = points_boozer[i, 0]
+        theta_b = points_boozer[i, 1]
+        zeta_b = points_boozer[i, 2]
+
         sol = root(
             func_root,
-            [theta_b[i]],
-            args=(s[i], theta_b[i], zeta_b[i]),
-            method="lm",
-            options={"ftol": ftol},
+            [theta_b],
+            args=(s, theta_b, zeta_b),
+            method="hybr",
+            tol=ftol,
         )
-        if sol.success and np.all(np.abs(sol.fun) < ftol):
-            theta_vmec[i] = sol.x[0]
-            vartheta, phi_vmec[i] = vartheta_phi_vmec(s[i], theta_b[i], zeta_b[i])
+        if sol.success:
+            points_vmec[i, 0] = s
+            points_vmec[i, 1] = sol.x[0]
+            vartheta, points_vmec[i, 2] = vartheta_phi_vmec(s, theta_b, zeta_b)
         else:
             raise RuntimeError(
                 f"Root finding failed for point {i} with coordinates "
-                f"s={s[i]}, theta_b={theta_b[i]}, zeta_b={zeta_b[i]}. "
+                f"s={s}, theta_b={theta_b}, zeta_b={zeta_b}. "
             )
 
-    # Return scalars for scalar inputs, arrays for array inputs
-    if input_scalar:
-        return theta_vmec[0], phi_vmec[0]
-    else:
-        return theta_vmec, phi_vmec
+    return points_vmec
 
 
-def vmec_to_cylindrical(wout_filename, s_vmec, theta_vmec, phi_vmec):
+def vmec_to_cylindrical(wout_filename, points_vmec):
     r"""
     Convert from VMEC coordinates to cylindrical coordinates.
 
     Args:
         wout_filename : str
             The name of the VMEC wout file.
-        s_vmec : A scalar or a numpy array of shape (npoints,) containing the
-            normalized toroidal flux.
-        theta_vmec : A scalar or a numpy array of shape (npoints,) containing
-            the VMEC poloidal angle.
-        phi_vmec : A scalar or a numpy array of shape (npoints,) containing
-            the VMEC cylindrical angle.
+        points_vmec : A numpy array of shape (npoints, 3) containing the
+            VMEC coordinates (s_vmec, theta_vmec, phi_vmec).
 
     Returns:
-        R : A scalar or a numpy array of shape (npoints,) containing the
-            radial coordinate.
-        phi_cyl : A scalar or a numpy array of shape (npoints,) containing
-            the azimuthal angle.
-        Z : A scalar or a numpy array of shape (npoints,) containing the
-            vertical coordinate.
+        points_cyl : A numpy array of shape (npoints, 3) containing the
+            cylindrical coordinates (R, phi_cyl, Z).
     """
-    # Handle scalar inputs - return scalars if any input is a scalar
-    input_scalar = (
-        np.isscalar(s_vmec) or np.isscalar(theta_vmec) or np.isscalar(phi_vmec)
-    )
+    # Validate input shape
+    if len(points_vmec.shape) != 2 or points_vmec.shape[1] != 3:
+        raise ValueError("points_vmec must have shape (npoints, 3)")
 
-    # Convert to arrays for processing
-    s_vmec = np.asarray(s_vmec)
-    theta_vmec = np.asarray(theta_vmec)
-    phi_vmec = np.asarray(phi_vmec)
-
-    # Validate that arrays are not empty
-    if s_vmec.size == 0:
+    npoints = points_vmec.shape[0]
+    if npoints == 0:
         raise ValueError("Input arrays cannot be empty")
 
     # Load VMEC data
@@ -909,15 +834,12 @@ def vmec_to_cylindrical(wout_filename, s_vmec, theta_vmec, phi_vmec):
         ns = int(f.variables["ns"][()])  # number of radial surfaces (scalar)
         s_full = np.linspace(0, 1, ns)  # full radial grid
 
-    # Initialize R and Z arrays
-    R = np.zeros_like(s_vmec)
-    Z = np.zeros_like(s_vmec)
-
+    points_cyl = np.zeros((npoints, 3))
     # For each point, compute R and Z using VMEC Fourier harmonics
-    for i in range(s_vmec.size):
-        s_i = s_vmec[i]
-        theta_i = theta_vmec[i]
-        phi_i = phi_vmec[i]
+    for i in range(npoints):
+        s_i = points_vmec[i, 0]
+        theta_i = points_vmec[i, 1]
+        phi_i = points_vmec[i, 2]
 
         # Interpolate harmonics to the desired s value
         rmnc_s = np.zeros_like(rmnc[0, :])
@@ -929,36 +851,23 @@ def vmec_to_cylindrical(wout_filename, s_vmec, theta_vmec, phi_vmec):
             zmns_s[j] = np.interp(s_i, s_full, zmns[:, j])
 
         # Compute R and Z using Fourier series
-        R[i] = 0.0
-        Z[i] = 0.0
-
         for j in range(len(xm)):
             angle = xm[j] * theta_i - xn[j] * phi_i
-            R[i] += rmnc_s[j] * np.cos(angle)
-            Z[i] += zmns_s[j] * np.sin(angle)
+            points_cyl[i, 0] += rmnc_s[j] * np.cos(angle)
+            points_cyl[i, 2] += zmns_s[j] * np.sin(angle)
 
     # phi_cyl is the same as phi_vmec
-    phi_cyl = phi_vmec
+    points_cyl[:, 1] = points_vmec[:, 2]
 
-    # Return scalars for scalar inputs, arrays for array inputs
-    if input_scalar:
-        return (
-            R[0] if hasattr(R, "__len__") else R,
-            phi_cyl[0] if hasattr(phi_cyl, "__len__") else phi_cyl,
-            Z[0] if hasattr(Z, "__len__") else Z,
-        )
-    else:
-        return R, phi_cyl, Z
+    return points_cyl
 
 
 def cylindrical_to_vmec(
     wout_filename,
-    R,
-    phi,
-    Z,
-    n_guesses=4,
+    points_cyl,
+    n_guesses=10,
     ftol=1e-6,
-    grid_resolution=(10, 20, 20),
+    grid_resolution=(50, 50, 50),
 ):
     r"""
     Convert from cylindrical coordinates to VMEC coordinates using robust
@@ -967,40 +876,27 @@ def cylindrical_to_vmec(
     Args:
         wout_filename : str
             The name of the VMEC wout file.
-        R : A scalar or a numpy array of shape (npoints,) containing the
-            radial coordinate.
-        phi : A scalar or a numpy array of shape (npoints,) containing the
-            azimuthal angle.
-        Z : A scalar or a numpy array of shape (npoints,) containing the
-            vertical coordinate.
+        points_cyl : A numpy array of shape (npoints, 3) containing the
+            cylindrical coordinates (R, phi_cyl, Z).
         n_guesses : int, optional
-            Number of grid-based initial guesses to try for each point (default: 4).
+            Number of grid-based initial guesses to try for each point (default: 10).
             Must be a positive integer.
         ftol : float, optional
             Tolerance for root finding convergence (default: 1e-6).
         grid_resolution : tuple of int, optional
-            Grid resolution as (n_s, n_theta, n_phi) (default: (10, 20, 20)).
+            Grid resolution as (n_s, n_theta, n_phi) (default: (50, 50, 50)).
 
     Returns:
-        s_vmec : A scalar or a numpy array of shape (npoints,) containing the
-            normalized toroidal flux.
-        theta_vmec : A scalar or a numpy array of shape (npoints,) containing
-            the VMEC poloidal angle.
-        phi_vmec : A scalar or a numpy array of shape (npoints,) containing
-            the VMEC cylindrical angle.
+        points_vmec : A numpy array of shape (npoints, 3) containing the
+            VMEC coordinates (s_vmec, theta_vmec, phi_vmec).
     """
-    # Convert to arrays for processing
-    R = np.asarray(R)
-    phi = np.asarray(phi)
-    Z = np.asarray(Z)
+    # Validate input shape
+    if len(points_cyl.shape) != 2 or points_cyl.shape[1] != 3:
+        raise ValueError("points_cyl must have shape (npoints, 3)")
 
-    # Validate that arrays are not empty
-    if R.size == 0:
+    npoints = points_cyl.shape[0]
+    if npoints == 0:
         raise ValueError("Input arrays cannot be empty")
 
-    # Ensure all arrays have the same shape
-    if R.shape != phi.shape or R.shape != Z.shape:
-        raise ValueError("R, phi, and Z must have the same shape")
-
     transformer = VMECCoordinateTransformer(wout_filename, grid_resolution)
-    return transformer.cylindrical_to_vmec(R, phi, Z, n_guesses=n_guesses, ftol=ftol)
+    return transformer.cylindrical_to_vmec(points_cyl, n_guesses=n_guesses, ftol=ftol)
