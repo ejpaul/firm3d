@@ -148,7 +148,7 @@ class AE3DEigenvector:
             egn_value,
             egn_vector_sorted,
             modes_sorted,
-        ) = cls.get_nearest_eigenvector(target_eigenvalue)
+        ) = eig_mode_asci.get_nearest_eigenvector(target_eigenvalue)
         harmonics = [
             Harmonic(
                 m=modes_sorted["m"][i],
@@ -158,7 +158,7 @@ class AE3DEigenvector:
             for i in range(len(modes_sorted))
         ]
         return AE3DEigenvector(
-            eigenvalue=egn_value, s_coords=cls.s_coords, harmonics=harmonics
+            eigenvalue=egn_value, s_coords=eig_mode_asci.s_coords, harmonics=harmonics
         )
 
     def export_to_numpy(
