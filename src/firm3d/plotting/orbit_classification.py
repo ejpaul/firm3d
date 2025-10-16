@@ -1,5 +1,6 @@
 import numpy as np
 
+__all__ = ["OrbitClassification"]
 
 class OrbitClassification:
     r"""
