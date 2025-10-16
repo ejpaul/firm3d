@@ -24,13 +24,13 @@ from firm3d.util.constants import (
 from firm3d.util.functions import proc0_print, setup_logging
 from firm3d.util.mpi import comm_size, comm_world, verbose
 
-resolution = 48  # Resolution for field interpolation
-nParticles = 5000  # Number of particles to trace
+resolution = 5  # Resolution for field interpolation
+nParticles = 5  # Number of particles to trace
 reltol = 1e-8  # Relative tolerance for the ODE solver
 abstol = 1e-8  # Absolute tolerance for the ODE solver
 order = 3  # Order for radial interpolation
 degree = 3  # Degree for 3d interpolation
-boozmn_filename = "./boozmn.nc"
+boozmn_filename = "../inputs/boozmn_beta2.5_QH.nc"
 saw_filename = "./far3d_firm3d_out.npy"
 tmax = 1e-2  # Time for integration
 ns_interp = resolution
