@@ -171,6 +171,8 @@ class AE3DEigenvector:
             filename (str): The name of the file to export to.
             num_harmonics (int, optional): The number of harmonics to export.
                 If None, all harmonics are exported.
+            resolution_step (int): Number of indices to skip in the flux label
+                "s". The full resolution is used when this is set to 1.
         """
         num_harmonics = num_harmonics or len(self.harmonics)
         harmonics_data = {
