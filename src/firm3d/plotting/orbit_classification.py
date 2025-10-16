@@ -2,6 +2,7 @@ import numpy as np
 
 __all__ = ["OrbitClassification"]
 
+
 class OrbitClassification:
     r"""
     A class to classify the trapping state and other diagnostics of a particle based on
