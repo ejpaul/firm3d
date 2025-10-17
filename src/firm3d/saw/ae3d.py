@@ -209,20 +209,24 @@ class AE3DEigenvector:
         print(f"Harmonics exported to {filename}")
 
     @classmethod
-    def load_from_numpy(cls, filename: str):
+    def load_from_numpy(cls, filename: str, num_harmonics: int = None):
         """
         Loads harmonics from a NumPy file into an AE3DEigenvector instance.
 
         Args:
             filename (str): The name of the file to load from.
+            num_harmonics (int, optional): The number of harmonics to load.
+                                            If None, all harmonics are loaded.
 
         Returns:
             AE3DEigenvector: An instance of AE3DEigenvector with loaded data.
         """
         harmonics_data = np.load(filename, allow_pickle=True).item()
+        if num_harmonics is None:
+            num_harmonics = len(harmonics_data["harmonics"]) - 1
         harmonics = [
             Harmonic(m=m, n=n, amplitudes=amplitudes)
-            for m, n, amplitudes in harmonics_data["harmonics"]
+            for m, n, amplitudes in harmonics_data["harmonics"][:num_harmonics]
         ]
         return cls(
             eigenvalue=harmonics_data["eigenvalue"],
