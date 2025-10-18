@@ -872,7 +872,7 @@ particle_guiding_center_boozer_tracing(
         }
     }
 }
-
+#ifdef USE_GSL
 // Wrapper function to convert vector to array for symplectic solver
 tuple<vector<vector<double>>, vector<vector<double>>>
 solve_sympl_wrapper(
@@ -913,3 +913,4 @@ solve_sympl_wrapper(
         dt_save
     );
 }
+#endif
