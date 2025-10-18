@@ -107,3 +107,5 @@ particle_guiding_center_boozer_tracing(
         double dt=1e-7,
         double DP_hmin=0.0
 );
+
+vector<double> simsopt_derivs_boozer(shared_ptr<BoozerMagneticField> field, vector<double> loc, double m, double q, double vtotal, double vtang);

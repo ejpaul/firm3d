@@ -914,3 +914,44 @@ solve_sympl_wrapper(
     );
 }
 #endif
+
+
+// compute derivative for a single point
+void particle_guiding_center_boozer_derivs(
+        shared_ptr<BoozerMagneticField> field, array<double, 3> stz_init, vector<double>&  out,
+        double m, double q, double vtotal, double vtang)
+{
+    Array2 stz({{stz_init[0], stz_init[1], stz_init[2]}});
+    field->set_points(stz);
+    double modB = field->modB()(0);
+    double vperp2 = vtotal*vtotal - vtang*vtang;
+    double mu = vperp2/(2*modB);
+
+    double s = stz_init[0];
+    double t = stz_init[1];
+
+    vector<double> y = {s*cos(t), s*sin(t), stz_init[2], vtang};
+    auto rhs_class = GuidingCenterVacuumBoozerRHS(field, m, q, mu, 2);
+
+    rhs_class(y, out, 0.0);
+}
+
+vector<double> simsopt_derivs_boozer(shared_ptr<BoozerMagneticField> field, vector<double> loc, double m, double q, double vtotal, double vtang){
+
+    // py::buffer_info loc_buf = loc.request();
+    // double* loc_arr = static_cast<double*>(loc_buf.ptr);
+
+    vector<double> out(4);
+    array<double, 3> stz = {loc[0], loc[1], loc[2]};
+
+    vector<double> derivs(4);
+
+    particle_guiding_center_boozer_derivs(field, stz, derivs, m, q, vtotal, vtang);
+
+    for(int i=0; i<4; ++i){
+        out[i] = derivs[i];
+    }
+
+    // auto result = py::array_t<double>(4, out);
+    return out;
+}

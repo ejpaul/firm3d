@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.15)
 set(CMAKE_CXX_COMPILER_WORKS 1)
 project(firm3dpp)
 
+
+enable_language(CUDA)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=sm_80")
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -153,6 +157,8 @@ pybind11_add_module(${PROJECT_NAME}
     src/firm3dpp/tracing.cpp
     src/firm3dpp/python_boozermagneticfield.cpp
     src/firm3dpp/boozerradialinterpolant.cpp
+    src/firm3dpp/cuda_kernel.cu
+    src/firm3dpp/cuda_wrapper.cpp
     ${GSL_TARGETS}
 )
 
