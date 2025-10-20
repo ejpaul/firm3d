@@ -612,7 +612,7 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
 
 template<RHS id, typename... Args>
 __global__ void particle_trace_kernel(particle_t* particles, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
-                        double tmax, double m, double q, int nparticles, Args... args){
+                        double tmax, double m, double q, double atol, double rtol, int nparticles, Args... args){
     int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
     particle_t p;
 
@@ -676,8 +676,7 @@ __global__ void particle_trace_kernel(particle_t* particles, double* srange_arr,
             __syncthreads();
 
         }
-        double atol=1e-9;
-        double rtol=1e-9;
+
         __syncthreads();
         if(is_valid){
             adjust_time<id>(t, dt, state, derivs, x_temp, has_left, atol, rtol, tmax, dtmax);
@@ -781,7 +780,7 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> sra
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    particle_trace_kernel<id><<<nblks, nthreads>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, nparticles, args...);
+    particle_trace_kernel<id><<<nblks, nthreads>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, tmax, m, q, tol, tol, nparticles, args...);
 
     gpuErrchk(cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost) );
 
@@ -1270,7 +1269,7 @@ extern "C" py::array_t<double> test_derivatives_boozer(py::array_t<double> quad_
 
 template<RHS id, typename... Args>
 __global__ void test_gpu_timestep_kernel(particle_t* particles, double* srange_arr, double* trange_arr, double* zrange_arr, double* quadpts_arr,
-                        double m, double q, int nparticles, Args... args){
+                        double m, double q, double atol, double rtol, int nparticles, Args... args){
     int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
     particle_t p;
 
@@ -1334,8 +1333,6 @@ __global__ void test_gpu_timestep_kernel(particle_t* particles, double* srange_a
             __syncthreads();
 
         }
-        double atol=1e-9;
-        double rtol=1e-9;
         __syncthreads();
         if(is_valid && t[threadIdx.x] == 0.0){
             adjust_time<id>(t, dt, state, derivs, x_temp, has_left, atol, rtol, 1e-2, dtmax);
@@ -1438,7 +1435,7 @@ extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, 
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    test_gpu_timestep_kernel<RHS::GC_CartesianVacuum><<<nblks, nthreads>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, m, q,  nparticles);
+    test_gpu_timestep_kernel<RHS::GC_CartesianVacuum><<<nblks, nthreads>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, m, q, tol, tol, nparticles);
 
     gpuErrchk( cudaPeekAtLastError() );
     gpuErrchk( cudaDeviceSynchronize() );
@@ -1567,7 +1564,7 @@ extern "C" vector<double> test_timestep_boozer(py::array_t<double> quad_pts, py:
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    test_gpu_timestep_kernel<RHS::GC_BoozerVacuum><<<nblks, nthreads>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, m, q, nparticles, psi0);
+    test_gpu_timestep_kernel<RHS::GC_BoozerVacuum><<<nblks, nthreads>>>(particles_d, srange_d, trange_d, zrange_d, quadpts_d, m, q, tol, tol, nparticles, psi0);
 
     gpuErrchk( cudaPeekAtLastError() );
     gpuErrchk( cudaDeviceSynchronize() );
