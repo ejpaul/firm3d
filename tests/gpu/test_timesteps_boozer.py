@@ -143,7 +143,7 @@ def test_timestep(field, nfp, n_metagrid_pts, n_test_pts):
 if __name__ == "__main__":
     ### CREATE A FIELD FOR TRACING
     boozmn_filename = "examples/inputs/boozmn_aten_rescaled.nc"
-    bri = BoozerRadialInterpolant(boozmn_filename, 3, no_K=True)
+    bri = BoozerRadialInterpolant(boozmn_filename, 3, enforce_vacuum=True)
 
 
     nfp = bri.nfp
