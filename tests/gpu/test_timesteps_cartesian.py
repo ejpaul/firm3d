@@ -146,7 +146,7 @@ def test_timestep(field, sc_particle, nfp, n_metagrid_pts, n_test_pts, verify=Tr
         # print(quad_info.shape)
         # print("testing new timstep")
         
-        last_time = sopp.test_timestep_cartesian(
+        last_time = firm3dpp.test_timestep_cartesian(
                 quad_pts=quad_info, 
                 srange=r_range,
                 trange=phi_range,
@@ -248,4 +248,4 @@ if __name__ == "__main__":
 
         test_derivs(bsh, sc_particle, nfp, n_metagrid_pts, 100000)
 
-        # test_timestep(bsh, sc_particle, nfp, n_metagrid_pts, 100000)
+        test_timestep(bsh, sc_particle, nfp, n_metagrid_pts, 100000)
