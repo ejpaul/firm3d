@@ -26,7 +26,7 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 
 // enum used for templating
 // https://stackoverflow.com/questions/9116267/how-can-i-use-an-enumeration-as-a-template-parameter
-enum class RHS {GC_CartesianVacuum, GC_BoozerVacuum};
+enum class RHS {GC_CartesianVacuum, GC_BoozerVacuum, GC_BoozerVacuumSAW};
 
 
 // Particle Data Structure
@@ -118,6 +118,13 @@ template <int n> __device__ void interpolate(double*  out, const double* __restr
     }
 }
 
+// set the first n entries of arr to 0 using nthreads threads
+__device__ void set_to_zero(double* arr, int n, int nthreads){
+    for (int i=threadIdx.x; i<n; i+=nthreads){
+        arr[i] = 0.0;
+    }
+}
+
 // calc_derivs computes the derivatives at points for which the corresponding
 // i,j,k indices and shape functions have been precomputed
 // the results are stored in the appropriate region of derivs
@@ -135,13 +142,10 @@ template <>
 __device__ void calc_derivs<RHS::GC_CartesianVacuum>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
                                     int* index_i, int* index_j, int* index_k, double* r_shape, double* phi_shape, double* z_shape,
                                     double* mu, double m, double q, int nphi, int nz, int nparticles_blk){
-    __shared__ double block_interpolants[7*PARTICLES_PER_BLOCK];
 
-    if(threadIdx.x < nparticles_blk){
-        for(int i=0; i<7; ++i){
-            block_interpolants[i*PARTICLES_PER_BLOCK + threadIdx.x] = 0.0;
-        }
-    }
+    __shared__ double block_interpolants[7*PARTICLES_PER_BLOCK];
+    set_to_zero(block_interpolants, 7*nparticles_blk, THREADS_PER_BLOCK);
+
     __syncthreads();
     interpolate<7>(block_interpolants, quadpts_arr, index_i, index_j, index_k, r_shape, phi_shape, z_shape, nphi, nz, nparticles_blk);
     __syncthreads();
@@ -197,11 +201,8 @@ __device__ void calc_derivs<RHS::GC_BoozerVacuum>(double* derivs, int deriv_id, 
 
    __shared__ double block_interpolants[6*PARTICLES_PER_BLOCK];
 
-    if(threadIdx.x < nparticles_blk){
-        for(int i=0; i<6; ++i){
-            block_interpolants[i*PARTICLES_PER_BLOCK + threadIdx.x] = 0.0;
-        }
-    }
+    set_to_zero(block_interpolants, 6*nparticles_blk, THREADS_PER_BLOCK);
+
     __syncthreads();
     interpolate<6>(block_interpolants, quadpts_arr, index_i, index_j, index_k, s_shape, t_shape, z_shape, nt, nz, nparticles_blk);
     __syncthreads();
@@ -331,7 +332,7 @@ template <RHS id>
 __device__ void build_state(double* x_temp, int deriv_id, bool* symmetry_exploited, int* index_i, int* index_j, int* index_k,
                             double* r_shape, double* phi_shape, double* z_shape, double* state, double* derivs, double* dt,
                             double* rrange_arr, double* phirange_arr, double* zrange_arr){
-    // const double b1 = 35.0 / 384.0, b3 = 500.0 / 1113.0, b4 = 125.0 / 192.0, b5 = -2187.0 / 6784.0, b6 = 11.0 / 84.0;
+
     double wgts[6] = {0.0}; 
     for (int i = 0; i < 4; i++) {
         x_temp[i*PARTICLES_PER_BLOCK + threadIdx.x] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
