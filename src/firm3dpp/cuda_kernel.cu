@@ -863,7 +863,7 @@ __device__ void account_for_symmetry<RHS::GC_BoozerVacuum>(double* interpolants,
 template <RHS id, int n>
 __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* loc, double* out, int n_points){
     int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
-    particle_t p;
+
     __shared__ double x_temp[4 * PARTICLES_PER_BLOCK];
     __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
     __shared__ int index_i[PARTICLES_PER_BLOCK];
@@ -886,22 +886,12 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* loc, dou
     int nparticles_blk = __syncthreads_count(is_valid);
     // printf("test_gpu_interpolation_kernel called with idx=%d, n_points=%d, nparticles_blk=%d\n", idx, n_points, nparticles_blk);
     if(is_valid){
-        // double x = loc_arr[0]*cos(loc_arr[1]);
-        // double y = loc_arr[0]*sin(loc_arr[1]);
-        // double z = loc_arr[2];
-
-        p.state[0] = loc_arr[0];
-        p.state[1] = loc_arr[1];
-        p.state[2] = loc_arr[2];
-        p.state[3] = 0.0; // v_par
-
-        p.dt = 1e-3; //needed for build_state
-
         dt[threadIdx.x] = 1e-3; // needed for build_state
         symmetry_exploited[threadIdx.x] = false;
-        for(int i=0; i<4; ++i){
-            state[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.state[i];
+        for(int i=0; i<3; ++i){
+            state[i*PARTICLES_PER_BLOCK + threadIdx.x] = loc_arr[i];
         }
+        state[3*PARTICLES_PER_BLOCK + threadIdx.x] = 0.0; // dummy vpar value
         build_state<id>(x_temp, 0, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, state, derivs, dt);
 
         for(int i=0; i<n; ++i){
@@ -1044,7 +1034,7 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
 
 
 template<RHS id, typename... Args>
-__global__ void test_gpu_derivs_kernel(double* quad_pts, double* loc, double* vpar, double vtotal, double* out, int n_points, Args... args){
+__global__ void test_gpu_derivs_kernel(double* quad_pts, double* loc, double* vpar, double* out, int n_points, Args... args){
     int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;    
     double* loc_arr = loc + 3*idx;
     double* out_arr  =  out + 4*idx;
@@ -1078,8 +1068,8 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* loc, double* vp
         p.state[1] = r*sin(phi);
         p.state[2] = z;
         p.state[3] = vpar_val;
-        p.v_total = vtotal;
-        p.v_perp = sqrt(vtotal*vtotal -  vpar_val*vpar_val);
+        p.v_total = v_total_d;
+        p.v_perp = sqrt(v_total_d*v_total_d -  vpar_val*vpar_val);
 
         for(int i=0; i<4; ++i){
             state[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.state[i];
@@ -1089,7 +1079,7 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* loc, double* vp
     __syncthreads();
 
     setup_particle<id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
-                        quad_pts, r_shape, phi_shape, z_shape, state, derivs, p.v_total, nparticles_blk, args...);
+                        quad_pts, r_shape, phi_shape, z_shape, state, derivs, nparticles_blk, args...);
 
     __syncthreads();
 
@@ -1168,7 +1158,7 @@ extern "C" py::array_t<double> test_derivatives_cartesian(py::array_t<double> qu
     cudaEventCreate(&stop);
     cudaEventRecord(start);
         
-    test_gpu_derivs_kernel<RHS::GC_CartesianVacuum><<<nblks, nthreads>>>(quadpts_d, loc_d, vpar_d, v_total, out_d, n_points);
+    test_gpu_derivs_kernel<RHS::GC_CartesianVacuum><<<nblks, nthreads>>>(quadpts_d, loc_d, vpar_d, out_d, n_points);
     
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
@@ -1247,6 +1237,7 @@ extern "C" py::array_t<double> test_derivatives_boozer(py::array_t<double> quad_
     gpuErrchk(cudaMemcpyToSymbol(mass_d, &m, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(charge_d, &q, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
+    gpuErrchk(cudaMemcpyToSymbol(v_total_d, &v_total, sizeof(double)));
 
 
     gpuErrchk(cudaMemcpyToSymbol(n_x2_d, &n_x2, sizeof(int)) );
@@ -1262,7 +1253,7 @@ extern "C" py::array_t<double> test_derivatives_boozer(py::array_t<double> quad_
     cudaEventCreate(&stop);
     cudaEventRecord(start);
         
-    test_gpu_derivs_kernel<RHS::GC_BoozerVacuum><<<nblks, nthreads>>>(quadpts_d, loc_d, vpar_d, v_total, out_d, n_points);
+    test_gpu_derivs_kernel<RHS::GC_BoozerVacuum><<<nblks, nthreads>>>(quadpts_d, loc_d, vpar_d, out_d, n_points);
     
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
@@ -1317,7 +1308,7 @@ __global__ void test_gpu_timestep_kernel(particle_t* particles, double* quadpts_
 
     // calculate the particle's magnetic moment mu, dt, dtmax
     setup_particle<id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
-                        quadpts_arr, r_shape, phi_shape, z_shape, state, derivs, p.v_total, nparticles_blk, args...);
+                        quadpts_arr, r_shape, phi_shape, z_shape, state, derivs, nparticles_blk, args...);
     __syncthreads();
 
     // if there exists a particle at t=0, which is a real particle, then keep tracing
@@ -1541,6 +1532,7 @@ extern "C" vector<double> test_timestep_boozer(py::array_t<double> quad_pts, py:
     gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(atol_d, &tol, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(rtol_d, &tol, sizeof(double)));
+    gpuErrchk(cudaMemcpyToSymbol(v_total_d, &vtotal, sizeof(double)));
 
 
     gpuErrchk(cudaMemcpyToSymbol(n_x2_d, &n_x2, sizeof(int)) );
