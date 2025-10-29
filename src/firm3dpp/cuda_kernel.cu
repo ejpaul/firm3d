@@ -1100,18 +1100,18 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* loc, double* vp
     }
 }
 
-extern "C" py::array_t<double> test_derivatives_cartesian(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, py::array_t<double> vpar, double v_total, double m, double q, int n_points){
+extern "C" py::array_t<double> test_derivatives_cartesian(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<double> loc, py::array_t<double> vpar, double v_total, double m, double q, int n_points){
     py::buffer_info quadpts_buf = quad_pts.request();
     double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
 
-    py::buffer_info s_buf = srange.request();
-    double* srange_arr = static_cast<double*>(s_buf.ptr);
+    py::buffer_info x1_buf = x1_range.request();
+    double* x1_range_arr = static_cast<double*>(x1_buf.ptr);
 
-    py::buffer_info t_buf = trange.request();
-    double* trange_arr = static_cast<double*>(t_buf.ptr);
+    py::buffer_info x2_buf = x2_range.request();
+    double* x2_range_arr = static_cast<double*>(x2_buf.ptr);
 
-    py::buffer_info z_buf = zrange.request();
-    double* zrange_arr = static_cast<double*>(z_buf.ptr);
+    py::buffer_info x3_buf = x3_range.request();
+    double* x3_range_arr = static_cast<double*>(x3_buf.ptr);
 
     py::buffer_info loc_buf = loc.request();
     double* loc_arr = static_cast<double*>(loc_buf.ptr);
@@ -1119,19 +1119,6 @@ extern "C" py::array_t<double> test_derivatives_cartesian(py::array_t<double> qu
     py::buffer_info vpar_buf = vpar.request();
     double* vpar_arr = static_cast<double*>(vpar_buf.ptr);
     
-
-    double* srange_d;
-    cudaMalloc((void**)&srange_d, 3 * sizeof(double));
-    cudaMemcpy(srange_d, srange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
-
-    double* zrange_d;
-    cudaMalloc((void**)&zrange_d, 3 * sizeof(double));
-    cudaMemcpy(zrange_d, zrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
-
-    double* trange_d;
-    cudaMalloc((void**)&trange_d, 3 * sizeof(double));
-    cudaMemcpy(trange_d, trange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice);
-
     double* quadpts_d;
     cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
     cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
@@ -1147,6 +1134,39 @@ extern "C" py::array_t<double> test_derivatives_cartesian(py::array_t<double> qu
     double* out_d;
     cudaMalloc((void**)&out_d, 4*n_points * sizeof(double));
 
+  // allocate and copy to device memory
+    double x1_range_ext[4];
+    double x2_range_ext[4];
+    double x3_range_ext[4];
+
+    for(int i=0; i<3; ++i){
+        x1_range_ext[i] = x1_range_arr[i];
+        x2_range_ext[i] = x2_range_arr[i];
+        x3_range_ext[i] = x3_range_arr[i];
+
+        
+    }
+    x1_range_ext[3] = (x1_range_ext[1] - x1_range_ext[0]) / (x1_range_ext[2] - 1);
+    x2_range_ext[3] = (x2_range_ext[1] - x2_range_ext[0]) / (x2_range_ext[2] - 1);
+    x3_range_ext[3] = (x3_range_ext[1] - x3_range_ext[0]) / (x3_range_ext[2] - 1);
+
+    int n_x2 = (x2_range_ext[2]-1)/3;
+    int n_x3 = (x3_range_ext[2]-1)/3;
+    int n_x23 = n_x2*n_x3;
+    double tmax = 1e-2; // needed for setup_particle
+
+    gpuErrchk(cudaMemcpyToSymbol(x1_range_d, x1_range_ext, 4*sizeof(double)) );
+    gpuErrchk(cudaMemcpyToSymbol(x2_range_d, x2_range_ext, 4*sizeof(double)) );
+    gpuErrchk(cudaMemcpyToSymbol(x3_range_d, x3_range_ext, 4*sizeof(double)) );
+    gpuErrchk(cudaMemcpyToSymbol(tmax_d, &tmax, sizeof(double)));
+    gpuErrchk(cudaMemcpyToSymbol(mass_d, &m, sizeof(double)));
+    gpuErrchk(cudaMemcpyToSymbol(charge_d, &q, sizeof(double)));
+    gpuErrchk(cudaMemcpyToSymbol(v_total_d, &v_total, sizeof(double)));
+
+
+    gpuErrchk(cudaMemcpyToSymbol(n_x2_d, &n_x2, sizeof(int)) );
+    gpuErrchk(cudaMemcpyToSymbol(n_x3_d, &n_x3, sizeof(int)) );
+    gpuErrchk(cudaMemcpyToSymbol(n_x23_d, &n_x23, sizeof(int)) );
 
 
     int nthreads = THREADS_PER_BLOCK;
@@ -1348,8 +1368,8 @@ __global__ void test_gpu_timestep_kernel(particle_t* particles, double* quadpts_
 }
 
 
-extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, py::array_t<double> srange,
-        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, py::array_t<double> x1_range,
+        py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tol, int nparticles){
 
     //  read data in from python
@@ -1363,15 +1383,51 @@ extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, 
     py::buffer_info quadpts_buf = quad_pts.request();
     double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
 
-    py::buffer_info s_buf = srange.request();
-    double* srange_arr = static_cast<double*>(s_buf.ptr);
 
-    py::buffer_info t_buf = trange.request();
-    double* trange_arr = static_cast<double*>(t_buf.ptr);
+    py::buffer_info x1_buf = x1_range.request();
+    double* x1_range_arr = static_cast<double*>(x1_buf.ptr);
 
-    py::buffer_info z_buf = zrange.request();
-    double* zrange_arr = static_cast<double*>(z_buf.ptr);
+    py::buffer_info x2_buf = x2_range.request();
+    double* x2_range_arr = static_cast<double*>(x2_buf.ptr);
 
+    py::buffer_info x3_buf = x3_range.request();
+    double* x3_range_arr = static_cast<double*>(x3_buf.ptr);
+
+  // allocate and copy to device memory
+    double x1_range_ext[4];
+    double x2_range_ext[4];
+    double x3_range_ext[4];
+
+    for(int i=0; i<3; ++i){
+        x1_range_ext[i] = x1_range_arr[i];
+        x2_range_ext[i] = x2_range_arr[i];
+        x3_range_ext[i] = x3_range_arr[i];
+
+        
+    }
+    x1_range_ext[3] = (x1_range_ext[1] - x1_range_ext[0]) / (x1_range_ext[2] - 1);
+    x2_range_ext[3] = (x2_range_ext[1] - x2_range_ext[0]) / (x2_range_ext[2] - 1);
+    x3_range_ext[3] = (x3_range_ext[1] - x3_range_ext[0]) / (x3_range_ext[2] - 1);
+
+    int n_x2 = (x2_range_ext[2]-1)/3;
+    int n_x3 = (x3_range_ext[2]-1)/3;
+    int n_x23 = n_x2*n_x3;
+    double tmax = 1e-2; // needed for setup_particle
+
+    gpuErrchk(cudaMemcpyToSymbol(x1_range_d, x1_range_ext, 4*sizeof(double)) );
+    gpuErrchk(cudaMemcpyToSymbol(x2_range_d, x2_range_ext, 4*sizeof(double)) );
+    gpuErrchk(cudaMemcpyToSymbol(x3_range_d, x3_range_ext, 4*sizeof(double)) );
+    gpuErrchk(cudaMemcpyToSymbol(tmax_d, &tmax, sizeof(double)));
+    gpuErrchk(cudaMemcpyToSymbol(mass_d, &m, sizeof(double)));
+    gpuErrchk(cudaMemcpyToSymbol(charge_d, &q, sizeof(double)));
+    gpuErrchk(cudaMemcpyToSymbol(atol_d, &tol, sizeof(double)));
+    gpuErrchk(cudaMemcpyToSymbol(rtol_d, &tol, sizeof(double)));
+    gpuErrchk(cudaMemcpyToSymbol(v_total_d, &vtotal, sizeof(double)));
+
+
+    gpuErrchk(cudaMemcpyToSymbol(n_x2_d, &n_x2, sizeof(int)) );
+    gpuErrchk(cudaMemcpyToSymbol(n_x3_d, &n_x3, sizeof(int)) );
+    gpuErrchk(cudaMemcpyToSymbol(n_x23_d, &n_x23, sizeof(int)) );
 
     particle_t* particles =  new particle_t[nparticles];
 
@@ -1400,18 +1456,6 @@ extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, 
     particle_t* particles_d;
     gpuErrchk( cudaMalloc((void**)&particles_d, nparticles * sizeof(particle_t)) );
     gpuErrchk( cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice) );
-
-    double* srange_d;
-    gpuErrchk( cudaMalloc((void**)&srange_d, 3 * sizeof(double)) );
-    gpuErrchk( cudaMemcpy(srange_d, srange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice) );
-
-    double* zrange_d;
-    gpuErrchk( cudaMalloc((void**)&zrange_d, 3 * sizeof(double)) );
-    gpuErrchk(cudaMemcpy(zrange_d, zrange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice) );
-
-    double* trange_d;
-    gpuErrchk(cudaMalloc((void**)&trange_d, 3 * sizeof(double)) );
-    gpuErrchk(cudaMemcpy(trange_d, trange_arr, 3 * sizeof(double), cudaMemcpyHostToDevice) );
 
 
     double* quadpts_d;
