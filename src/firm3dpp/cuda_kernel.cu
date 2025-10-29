@@ -1053,7 +1053,6 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* loc, double* vp
     __shared__ double t[PARTICLES_PER_BLOCK];
     __shared__ double dtmax[PARTICLES_PER_BLOCK];
     __shared__ double state[4 * PARTICLES_PER_BLOCK];
-    particle_t p;
 
     bool is_valid = idx < n_points && threadIdx.x < PARTICLES_PER_BLOCK;
     int nparticles_blk = __syncthreads_count(is_valid);
@@ -1064,16 +1063,10 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* loc, double* vp
         double phi = loc_arr[1];
         double z = loc_arr[2];
 
-        p.state[0] = r*cos(phi);
-        p.state[1] = r*sin(phi);
-        p.state[2] = z;
-        p.state[3] = vpar_val;
-        p.v_total = v_total_d;
-        p.v_perp = sqrt(v_total_d*v_total_d -  vpar_val*vpar_val);
-
-        for(int i=0; i<4; ++i){
-            state[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.state[i];
-        }
+        state[threadIdx.x] = r*cos(phi);
+        state[PARTICLES_PER_BLOCK + threadIdx.x] = r*sin(phi);
+        state[2*PARTICLES_PER_BLOCK + threadIdx.x] = z;
+        state[3*PARTICLES_PER_BLOCK + threadIdx.x] = vpar_val;
         // printf("particle location: %.15e, %.15e, %.15e, %.15e\n", p.state[0], p.state[1], p.state[2], p.state[3]);
     }
     __syncthreads();
@@ -1088,14 +1081,10 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* loc, double* vp
 
     if(is_valid){
         // copy back
-        for(int i=0; i<4; ++i){
-            p.derivs[i] = derivs[i*PARTICLES_PER_BLOCK + threadIdx.x];
-        }
 
-        out_arr[0] = p.derivs[0];
-        out_arr[1] = p.derivs[1];
-        out_arr[2] = p.derivs[2];
-        out_arr[3] = p.derivs[3];
+        for(int i=0; i<4; ++i){
+            out_arr[i] = derivs[i*PARTICLES_PER_BLOCK + threadIdx.x];
+        }
 
     }
 }
