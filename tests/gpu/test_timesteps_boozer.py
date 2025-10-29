@@ -112,10 +112,10 @@ def test_timestep(field, nfp, n_metagrid_pts, n_test_pts):
                 nparticles=n_test_pts)
 
 
-        last_time = np.reshape(last_time, (n_test_pts, 7))
+        last_time = np.reshape(last_time, (n_test_pts, 5))
 
         # map to pseudo-cylindrical coordinates
-        new_final_positions = np.array([[x[4], x[0]*np.cos(x[1]), x[0]*np.sin(x[1]), x[2], x[3]] for x in last_time])
+        new_final_positions = np.array([[x[0], x[1]*np.cos(x[2]), x[1]*np.sin(x[2]), x[3], x[4]] for x in last_time])
 
         
         # normalize vparallel errors
