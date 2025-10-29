@@ -57,28 +57,6 @@ __constant__ double v_total_d; // initial velocity
 
 __constant__ double psi0_d; // used for Boozer RHS only
 
-// Particle Data Structure
-// This should eventually be removed
-typedef struct particle_t {
-    double state[4];
-    double v_perp; // Velocity perpendicular
-    double v_total;
-    bool has_left;
-    double dt;
-    double dtmax;
-    double t;
-    double mu;
-    double derivs[42] = {0.0};
-    double x_temp[4], x_err[4];
-    double r_shape[4], phi_shape[4], z_shape[4];
-    int i, j, k;
-    double interpolation_loc[3];
-    bool symmetry_exploited;
-    int id;
-    int step_attempt, step_accept;
-    double surf_dist;
-} particle_t;
-
 /* shape computes shape functions for cubic interpolation on a a regular grid
  * we assume the point x has been rescaled to be on the grid 0, 1, 2, 3
  * i indicates which shape function we are computing
@@ -1278,9 +1256,8 @@ extern "C" py::array_t<double> test_derivatives_boozer(py::array_t<double> quad_
 
 
 template<RHS id, typename... Args>
-__global__ void test_gpu_timestep_kernel(particle_t* particles, double* quadpts_arr, int nparticles, Args... args){
+__global__ void test_gpu_timestep_kernel(double* out, double* init_pos, double* quadpts_arr, int nparticles, Args... args){
     int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
-    particle_t p;
 
     __shared__ double x_temp[4 * PARTICLES_PER_BLOCK];
     __shared__ double derivs[42 * PARTICLES_PER_BLOCK];
@@ -1307,10 +1284,9 @@ __global__ void test_gpu_timestep_kernel(particle_t* particles, double* quadpts_
     if(is_valid){
         has_left[threadIdx.x] = true;
         t[threadIdx.x] = 0.0;
-        p = particles[idx];
         has_left[threadIdx.x] = false;
         for(int i=0; i<4; ++i){
-            state[i*PARTICLES_PER_BLOCK + threadIdx.x] = p.state[i];
+            state[i*PARTICLES_PER_BLOCK + threadIdx.x] = init_pos[4*idx+i];
         }
     }
     __syncthreads();
@@ -1346,11 +1322,9 @@ __global__ void test_gpu_timestep_kernel(particle_t* particles, double* quadpts_
     __syncthreads();
     if(is_valid){
         // printf("tracing particle %d finished at t=%.15e\n", idx, particles[idx].t);
-        particles[idx].dt = dt[threadIdx.x];
-        particles[idx].t = t[threadIdx.x];
-        particles[idx].has_left = has_left[threadIdx.x];
+        out[5*idx] = t[threadIdx.x];
         for(int i=0; i<4; ++i){
-            particles[idx].state[i] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
+            out[5*idx + i + 1] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
         }
     }
     return;
@@ -1358,12 +1332,12 @@ __global__ void test_gpu_timestep_kernel(particle_t* particles, double* quadpts_
 
 
 extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, py::array_t<double> x1_range,
-        py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<double> loc_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tol, int nparticles){
 
     //  read data in from python
-    py::buffer_info stz_init_buf = stz_init.request();
-    double* stz_init_arr = static_cast<double*>(stz_init_buf.ptr);
+    py::buffer_info loc_init_buf = loc_init.request();
+    double* loc_init_arr = static_cast<double*>(loc_init_buf.ptr);
 
     py::buffer_info vtang_buf = vtang.request();
     double* vtang_arr = static_cast<double*>(vtang_buf.ptr);
@@ -1418,64 +1392,47 @@ extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, 
     gpuErrchk(cudaMemcpyToSymbol(n_x3_d, &n_x3, sizeof(int)) );
     gpuErrchk(cudaMemcpyToSymbol(n_x23_d, &n_x23, sizeof(int)) );
 
-    particle_t* particles =  new particle_t[nparticles];
-
+    double init_pos[4*nparticles];
     // load initial conditions
     for(int i=0; i<nparticles; ++i){
         int start = 3*i;
-
-        double r = stz_init_arr[start];
-        double phi = stz_init_arr[start+1];
+        double r = loc_init_arr[start];
+        double phi =  loc_init_arr[start + 1];
         
-        // convert to cartesian coordinates
-        particles[i].state[0] = r*cos(phi); // x
-        particles[i].state[1] = r*sin(phi); // y
-        particles[i].state[2] = stz_init_arr[start+2]; // z
-        particles[i].state[3] = vtang_arr[i];
-        particles[i].v_perp = sqrt(vtotal*vtotal -  vtang_arr[i]*vtang_arr[i]);
-        particles[i].v_total = vtotal;
-        particles[i].has_left = false;
-        particles[i].t = 0.0;
-        
-        particles[i].step_accept = 0;
-        particles[i].step_attempt = 0;
-        particles[i].id = i;
+        init_pos[4*i] = r*cos(phi);
+        init_pos[4*i+1] = r*sin(phi);
+        init_pos[4*i+2] = loc_init_arr[start+2];
+        init_pos[4*i + 3] = vtang_arr[i];
     }
-    
-    particle_t* particles_d;
-    gpuErrchk( cudaMalloc((void**)&particles_d, nparticles * sizeof(particle_t)) );
-    gpuErrchk( cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice) );
 
+   
+    double* init_pos_d;
+    gpuErrchk(cudaMalloc((void**)&init_pos_d, 4 * nparticles * sizeof(double)) );
+    gpuErrchk(cudaMemcpy(init_pos_d, init_pos, 4 * nparticles * sizeof(double), cudaMemcpyHostToDevice) );
 
     double* quadpts_d;
-
-    // std::cout << "quadpts.size() = " << quad_pts.size() << "\n";
     gpuErrchk( cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double)) );
     gpuErrchk( cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice) );
 
+    double* out_d;
+    gpuErrchk( cudaMalloc((void**)&out_d, 5 * nparticles * sizeof(double)) );
+
     int nthreads = THREADS_PER_BLOCK;
-
     int nblks = nparticles / PARTICLES_PER_BLOCK + 1;
-    std::cout << "starting particle tracing kernel\n";
 
-       
+    std::cout << "starting particle tracing kernel\n";
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    test_gpu_timestep_kernel<RHS::GC_CartesianVacuum><<<nblks, nthreads>>>(particles_d, quadpts_d, nparticles);
+    test_gpu_timestep_kernel<RHS::GC_CartesianVacuum><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, nparticles);
 
     gpuErrchk( cudaPeekAtLastError() );
     gpuErrchk( cudaDeviceSynchronize() );
 
-    // cudaDeviceSynchronize();
-    // cudaError_t err = cudaGetLastError(); 
-    // CHECK_CUDA_ERROR(err);
-    gpuErrchk( cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost) );
+    double out[5*nparticles];
+    gpuErrchk( cudaMemcpy(out, out_d, 5 * nparticles * sizeof(double), cudaMemcpyDeviceToHost) );
 
-
-    // err = cudaGetLastError(); 
-    // CHECK_CUDA_ERROR(err);
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     float milliseconds = 0;
@@ -1483,40 +1440,21 @@ extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, 
     std::cout << "tracing kernels time (ms): " << milliseconds<< "\n";
 
     
-    vector<double> particle_output(7*nparticles);
-    for(int i=0; i<nparticles; ++i){
-        double y1 = particles[i].state[0];
-        double y2 = particles[i].state[1];
-        double z = particles[i].state[2];
-        double v_par = particles[i].state[3];
-
-        // double t = atan2(y2, y1);
-        // t += 2*M_PI*(t < 0);
-        
-        // last location in Boozer coordinates
-        particle_output[7*i] = y1;
-        particle_output[7*i + 1] = y2;
-        particle_output[7*i + 2] = z;
-        particle_output[7*i + 3] = v_par;
-        particle_output[7*i + 4] = particles[i].t;
-        // std::cout << "copied back t=" << particles[i].t << "\n";
-        particle_output[7*i + 5] = particles[i].step_accept;
-        particle_output[7*i + 6] = particles[i].step_attempt;
+    vector<double> particle_output(5*nparticles);
+    for(int i=0; i<5*nparticles; ++i){
+        particle_output[i] = out[i];
     }
 
-
-    delete[] particles;
-    gpuErrchk( cudaFree(particles_d) );
     return particle_output;
 }
 
 extern "C" vector<double> test_timestep_boozer(py::array_t<double> quad_pts, py::array_t<double> x1_range,
-        py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<double> loc_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tol, double psi0, int nparticles){
 
     //  read data in from python
-    py::buffer_info stz_init_buf = stz_init.request();
-    double* stz_init_arr = static_cast<double*>(stz_init_buf.ptr);
+    py::buffer_info loc_init_buf = loc_init.request();
+    double* loc_init_arr = static_cast<double*>(loc_init_buf.ptr);
 
     py::buffer_info vtang_buf = vtang.request();
     double* vtang_arr = static_cast<double*>(vtang_buf.ptr);
@@ -1572,42 +1510,34 @@ extern "C" vector<double> test_timestep_boozer(py::array_t<double> quad_pts, py:
     gpuErrchk(cudaMemcpyToSymbol(n_x3_d, &n_x3, sizeof(int)) );
     gpuErrchk(cudaMemcpyToSymbol(n_x23_d, &n_x23, sizeof(int)) );
 
-    particle_t* particles =  new particle_t[nparticles];
-
+    double init_pos[4*nparticles];
     // load initial conditions
     for(int i=0; i<nparticles; ++i){
         int start = 3*i;
 
-        double r = stz_init_arr[start];
-        double phi = stz_init_arr[start+1];
+        double s = loc_init_arr[start];
+        double theta = loc_init_arr[start+1];
         
-        // convert to cartesian coordinates
-        particles[i].state[0] = r*cos(phi); // x
-        particles[i].state[1] = r*sin(phi); // y
-        particles[i].state[2] = stz_init_arr[start+2]; // z
-        particles[i].state[3] = vtang_arr[i];
-        particles[i].v_perp = sqrt(vtotal*vtotal -  vtang_arr[i]*vtang_arr[i]);
-        particles[i].v_total = vtotal;
-        particles[i].has_left = false;
-        particles[i].t = 0.0;
-        
-        particles[i].step_accept = 0;
-        particles[i].step_attempt = 0;
-        particles[i].id = i;
+        init_pos[4*i] = s*cos(theta);
+        init_pos[4*i + 1] = s*sin(theta);
+        init_pos[4*i + 2] = loc_init_arr[start+2];
+        init_pos[4*i + 3] = vtang_arr[i];
     }
-    
-    particle_t* particles_d;
-    gpuErrchk( cudaMalloc((void**)&particles_d, nparticles * sizeof(particle_t)) );
-    gpuErrchk( cudaMemcpy(particles_d, particles, nparticles * sizeof(particle_t), cudaMemcpyHostToDevice) );
+
+   
+    double* init_pos_d;
+    gpuErrchk(cudaMalloc((void**)&init_pos_d, 4 * nparticles * sizeof(double)) );
+    gpuErrchk(cudaMemcpy(init_pos_d, init_pos, 4 * nparticles * sizeof(double), cudaMemcpyHostToDevice) );
 
     double* quadpts_d;
-
-    // std::cout << "quadpts.size() = " << quad_pts.size() << "\n";
     gpuErrchk( cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double)) );
     gpuErrchk( cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice) );
 
-    int nthreads = THREADS_PER_BLOCK;
+    double* out_d;
+    gpuErrchk( cudaMalloc((void**)&out_d, 5 * nparticles * sizeof(double)) );
 
+
+    int nthreads = THREADS_PER_BLOCK;
     int nblks = nparticles / PARTICLES_PER_BLOCK + 1;
     std::cout << "starting particle tracing kernel\n";
 
@@ -1616,15 +1546,13 @@ extern "C" vector<double> test_timestep_boozer(py::array_t<double> quad_pts, py:
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    test_gpu_timestep_kernel<RHS::GC_BoozerVacuum><<<nblks, nthreads>>>(particles_d, quadpts_d, nparticles);
+    test_gpu_timestep_kernel<RHS::GC_BoozerVacuum><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, nparticles);
 
     gpuErrchk( cudaPeekAtLastError() );
     gpuErrchk( cudaDeviceSynchronize() );
 
-    // cudaDeviceSynchronize();
-    // cudaError_t err = cudaGetLastError(); 
-    // CHECK_CUDA_ERROR(err);
-    gpuErrchk( cudaMemcpy(particles, particles_d, nparticles * sizeof(particle_t), cudaMemcpyDeviceToHost) );
+    double out[5*nparticles];
+    gpuErrchk( cudaMemcpy(out, out_d, 5 * nparticles * sizeof(double), cudaMemcpyDeviceToHost) );
 
 
     // err = cudaGetLastError(); 
@@ -1636,29 +1564,19 @@ extern "C" vector<double> test_timestep_boozer(py::array_t<double> quad_pts, py:
     std::cout << "tracing kernels time (ms): " << milliseconds<< "\n";
 
     
-    vector<double> particle_output(7*nparticles);
+    vector<double> particle_output(5*nparticles);
     for(int i=0; i<nparticles; ++i){
-        double y1 = particles[i].state[0];
-        double y2 = particles[i].state[1];
-        double z = particles[i].state[2];
-        double v_par = particles[i].state[3];
+        double x1 = out[5*i + 1];
+        double x2 = out[5*i + 2];
+        double s = sqrt(x1*x1 + x2*x2);
+        double theta = atan2(x2, x1);
 
-        // double t = atan2(y2, y1);
-        // t += 2*M_PI*(t < 0);
-        
-        // last location in Boozer coordinates
-        particle_output[7*i] = sqrt(y1*y1 + y2*y2);
-        particle_output[7*i + 1] = atan2(y2, y1);
-        particle_output[7*i + 2] = z;
-        particle_output[7*i + 3] = v_par;
-        particle_output[7*i + 4] = particles[i].t;
-        // std::cout << "copied back t=" << particles[i].t << "\n";
-        particle_output[7*i + 5] = particles[i].step_accept;
-        particle_output[7*i + 6] = particles[i].step_attempt;
+        particle_output[5*i] = out[5*i];
+        particle_output[5*i+1] = s;
+        particle_output[5*i+2] = theta;
+        particle_output[5*i+3] = out[5*i+3];
+        particle_output[5*i+4] = out[5*i+4];
     }
 
-
-    delete[] particles;
-    gpuErrchk( cudaFree(particles_d) );
     return particle_output;
 }
