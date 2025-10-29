@@ -75,13 +75,12 @@ last_time = firm3dpp.boozer_gpu_tracing(
 	psi0=field.psi0, 
 	nparticles=nparticles)
 
-last_time = np.reshape(last_time, (nparticles, 7))
+last_time = np.reshape(last_time, (nparticles, 5))
 
 
 particle_data = pd.DataFrame({'s_start': stz_inits[:,0], 't_start': stz_inits[:,1], 'z_start':stz_inits[:,2], 'vpar_start':vpar_inits,
-							  's_end': last_time[:,0], 't_end':last_time[:,1], 'z_end':last_time[:,2], 'vpar_end':last_time[:,3], 'last_time':last_time[:,4],
-							  'steps_accepted':last_time[:,5], 'steps_attempted':last_time[:,6]})
-particle_data.to_csv('/home/mcz/Documents/GitHub/firm3d/examples/gpu_boozer_tracing/particle_data.csv')
+							  's_end': last_time[:,1], 't_end':last_time[:,2], 'z_end':last_time[:,3], 'vpar_end':last_time[:,3], 'last_time':last_time[:,0]})
+particle_data.to_csv('./examples/gpu_boozer_tracing/particle_data.csv')
 
 
 did_leave = [t < 1e-4 for t in particle_data['last_time']]
