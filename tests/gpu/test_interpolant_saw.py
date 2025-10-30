@@ -10,7 +10,7 @@ from firm3d.field.boozermagneticfield import (
 )
 np.random.seed(1865)
 
-from firm3d.util.gpu_utils import boozer_interpolant
+from firm3d.util.gpu_utils import boozer_saw_interpolant
 import firm3dpp
 
 def test_interpolant_bfield(field, nfp, n_metagrid_pts, n_test_pts):
@@ -35,7 +35,8 @@ def test_interpolant_bfield(field, nfp, n_metagrid_pts, n_test_pts):
     simsopt_interpolation = np.hstack((modB, modB_derivs, G, dGds, I, dIds, iota, diotads))
 
     ## NEW INTERPOLANT
-    srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, n_metagrid_pts)
+    srange, trange, zrange, quad_info, maxJ = boozer_saw_interpolant(field, nfp, n_metagrid_pts)
+    print("quad_info shape", quad_info.shape)
     stz = np.ascontiguousarray(stz)
 
     # print("stz", stz)

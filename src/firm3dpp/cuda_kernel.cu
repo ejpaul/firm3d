@@ -231,14 +231,8 @@ __device__ void calc_derivs<RHS::GC_BoozerVacuum>(double* derivs, int deriv_id, 
         double G = block_interpolants[4*PARTICLES_PER_BLOCK + threadIdx.x];
         double iota = block_interpolants[5*PARTICLES_PER_BLOCK + threadIdx.x];
 
-
         double mu_val = mu[threadIdx.x];
 
-
-        // if(threadIdx.x == 0){
-        //     printf("calc_derivs 0: state = %.15e, %.15e,%.15e,%.15e \t mu = %.15e\n", x1, x2, zeta, v_par, mu_val);
-        //     printf("calc_derivs 0: interpolants = %.15e,%.15e,%.15e,%.15e,%.15e,%.15e\n", modB, dmodBds, dmodBdtheta, dmodBdzeta, G, iota);
-        // }
         if(symmetry_exploited[threadIdx.x]){
             dmodBdtheta *= -1.0;
             dmodBdzeta *= -1.0;
@@ -340,6 +334,11 @@ __device__ void map_to_grid<RHS::GC_BoozerVacuum>(double* interp_pt, double* x_t
     interp_pt[2] = z;
 }
 
+// map_to_grid implementation for BoozerSAW tracing
+template <>
+__device__ void map_to_grid<RHS::GC_BoozerVacuumSAW>(double* interp_pt, double* x_temp, bool* symmetry_exploited){
+    map_to_grid<RHS::GC_BoozerVacuum>(interp_pt, x_temp, symmetry_exploited);
+}
 
 // build_state is part of the DP5 implementation
 template <RHS id>
@@ -832,10 +831,17 @@ __device__ void account_for_symmetry<RHS::GC_CartesianVacuum>(double* interpolan
 
 template<>
 __device__ void account_for_symmetry<RHS::GC_BoozerVacuum>(double* interpolants, bool* symmetry_exploited){
+    // modB, dmodBds, dmodBdtheta, dmodBdzeta, G, iota
     if(symmetry_exploited[threadIdx.x]){
         interpolants[2] *= -1.0;
         interpolants[3] *= -1.0;
     }
+}
+
+template<>
+__device__ void account_for_symmetry<RHS::GC_BoozerVacuumSAW>(double* interpolants, bool* symmetry_exploited){
+    // modB, dmodBds, dmodBdtheta, dmodBdzeta, G, dGds, I, dIds, iota, diotads
+    account_for_symmetry<RHS::GC_BoozerVacuum>(interpolants, symmetry_exploited);
 }
 
 template <RHS id, int n>
@@ -870,6 +876,7 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* loc, dou
             state[i*PARTICLES_PER_BLOCK + threadIdx.x] = loc_arr[i];
         }
         state[3*PARTICLES_PER_BLOCK + threadIdx.x] = 0.0; // dummy vpar value
+
         build_state<id>(x_temp, 0, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, state, derivs, dt);
 
         for(int i=0; i<n; ++i){
@@ -926,6 +933,15 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
         }
     } else if(coordinates == "boozer"){
         n = 6;
+        for(int i=0; i<n_points; ++i){
+            double x1 = loc_arr[3*i] * cos(loc_arr[3*i + 1]);
+            double x2 = loc_arr[3*i] * sin(loc_arr[3*i + 1]);
+            
+            loc_arr[3*i] = x1;
+            loc_arr[3*i+1] = x2;
+        }
+    } else if(coordinates == "boozer_saw"){
+        n=10;
         for(int i=0; i<n_points; ++i){
             double x1 = loc_arr[3*i] * cos(loc_arr[3*i + 1]);
             double x2 = loc_arr[3*i] * sin(loc_arr[3*i + 1]);
@@ -995,6 +1011,8 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
         test_gpu_interpolation_kernel<RHS::GC_CartesianVacuum, 7><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
     } else if(coordinates == "boozer") {
         test_gpu_interpolation_kernel<RHS::GC_BoozerVacuum, 6><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
+    } else if(coordinates == "boozer_saw") {
+        test_gpu_interpolation_kernel<RHS::GC_BoozerVacuumSAW, 10><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
     }
     double out[n*n_points];
     gpuErrchk( cudaMemcpy(&out, out_d, n*n_points * sizeof(double), cudaMemcpyDeviceToHost) );
