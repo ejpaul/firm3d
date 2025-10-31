@@ -185,6 +185,16 @@ void init_tracing(py::module_ &m){
         py::arg("vtotal"),
         py::arg("vtang")
         );
+    
+    m.def("simsopt_derivs_saw", &simsopt_derivs_saw,
+        py::arg("perturbed_field"),
+        py::arg("loc"),
+        py::arg("m"),
+        py::arg("q"),
+        py::arg("vtotal"),
+        py::arg("vtang"),
+        py::arg("time")    
+        );
 
 
     m.def("test_timestep_cartesian", &test_timestep_cartesian,

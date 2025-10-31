@@ -955,3 +955,44 @@ vector<double> simsopt_derivs_boozer(shared_ptr<BoozerMagneticField> field, vect
     // auto result = py::array_t<double>(4, out);
     return out;
 }
+
+// compute derivative for a single point
+void particle_guiding_center_saw_derivs(
+        shared_ptr<ShearAlfvenWave> perturbed_field, array<double, 5> stz_init, vector<double>&  out,
+        double m, double q, double vtotal, double vtang, double time)
+{
+    Array2 stz({{stz_init[0], stz_init[1], stz_init[2]}});
+    auto field = perturbed_field->get_B0();
+    field->set_points(stz);
+    double modB = field->modB()(0);
+    double vperp2 = vtotal*vtotal - vtang*vtang;
+    double mu = vperp2/(2*modB);
+
+    double s = stz_init[0];
+    double t = stz_init[1];
+
+    vector<double> y = {s*cos(t), s*sin(t), stz_init[2], vtang, time};
+    auto rhs_class = GuidingCenterVacuumBoozerPerturbedRHS(perturbed_field, m, q, mu, 2);
+
+    rhs_class(y, out, time);
+}
+
+vector<double> simsopt_derivs_saw(shared_ptr<ShearAlfvenWave> perturbed_field, vector<double> loc, double m, double q, double vtotal, double vtang, double time){
+
+    // py::buffer_info loc_buf = loc.request();
+    // double* loc_arr = static_cast<double*>(loc_buf.ptr);
+
+    vector<double> out(4);
+    array<double, 5> stzvt = {loc[0], loc[1], loc[2], vtang, time};
+
+    vector<double> derivs(5);
+
+    particle_guiding_center_saw_derivs(perturbed_field, stzvt, derivs, m, q, vtotal, vtang, time);
+
+    for(int i=0; i<4; ++i){
+        out[i] = derivs[i];
+    }
+
+    // auto result = py::array_t<double>(4, out);
+    return out;
+}
