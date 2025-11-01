@@ -40,7 +40,7 @@ ns_interp = resolution
 ntheta_interp = resolution
 nzeta_interp = resolution
 
-eigenvector=AE3DEigenvector.load_from_numpy(
+eigenvector = AE3DEigenvector.load_from_numpy(
     filename=saw_filename,
 )
 

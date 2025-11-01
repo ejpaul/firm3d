@@ -2699,7 +2699,7 @@ class ShearAlfvenWavesSuperposition(
                 harmonics from the AE3D simulation.
             B0 (BoozerMagneticField): The background magnetic field
                 (computed separately), in Tesla
-            max_dB_normal_by_B0 (float | None): Desired ratio of maximum 
+            max_dB_normal_by_B0 (float | None): Desired ratio of maximum
             normal B from SAW mode over B0 field. If None, no rescaling is
             done so the mode is returned with the ampitudes as they appear in
             AE3DEigenvector.
