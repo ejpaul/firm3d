@@ -225,7 +225,7 @@ class AE3DEigenvector:
         """
         harmonics_data = np.load(filename, allow_pickle=True).item()
         if num_harmonics is None:
-            num_harmonics = len(harmonics_data["harmonics"]) - 1
+            num_harmonics = len(harmonics_data["harmonics"])
         harmonics = [
             Harmonic(m=m, n=n, amplitudes=amplitudes)
             for m, n, amplitudes in harmonics_data["harmonics"][:num_harmonics]

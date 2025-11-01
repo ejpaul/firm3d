@@ -1,3 +1,5 @@
+# %%
+
 import time
 
 import numpy as np
@@ -24,6 +26,7 @@ from firm3d.util.constants import (
 from firm3d.util.functions import proc0_print, setup_logging
 from firm3d.util.mpi import comm_size, comm_world, verbose
 
+# %%
 resolution = 48  # Resolution for field interpolation
 nParticles = 5000  # Number of particles to trace
 reltol = 1e-8  # Relative tolerance for the ODE solver
@@ -31,11 +34,20 @@ abstol = 1e-8  # Absolute tolerance for the ODE solver
 order = 3  # Order for radial interpolation
 degree = 3  # Degree for 3d interpolation
 boozmn_filename = "../inputs/boozmn_beta2.5_QA.nc"
-saw_filename = "ae3d_output/eig_mode_asci.dat"
+saw_filename = "ae.npy"
 tmax = 1e-2  # Time for integration
 ns_interp = resolution
 ntheta_interp = resolution
 nzeta_interp = resolution
+
+eigenvector=AE3DEigenvector.load_from_numpy(
+    filename=saw_filename,
+)
+
+# %%
+
+len(eigenvector.harmonics)
+# %%
 
 # Setup logging to redirect output to file
 setup_logging(f"stdout_{nParticles}_{resolution}_{comm_size}.txt")
@@ -60,6 +72,8 @@ saw = ShearAlfvenWavesSuperposition.from_ae3d(
     max_dB_normal_by_B0=5e-3,
     minor_radius_meters=1.7,
 )
+
+# %%
 
 # Define fusion birth distribution
 # Bader, A., et al. "Modeling of energetic particle transport in optimized
@@ -130,3 +144,5 @@ if verbose:
     plt.xlabel("Time [s]")
     plt.ylabel("Fraction of lost particles")
     plt.savefig("loss_fraction.png")
+
+# %%
