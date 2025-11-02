@@ -984,7 +984,7 @@ def compute_peta(
             helicity_Mp = 0
             helicity_Np = -1
     else:
-        if (helicity_Mp * helicity_Np) == (helicity_Np * helicity_M):
+        if (helicity_Mp * helicity_N) == (helicity_Np * helicity_M):
             raise ValueError(
                 "Chosen helicities (N, M, N', M') do not create a well " \
                 "defined Jacobian."
