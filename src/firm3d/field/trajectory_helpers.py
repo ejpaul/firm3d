@@ -1819,6 +1819,7 @@ class PassingPerturbedPoincare:
                 orientation="vertical",
                 label="Digit Accuracy",
             )
+        plt.tight_layout()
         plt.savefig(filename)
 
         # convergence plot - change in DA with number of transit evaluations
@@ -1849,9 +1850,9 @@ class PassingPerturbedPoincare:
 
             plt.clf()
             plt.hist(final_DAs)
-            plt.tight_layout()
             plt.xlabel("Digit Accuracy")
             plt.title("Distribution of Digit Accuracy")
+            plt.tight_layout()
             plt.savefig("DA_histogram_" + filename)
         return ax
 
