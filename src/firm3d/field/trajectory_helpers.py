@@ -986,7 +986,7 @@ def compute_peta(
     else:
         if (helicity_Mp * helicity_N) == (helicity_Np * helicity_M):
             raise ValueError(
-                "Chosen helicities (N, M, N', M') do not create a well " \
+                "Chosen helicities (N, M, N', M') do not create a well "
                 "defined Jacobian."
             )
     denom = helicity_Np * helicity_M - helicity_N * helicity_Mp
@@ -1668,9 +1668,9 @@ class PassingPerturbedPoincare:
                     t_traj.append(time)
                     eta_traj.append(eta)
                     if self.DA_poinc and jj in self.WBA_transit_steps:
-                            time_at_evaluation, DA_at_evaluation = return_DA(Peta)
-                            particle_DAs.append(DA_at_evaluation)
-                            particle_DA_times.append(jj)
+                        time_at_evaluation, DA_at_evaluation = return_DA(Peta)
+                        particle_DAs.append(DA_at_evaluation)
+                        particle_DA_times.append(jj)
                 except RuntimeError:
                     if self.DA_poinc:
                         particle_DAs.append(np.nan)
@@ -1726,7 +1726,7 @@ class PassingPerturbedPoincare:
         mpl.use("Agg")  # Don't use interactive backend
 
         try:
-            import cmcrameri.cm as cmc
+            import cmcrameri.cm as cmc  # noqa: F401
 
             cmap = "cmc.managua"
         except ImportError:
