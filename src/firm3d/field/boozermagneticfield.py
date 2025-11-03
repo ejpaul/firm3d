@@ -2701,7 +2701,7 @@ class ShearAlfvenWavesSuperposition(
                 (computed separately), in Tesla
             max_dB_normal_by_B0 (float | None): Desired ratio of maximum
             normal B from SAW mode over B0 field. If None, no rescaling is
-            done so the mode is returned with the ampitudes as they appear in
+            done so the mode is returned with the amplitudes as they appear in
             AE3DEigenvector.
             minor_radius_meters (float): Stellarator's minor radius, in meters.
                 User can get this from VMEC wout equilibrium
