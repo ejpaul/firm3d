@@ -1,5 +1,3 @@
-# %%
-
 import time
 
 import numpy as np
@@ -26,7 +24,6 @@ from firm3d.util.constants import (
 from firm3d.util.functions import proc0_print, setup_logging
 from firm3d.util.mpi import comm_size, comm_world, verbose
 
-# %%
 resolution = 48  # Resolution for field interpolation
 nParticles = 5000  # Number of particles to trace
 reltol = 1e-8  # Relative tolerance for the ODE solver
@@ -39,15 +36,6 @@ tmax = 1e-2  # Time for integration
 ns_interp = resolution
 ntheta_interp = resolution
 nzeta_interp = resolution
-
-eigenvector = AE3DEigenvector.load_from_numpy(
-    filename=saw_filename,
-)
-
-# %%
-
-len(eigenvector.harmonics)
-# %%
 
 # Setup logging to redirect output to file
 setup_logging(f"stdout_{nParticles}_{resolution}_{comm_size}.txt")
@@ -72,8 +60,6 @@ saw = ShearAlfvenWavesSuperposition.from_ae3d(
     max_dB_normal_by_B0=5e-3,
     minor_radius_meters=1.7,
 )
-
-# %%
 
 # Define fusion birth distribution
 # Bader, A., et al. "Modeling of energetic particle transport in optimized
@@ -131,7 +117,7 @@ proc0_print("Elapsed time for tracing = ", time2 - time1)
 if verbose:
     from firm3d.field.trajectory_helpers import compute_loss_fraction
 
-    times, loss_frac = compute_loss_fraction(res_tys, tmin=1e-5, tmax=1e-2)
+    times, loss_frac = compute_loss_fraction(res_tys, tmin=1e-5, tmax=tmax)
     import matplotlib
 
     matplotlib.use("Agg")  # Don't use interactive backend
@@ -139,10 +125,8 @@ if verbose:
 
     plt.figure()
     plt.loglog(times, loss_frac)
-    plt.xlim([1e-5, 1e-2])
+    plt.xlim([1e-5, tmax])
     plt.ylim([1e-3, 1])
     plt.xlabel("Time [s]")
     plt.ylabel("Fraction of lost particles")
     plt.savefig("loss_fraction.png")
-
-# %%
