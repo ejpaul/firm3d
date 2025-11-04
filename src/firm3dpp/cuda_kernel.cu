@@ -575,6 +575,8 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
     __shared__ double mu[PARTICLES_PER_BLOCK];
     __shared__ double t[PARTICLES_PER_BLOCK];
     __shared__ double dtmax[PARTICLES_PER_BLOCK];
+    __shared__ double dt_min[PARTICLES_PER_BLOCK];
+    __shared__ double dt_max[PARTICLES_PER_BLOCK];
     __shared__ double state[4 * PARTICLES_PER_BLOCK];
     __shared__ bool has_left[PARTICLES_PER_BLOCK];
 
@@ -598,6 +600,13 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
                         quadpts_arr, x1_shape, x2_shape, x3_shape, state, derivs, nparticles_blk, args...);
     __syncthreads();
 
+    // initialize per-particle min/max accepted timestep trackers
+    if(is_valid){
+        dt_min[threadIdx.x] = dt[threadIdx.x];
+        dt_max[threadIdx.x] = dt[threadIdx.x];
+    }
+    __syncthreads();
+
     // if there exists a particle which is real and hasn't not reached tmax or left, keep tracing
     while(__syncthreads_count(is_valid && !(t[threadIdx.x] >= tmax_d || has_left[threadIdx.x])) > 0){
 
@@ -619,16 +628,25 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
 
         __syncthreads();
         if(is_valid){
+            double t_before = t[threadIdx.x];
+            double dt_used = dt[threadIdx.x];
             adjust_time<id>(t, dt, state, derivs, x_temp, has_left, dtmax);
+            // if the step was accepted (time advanced), record dt_used
+            if(t[threadIdx.x] > t_before){
+                dt_min[threadIdx.x] = fmin(dt_min[threadIdx.x], dt_used);
+                dt_max[threadIdx.x] = fmax(dt_max[threadIdx.x], dt_used);
+            }
         }
         __syncthreads();
     }
     __syncthreads();
     if(is_valid){
-        out[5*idx] = t[threadIdx.x];
+        out[7*idx] = t[threadIdx.x];
         for(int i=0; i<4; ++i){
-            out[5*idx + i + 1] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
+            out[7*idx + i + 1] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
         }
+        out[7*idx + 5] = dt_min[threadIdx.x];
+        out[7*idx + 6] = dt_max[threadIdx.x];
     }
     return;
 }
@@ -718,7 +736,7 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     gpuErrchk(cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice) );
 
     double* out_d;
-    gpuErrchk(cudaMalloc((void**)&out_d, 5 * nparticles * sizeof(double)) ); 
+    gpuErrchk(cudaMalloc((void**)&out_d, 7 * nparticles * sizeof(double)) ); 
 
 
     int nthreads = THREADS_PER_BLOCK;
@@ -733,8 +751,8 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     cudaEventRecord(start);
     particle_trace_kernel<id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, args...);
 
-    double out[5*nparticles];
-    gpuErrchk(cudaMemcpy(out, out_d, 5 * nparticles * sizeof(double), cudaMemcpyDeviceToHost) );
+    double out[7*nparticles];
+    gpuErrchk(cudaMemcpy(out, out_d, 7 * nparticles * sizeof(double), cudaMemcpyDeviceToHost) );
 
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
@@ -753,8 +771,8 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
 
     gpuErrchk( cudaFree(quadpts_d) );
 
-    vector<double> particle_output(5*nparticles);
-    for(int i=0; i<5*nparticles; ++i){
+    vector<double> particle_output(7*nparticles);
+    for(int i=0; i<7*nparticles; ++i){
         particle_output[i] = out[i];
     }
 
@@ -807,11 +825,11 @@ extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::a
             std::vector<double> results =  gpu_tracing<RHS::GC_BoozerVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles);
 
             for(int i=0; i<nparticles; ++i){
-                double x1 = results[5*i+1];
-                double x2 = results[5*i+2];
+                double x1 = results[7*i+1];
+                double x2 = results[7*i+2];
 
-                results[5*i+1] = sqrt(x1*x1 + x2*x2);
-                results[5*i+2] = atan2(x2, x1);
+                results[7*i+1] = sqrt(x1*x1 + x2*x2);
+                results[7*i+2] = atan2(x2, x1);
             }
 
             return results;
