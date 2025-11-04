@@ -764,8 +764,8 @@ class TrappedPoincare:
             for _jj in range(self.Nmaps):
                 try:
                     # Apply trapped map twice to return to same vpar = 0 plane
-                    tr, time = self.trapped_map(tr)
-                    tr, time = self.trapped_map(tr)
+                    tr, time1 = self.trapped_map(tr)
+                    tr, time2 = self.trapped_map(tr)
                     if np.abs(tr[1] - chis_traj[-1]) > 2 * np.pi:
                         warn(
                             "Barely trapped particle detected in trapped_map.",
@@ -776,7 +776,7 @@ class TrappedPoincare:
                     s_traj.append(tr[0])
                     chis_traj.append(tr[1])
                     etas_traj.append(tr[2])
-                    t_traj.append(time)
+                    t_traj.append(time1 + time2)
                 except RuntimeError:
                     broken = True
                     break
