@@ -1561,7 +1561,7 @@ __global__ void test_gpu_timestep_kernel(double* out, double* init_pos, double* 
 template<RHS id, typename... Args>
 vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<double> x1_range,
         py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<double> loc_init, double m, double q, double vtotal, py::array_t<double> vtang, 
-        double tol, int nparticles){
+        double tol, int nparticles, Args... args){
 
     //  read data in from python
     py::buffer_info loc_init_buf = loc_init.request();
@@ -1652,7 +1652,7 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    test_gpu_timestep_kernel<id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, nparticles);
+    test_gpu_timestep_kernel<id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, nparticles, args...);
 
     gpuErrchk( cudaPeekAtLastError() );
     gpuErrchk( cudaDeviceSynchronize() );
@@ -1709,25 +1709,7 @@ extern "C" vector<double> test_timestep_saw(py::array_t<double> quad_pts, py::ar
         double saw_omega, py::array_t<double> saw_srange, py::array_t<double> saw_m, py::array_t<double> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
         py::array_t<double> loc_init, double m, double q, double v_total, py::array_t<double> vtang, py::array_t<double> time,
         double tol, double psi0, int nparticles){
-    
-    py::buffer_info quadpts_buf = quad_pts.request();
-    double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
-
-    py::buffer_info x1_buf = x1_range.request();
-    double* x1_range_arr = static_cast<double*>(x1_buf.ptr);
-
-    py::buffer_info x2_buf = x2_range.request();
-    double* x2_range_arr = static_cast<double*>(x2_buf.ptr);
-
-    py::buffer_info x3_buf = x3_range.request();
-    double* x3_range_arr = static_cast<double*>(x3_buf.ptr);
-
-    py::buffer_info loc_init_buf = loc_init.request();
-    double* loc_init_arr = static_cast<double*>(loc_init_buf.ptr);
-
-    py::buffer_info vtang_buf = vtang.request();
-    double* vtang_arr = static_cast<double*>(vtang_buf.ptr);
-
+ 
     py::buffer_info saw_srange_buf = saw_srange.request();
     double* saw_srange_arr = static_cast<double*>(saw_srange_buf.ptr);
 
@@ -1739,14 +1721,6 @@ extern "C" vector<double> test_timestep_saw(py::array_t<double> quad_pts, py::ar
 
     py::buffer_info saw_phihats_buf = saw_phihats.request();
     double* saw_phihats_arr = static_cast<double*>(saw_phihats_buf.ptr);
-
-    py::buffer_info time_buf = time.request();
-    double* time_arr = static_cast<double*>(time_buf.ptr);
-
-
-    double* quadpts_d;
-    cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
-    cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
 
     int* saw_m_d;
     cudaMalloc((void**)&saw_m_d, saw_m.size() * sizeof(int));
@@ -1760,109 +1734,33 @@ extern "C" vector<double> test_timestep_saw(py::array_t<double> quad_pts, py::ar
     cudaMalloc((void**)&saw_phihats_d, saw_phihats.size() * sizeof(double));
     cudaMemcpy(saw_phihats_d, saw_phihats_arr, saw_phihats.size() * sizeof(double), cudaMemcpyHostToDevice);
 
-    double* time_d;
-    cudaMalloc((void**)&time_d, nparticles*sizeof(double));
-    cudaMemcpy(time_d, time_arr, nparticles * sizeof(double), cudaMemcpyHostToDevice);
-
-
     double* out_d;
     gpuErrchk( cudaMalloc((void**)&out_d, 5 * nparticles * sizeof(double)) );
 
 
 
     // allocate and copy to device memory
-    double x1_range_ext[4];
-    double x2_range_ext[4];
-    double x3_range_ext[4];
     double saw_srange_ext[4];
     for(int i=0; i<3; ++i){
-        x1_range_ext[i] = x1_range_arr[i];
-        x2_range_ext[i] = x2_range_arr[i];
-        x3_range_ext[i] = x3_range_arr[i];
         saw_srange_ext[i] = saw_srange_arr[i];
     }
-    x1_range_ext[3] = (x1_range_ext[1] - x1_range_ext[0]) / (x1_range_ext[2] - 1);
-    x2_range_ext[3] = (x2_range_ext[1] - x2_range_ext[0]) / (x2_range_ext[2] - 1);
-    x3_range_ext[3] = (x3_range_ext[1] - x3_range_ext[0]) / (x3_range_ext[2] - 1);
     saw_srange_ext[3] = (saw_srange_ext[1] - saw_srange_ext[0]) / (saw_srange_ext[2] - 1);
 
-    int n_x2 = (x2_range_ext[2]-1)/3;
-    int n_x3 = (x3_range_ext[2]-1)/3;
-    int n_x23 = n_x2*n_x3;
-    double tmax = 1e-2; // needed for setup_particle
-
-    gpuErrchk(cudaMemcpyToSymbol(x1_range_d, x1_range_ext, 4*sizeof(double)) );
-    gpuErrchk(cudaMemcpyToSymbol(x2_range_d, x2_range_ext, 4*sizeof(double)) );
-    gpuErrchk(cudaMemcpyToSymbol(x3_range_d, x3_range_ext, 4*sizeof(double)) );
-    gpuErrchk(cudaMemcpyToSymbol(tmax_d, &tmax, sizeof(double)));
-    gpuErrchk(cudaMemcpyToSymbol(mass_d, &m, sizeof(double)));
-    gpuErrchk(cudaMemcpyToSymbol(charge_d, &q, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
-    gpuErrchk(cudaMemcpyToSymbol(v_total_d, &v_total, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(saw_srange_d, saw_srange_ext, 4*sizeof(double)) );
-    gpuErrchk(cudaMemcpyToSymbol(atol_d, &tol, sizeof(double)));
-    gpuErrchk(cudaMemcpyToSymbol(rtol_d, &tol, sizeof(double)));
-
-
-
-    gpuErrchk(cudaMemcpyToSymbol(n_x2_d, &n_x2, sizeof(int)) );
-    gpuErrchk(cudaMemcpyToSymbol(n_x3_d, &n_x3, sizeof(int)) );
-    gpuErrchk(cudaMemcpyToSymbol(n_x23_d, &n_x23, sizeof(int)) );
-
-    double init_pos[4*nparticles];
-    // load initial conditions
-    for(int i=0; i<nparticles; ++i){
-        int start = 3*i;
-
-        double s = loc_init_arr[start];
-        double theta = loc_init_arr[start+1];
-        
-        init_pos[4*i] = s*cos(theta);
-        init_pos[4*i + 1] = s*sin(theta);
-        init_pos[4*i + 2] = loc_init_arr[start+2];
-        init_pos[4*i + 3] = vtang_arr[i];
-    }
-
-   
-    double* init_pos_d;
-    gpuErrchk(cudaMalloc((void**)&init_pos_d, 4 * nparticles * sizeof(double)) );
-    gpuErrchk(cudaMemcpy(init_pos_d, init_pos, 4 * nparticles * sizeof(double), cudaMemcpyHostToDevice) );
-
-
-
-
-    int nthreads = THREADS_PER_BLOCK;
-
-    int nblks = nparticles / PARTICLES_PER_BLOCK + 1;
-
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    cudaEventRecord(start);
-        
-    test_gpu_timestep_kernel<RHS::GC_BoozerVacuumSAW><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, nparticles,
+    vector<double> particle_output = test_gpu_timestep<RHS::GC_BoozerVacuumSAW>(quad_pts, x1_range, x2_range, x3_range, loc_init, m, q, v_total, vtang, tol, nparticles,
                                                                         saw_omega, saw_m_d, saw_n_d, saw_phihats_d, saw_nharmonics);
-    
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
-    float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    std::cout << "derivatives kernel time (ms): " << milliseconds<< "\n";
-    
-    double out[5*nparticles];
-    gpuErrchk( cudaMemcpy(&out, out_d, 5*nparticles * sizeof(double), cudaMemcpyDeviceToHost) );
-    vector<double> particle_output(5*nparticles);
     for(int i=0; i<nparticles; ++i){
-        double x1 = out[5*i + 1];
-        double x2 = out[5*i + 2];
+        double x1 = particle_output[5*i + 1];
+        double x2 = particle_output[5*i + 2];
         double s = sqrt(x1*x1 + x2*x2);
         double theta = atan2(x2, x1);
 
-        particle_output[5*i] = out[5*i];
+        particle_output[5*i] = particle_output[5*i];
         particle_output[5*i+1] = s;
         particle_output[5*i+2] = theta;
-        particle_output[5*i+3] = out[5*i+3];
-        particle_output[5*i+4] = out[5*i+4];
+        particle_output[5*i+3] = particle_output[5*i+3];
+        particle_output[5*i+4] = particle_output[5*i+4];
     }
 
     return particle_output;
