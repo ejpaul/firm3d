@@ -24,7 +24,7 @@ np.random.seed(1800)
 
 ### tracing parameters
 nparticles = 25000
-tmax = 1e-4
+tmax = 1e-3
 
 
 

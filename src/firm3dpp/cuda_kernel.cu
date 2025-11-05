@@ -29,13 +29,13 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 
 // enum used for templating
 // https://stackoverflow.com/questions/9116267/how-can-i-use-an-enumeration-as-a-template-parameter
-enum class RHS {GC_CartesianVacuum, GC_BoozerVacuum, GC_BoozerVacuumSAW};
+enum class RHS {GC_CartesianVacuum, GC_BoozerVacuum, GC_BoozerVacuumSAW, GC_BoozerNoKSAW};
 
 enum class CoordSys {Cartesian, Boozer};
 
 template<RHS id>
 __host__ __device__ constexpr CoordSys map_rhs_to_coord(){
-    if constexpr(id == RHS::GC_BoozerVacuum || id == RHS::GC_BoozerVacuumSAW){
+    if constexpr(id == RHS::GC_BoozerVacuum || id == RHS::GC_BoozerVacuumSAW || id == RHS::GC_BoozerNoKSAW){
         return CoordSys::Boozer;
     } else if constexpr (id == RHS::GC_CartesianVacuum) {
         return CoordSys::Cartesian;
@@ -403,6 +403,159 @@ __device__ void calc_derivs<RHS::GC_BoozerVacuumSAW>(double* derivs, int deriv_i
                     + dmodBdtheta*(iota - dalphadpsi*G)) + charge_d*(alphadot*G \
                     + dalphadtheta*G*dphidpsi + (iota - dalphadpsi*G)*dphidtheta + dphidzeta)) \
                     + v_par/modB * (dmodBdtheta*dphidpsi - dmodBdpsi*dphidtheta);
+        derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = modB; // modB for setting mu
+        derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = G;
+        // derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = // no boundary dist fn
+    }
+
+};
+
+
+// calc_derivs implementation for guiding center boozer vacuum tracing
+template <> 
+__device__ void calc_derivs<RHS::GC_BoozerNoKSAW>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
+                                    int* index_i, int* index_j, int* index_k, double* x1_shape, double* x2_shape, double* x3_shape,
+                                    double* mu, int nparticles_blk, double saw_omega, int* saw_m, int* saw_n, double* saw_phihats, int saw_nharmonics){
+
+
+   __shared__ double block_interpolants[10*PARTICLES_PER_BLOCK];
+
+    set_to_zero(block_interpolants, 10*nparticles_blk, THREADS_PER_BLOCK);
+
+    __syncthreads();
+    interpolate<10>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
+    __syncthreads();
+
+
+    if(threadIdx.x < nparticles_blk){
+        double time = x_temp[threadIdx.x];
+        double x1 = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
+        double x2 = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
+
+        double s = sqrt(x1*x1 + x2*x2);
+        double theta = atan2(x2, x1);
+        double zeta = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
+        double v_par = x_temp[4*PARTICLES_PER_BLOCK + threadIdx.x];
+
+        double modB = block_interpolants[0*PARTICLES_PER_BLOCK + threadIdx.x];
+        double dmodBdpsi = block_interpolants[1*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
+        double dmodBdtheta = block_interpolants[2*PARTICLES_PER_BLOCK + threadIdx.x];
+        double dmodBdzeta = block_interpolants[3*PARTICLES_PER_BLOCK + threadIdx.x];
+        double G = block_interpolants[4*PARTICLES_PER_BLOCK + threadIdx.x];
+        double dGdpsi = block_interpolants[5*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
+        double I = block_interpolants[6*PARTICLES_PER_BLOCK + threadIdx.x];
+        double dIdpsi = block_interpolants[7*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
+        double iota = block_interpolants[8*PARTICLES_PER_BLOCK + threadIdx.x];
+        double diotadpsi = block_interpolants[9*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
+
+        double mu_val = mu[threadIdx.x];
+
+        if(symmetry_exploited[threadIdx.x]){
+            dmodBdtheta *= -1.0;
+            dmodBdzeta *= -1.0;
+        }
+
+        // if(threadIdx.x == 0){
+        //     printf("thread %d in calc_derivs<RHS::GC_BoozerVacuumSAW>\n", threadIdx.x);
+        //     printf("t, x = %.15e, %.15e, %.15e, %.15e, %.15e\n", x_temp[threadIdx.x], s, theta, zeta, v_par);
+        //     printf("mu = %.15e\n", mu_val);
+        //     printf("interpolants = %.15e\t%.15e\t%.15e\t%.15e\t%.15e\t%.15e\t%.15e\t%.15e\t%.15e\t%.15e\n", modB, dmodBdpsi, dmodBdtheta, dmodBdzeta, G, dGdpsi, I, dIdpsi, iota, diotadpsi);
+        
+        //     for(int i=0; i<saw_nharmonics; ++i){
+        //         printf("setup_particle: m[%d] = %d, n[%d] = %d\n", i, saw_m[i], i, saw_n[i]);
+        //     }
+
+        
+        // }
+
+        // accumulate over harmonics
+        int s_index = (s - saw_srange_d[0]) / (saw_srange_d[3]);
+        s_index = min(s_index, (int)saw_srange_d[2]-1);
+        double s_diff = s - s_index*saw_srange_d[3];
+
+        // printf("calc_derivs: s_index = %d\n", s_index);
+        
+
+        // rhs values from SAW 
+        double dphidpsi = 0.0;
+        double dphidtheta = 0.0;
+        double dphidzeta = 0.0;
+        double dalphadzeta = 0.0;
+
+        double alpha = 0.0;
+        double dalphadpsi = 0.0;
+        double dalphadtheta = 0.0;
+        double alphadot = 0.0;
+
+
+        for(int i=0; i<saw_nharmonics; ++i){
+            double left_phihat = saw_phihats[s_index*saw_nharmonics + i];
+            double right_phihat = saw_phihats[min(s_index+1, (int)saw_srange_d[2]-1)*saw_nharmonics + i];
+            double s_slope = (right_phihat - left_phihat) / saw_srange_d[3];
+
+            int m = saw_m[i];
+            int n = saw_n[i];
+            double alpha_fac = (iota *m - n) / (saw_omega * (G + iota*I));
+            double dalpha_fac_dpsi = diotadpsi * m / (saw_omega * (G + iota*I)) - alpha_fac / (G+iota*I) * (dGdpsi + diotadpsi*I + iota*dIdpsi);
+
+            double pt_cos = cos(m*theta - n*zeta + saw_omega*time);
+            double pt_sin = sin(m*theta - n*zeta + saw_omega*time);
+
+            // printf("m = %d, theta = %.15e, n = %d, zeta = %.15em saw_omega = %.15e, time = %.15e\n", m, theta, n, zeta, saw_omega, time);
+            // printf("omega = %.15e, input = %.15e, pt_cos = %.15e, pt_sin = %.15e\n", saw_omega, m*theta - n*zeta + saw_omega*time, pt_cos, pt_sin);
+
+            double phihat_i = left_phihat + s_slope*(s_diff);
+            double dphihatdpsi = s_slope / psi0_d;
+
+            double phi_i = phihat_i * pt_sin;
+            double dphidpsi_i = dphihatdpsi * pt_sin;
+            double phidot_i = phihat_i * pt_cos * saw_omega;
+            double dphidtheta_i = phidot_i * (m / saw_omega);
+            double dphidzeta_i = -phidot_i * (n / saw_omega);
+
+            double alpha_i = -phi_i*alpha_fac;
+            double alphadot_i = -phidot_i * alpha_fac;
+            double dalphadpsi_i = -dphidpsi_i * alpha_fac - phi_i*dalpha_fac_dpsi;
+            double dalphadtheta_i = -dphidtheta_i * alpha_fac;
+            double dalphadzeta_i = -dphidzeta_i*alpha_fac;
+
+            dphidpsi += dphidpsi_i;
+            dphidtheta += dphidtheta_i;
+            dphidzeta += dphidzeta_i;
+
+            alpha += alpha_i;
+            alphadot += alphadot_i;
+            dalphadpsi += dalphadpsi_i;
+            dalphadtheta += dalphadtheta_i;
+            dalphadzeta += dalphadzeta_i;
+            
+            // printf("phihat_i = %.15e, slope_i = %.15e, phidot_i = %.15e, dphidtheta_i=%.15e\n", phihat_i, s_slope, phidot_i, dphidtheta_i);
+        }
+        // printf("dphidpsi=%.15e, dphidtheta=%.15e, dphidzeta=%.15e, alpha=%.15e, alphadot=%.15e, dalphadpsi=%.15e, dalphadtheta=%.15e, dalphadzeta=%.15e\n",
+                // dphidpsi, dphidtheta, dphidzeta, alpha, alphadot, dalphadpsi, dalphadtheta, dalphadzeta);
+        double fak1 = mass_d*v_par*v_par/modB + mass_d*mu_val;
+        double denom = (charge_d*(G + I*(-alpha*dGdpsi + iota) + alpha*G*dIdpsi)
+                + mass_d*v_par/modB * (-dGdpsi*I + G*dIdpsi)); 
+        double sdot = (-G*dphidtheta*charge_d + I*dphidzeta*charge_d + modB*charge_d*v_par*(dalphadtheta*G-dalphadzeta*I) + (-dmodBdtheta*G + dmodBdzeta*I)*fak1)/(denom*psi0_d);
+        double tdot = (G*charge_d*dphidpsi + modB*charge_d*v_par*(-dalphadpsi*G - alpha*dGdpsi + iota) - dGdpsi*mass_d*v_par*v_par \
+                      + dmodBdpsi*G*fak1)/denom;
+
+        // printf("calc_derivs: sdot = %.15e, dmodBdtheta = %.15e, fak1 = %.15e, charge_d = %.15e, dalphadtheta = %.15e, modB = %.15e, v_par = %.15e, dphidtheta = %.15e, psi0_d = %.15e\n", sdot, dmodBdtheta, fak1, charge_d, dalphadtheta, modB, v_par, dphidtheta, psi0_d);
+        // printf("calc_derivs: tdot = %.15e, dmodBdpsi = %.15e, fak1 = %.15e, charge_d = %.15e, iota = %.15e, dalphadpsi = %.15e, G = %.15e, v_par = %.15e, modB = %.15e, dphidpsi = %.15e\n",
+                        // tdot, dmodBdpsi, fak1, charge_d, iota, dalphadpsi, G, v_par, modB, dphidpsi);
+        derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*cos(theta) - s * sin(theta) * tdot;
+        derivs[(6*deriv_id + 1)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*sin(theta) + s*cos(theta)*tdot;
+        derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x] = v_par*modB/G;
+        derivs[(6*deriv_id + 3)*PARTICLES_PER_BLOCK + threadIdx.x] = (modB*charge_d/mass_d * ( -mass_d*mu_val * (dmodBdzeta*(1 + dalphadpsi*I + alpha*dIdpsi) \
+                      + dmodBdpsi*(dalphadtheta*G - dalphadzeta*I) + dmodBdtheta*(iota - alpha*dGdpsi - dalphadpsi*G)) \
+                      - charge_d*(alphadot*(G + I*(iota - alpha*dGdpsi) + alpha*G*dIdpsi) \
+                      + (dalphadtheta*G - dalphadzeta*I)*dphidpsi \
+                      + (iota - alpha*dGdpsi - dalphadpsi*G)*dphidtheta \
+                      + (1 + alpha*dIdpsi + dalphadpsi*I)*dphidzeta)) \
+                      + charge_d*v_par/modB * ((dmodBdtheta*G - dmodBdzeta*I)*dphidpsi \
+                      + dmodBdpsi*(I*dphidzeta - G*dphidtheta)) \
+                      + v_par*(mass_d*mu_val*(dmodBdtheta*dGdpsi - dmodBdzeta*dIdpsi) \
+                      + charge_d*(alphadot*(dGdpsi*I-G*dIdpsi) + dGdpsi*dphidtheta - dIdpsi*dphidzeta)))/denom;
         derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = modB; // modB for setting mu
         derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = G;
         // derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = // no boundary dist fn
@@ -1042,6 +1195,69 @@ extern "C" vector<double> boozer_saw_gpu_tracing(py::array_t<double> quad_pts, p
     return results;
 }
 
+extern "C" vector<double> boozer_saw_nok_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, 
+        double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
+        py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, double tmax, double tol, double psi0, int nparticles){
+
+    //  read data in from python
+    py::buffer_info stz_init_buf = stz_init.request();
+    double* stz_init_arr = static_cast<double*>(stz_init_buf.ptr);
+
+    py::buffer_info saw_srange_buf = saw_srange.request();
+    double* saw_srange_arr = static_cast<double*>(saw_srange_buf.ptr);
+
+    py::buffer_info saw_m_buf = saw_m.request();
+    int* saw_m_arr = static_cast<int*>(saw_m_buf.ptr);
+
+    py::buffer_info saw_n_buf = saw_n.request();
+    int* saw_n_arr = static_cast<int*>(saw_n_buf.ptr);
+
+    py::buffer_info saw_phihats_buf = saw_phihats.request();
+    double* saw_phihats_arr = static_cast<double*>(saw_phihats_buf.ptr);
+
+    int* saw_m_d;
+    cudaMalloc((void**)&saw_m_d, saw_m.size() * sizeof(int));
+    cudaMemcpy(saw_m_d, saw_m_arr, saw_m.size() * sizeof(int), cudaMemcpyHostToDevice);
+
+    int* saw_n_d;
+    cudaMalloc((void**)&saw_n_d, saw_n.size() * sizeof(int));
+    cudaMemcpy(saw_n_d, saw_n_arr, saw_n.size() * sizeof(int), cudaMemcpyHostToDevice);
+
+    double* saw_phihats_d;
+    cudaMalloc((void**)&saw_phihats_d, saw_phihats.size() * sizeof(double));
+    cudaMemcpy(saw_phihats_d, saw_phihats_arr, saw_phihats.size() * sizeof(double), cudaMemcpyHostToDevice);
+    
+    for(int i=0; i<nparticles; ++i){
+        double s = stz_init_arr[3*i];
+        double theta = stz_init_arr[3*i+1];
+
+        stz_init_arr[3*i] = s*cos(theta);
+        stz_init_arr[3*i+1] = s*sin(theta);
+    }
+    // copy saw s_range to constant memory
+    double saw_srange_ext[4];
+    for(int i=0; i<3; ++i){
+        saw_srange_ext[i] = saw_srange_arr[i];   
+    }
+    saw_srange_ext[3] = (saw_srange_ext[1] - saw_srange_ext[0]) / (saw_srange_ext[2] - 1);
+    gpuErrchk(cudaMemcpyToSymbol(saw_srange_d, saw_srange_ext, 4*sizeof(double)) );
+    gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
+
+    std::vector<double> results =  gpu_tracing<RHS::GC_BoozerNoKSAW>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles,
+                                                                        saw_omega, saw_m_d, saw_n_d, saw_phihats_d, saw_nharmonics);
+
+    for(int i=0; i<nparticles; ++i){
+        double x1 = results[5*i+1];
+        double x2 = results[5*i+2];
+
+        results[5*i+1] = sqrt(x1*x1 + x2*x2);
+        results[5*i+2] = atan2(x2, x1);
+    }
+
+    return results;
+}
+
+
 
 template<CoordSys coord>
 __device__ void account_for_symmetry(double* interpolants, bool* symmetry_exploited){
@@ -1440,7 +1656,7 @@ extern "C" py::array_t<double> test_derivatives_boozer(py::array_t<double> quad_
 }
 
 extern "C" py::array_t<double> test_derivatives_saw(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, 
-        double saw_omega, py::array_t<double> saw_srange, py::array_t<double> saw_m, py::array_t<double> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
+        double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
         py::array_t<double> loc, py::array_t<double> vpar, py::array_t<double> time, double v_total, double m, double q,  double psi0, int n_points){
 
     py::buffer_info saw_srange_buf = saw_srange.request();
@@ -1479,6 +1695,49 @@ extern "C" py::array_t<double> test_derivatives_saw(py::array_t<double> quad_pts
     gpuErrchk(cudaMemcpyToSymbol(saw_srange_d, saw_srange_ext, 4*sizeof(double)) );
         
     return test_gpu_derivatives<RHS::GC_BoozerVacuumSAW>(quad_pts, x1_range, x2_range, x3_range, loc, vpar, time, v_total, m, q, n_points,
+                                                                        saw_omega, saw_m_d, saw_n_d, saw_phihats_d, saw_nharmonics);
+}
+
+extern "C" py::array_t<double> test_derivatives_saw_nok(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, 
+        double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
+        py::array_t<double> loc, py::array_t<double> vpar, py::array_t<double> time, double v_total, double m, double q,  double psi0, int n_points){
+
+    py::buffer_info saw_srange_buf = saw_srange.request();
+    double* saw_srange_arr = static_cast<double*>(saw_srange_buf.ptr);
+
+    py::buffer_info saw_m_buf = saw_m.request();
+    int* saw_m_arr = static_cast<int*>(saw_m_buf.ptr);
+
+    py::buffer_info saw_n_buf = saw_n.request();
+    int* saw_n_arr = static_cast<int*>(saw_n_buf.ptr);
+
+    py::buffer_info saw_phihats_buf = saw_phihats.request();
+    double* saw_phihats_arr = static_cast<double*>(saw_phihats_buf.ptr);
+
+    int* saw_m_d;
+    cudaMalloc((void**)&saw_m_d, saw_m.size() * sizeof(int));
+    cudaMemcpy(saw_m_d, saw_m_arr, saw_m.size() * sizeof(int), cudaMemcpyHostToDevice);
+
+    int* saw_n_d;
+    cudaMalloc((void**)&saw_n_d, saw_n.size() * sizeof(int));
+    cudaMemcpy(saw_n_d, saw_n_arr, saw_n.size() * sizeof(int), cudaMemcpyHostToDevice);
+
+    double* saw_phihats_d;
+    cudaMalloc((void**)&saw_phihats_d, saw_phihats.size() * sizeof(double));
+    cudaMemcpy(saw_phihats_d, saw_phihats_arr, saw_phihats.size() * sizeof(double), cudaMemcpyHostToDevice);
+
+    // allocate and copy to device memory
+    double saw_srange_ext[4];
+    for(int i=0; i<3; ++i){
+        saw_srange_ext[i] = saw_srange_arr[i];
+        
+    }
+    saw_srange_ext[3] = (saw_srange_ext[1] - saw_srange_ext[0]) / (saw_srange_ext[2] - 1);
+
+    gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
+    gpuErrchk(cudaMemcpyToSymbol(saw_srange_d, saw_srange_ext, 4*sizeof(double)) );
+        
+    return test_gpu_derivatives<RHS::GC_BoozerNoKSAW>(quad_pts, x1_range, x2_range, x3_range, loc, vpar, time, v_total, m, q, n_points,
                                                                         saw_omega, saw_m_d, saw_n_d, saw_phihats_d, saw_nharmonics);
 }
 
@@ -1706,7 +1965,7 @@ extern "C" vector<double> test_timestep_boozer(py::array_t<double> quad_pts, py:
 
 
 extern "C" vector<double> test_timestep_saw(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, 
-        double saw_omega, py::array_t<double> saw_srange, py::array_t<double> saw_m, py::array_t<double> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
+        double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
         py::array_t<double> loc_init, double m, double q, double v_total, py::array_t<double> vtang, py::array_t<double> time,
         double tol, double psi0, int nparticles){
  
@@ -1749,6 +2008,68 @@ extern "C" vector<double> test_timestep_saw(py::array_t<double> quad_pts, py::ar
     gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(saw_srange_d, saw_srange_ext, 4*sizeof(double)) );
     vector<double> particle_output = test_gpu_timestep<RHS::GC_BoozerVacuumSAW>(quad_pts, x1_range, x2_range, x3_range, loc_init, m, q, v_total, vtang, tol, nparticles,
+                                                                        saw_omega, saw_m_d, saw_n_d, saw_phihats_d, saw_nharmonics);
+    for(int i=0; i<nparticles; ++i){
+        double x1 = particle_output[5*i + 1];
+        double x2 = particle_output[5*i + 2];
+        double s = sqrt(x1*x1 + x2*x2);
+        double theta = atan2(x2, x1);
+
+        particle_output[5*i] = particle_output[5*i];
+        particle_output[5*i+1] = s;
+        particle_output[5*i+2] = theta;
+        particle_output[5*i+3] = particle_output[5*i+3];
+        particle_output[5*i+4] = particle_output[5*i+4];
+    }
+
+    return particle_output;
+
+};
+
+extern "C" vector<double> test_timestep_saw_nok(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, 
+        double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
+        py::array_t<double> loc_init, double m, double q, double v_total, py::array_t<double> vtang, py::array_t<double> time,
+        double tol, double psi0, int nparticles){
+ 
+    py::buffer_info saw_srange_buf = saw_srange.request();
+    double* saw_srange_arr = static_cast<double*>(saw_srange_buf.ptr);
+
+    py::buffer_info saw_m_buf = saw_m.request();
+    int* saw_m_arr = static_cast<int*>(saw_m_buf.ptr);
+
+    py::buffer_info saw_n_buf = saw_n.request();
+    int* saw_n_arr = static_cast<int*>(saw_n_buf.ptr);
+
+    py::buffer_info saw_phihats_buf = saw_phihats.request();
+    double* saw_phihats_arr = static_cast<double*>(saw_phihats_buf.ptr);
+
+    int* saw_m_d;
+    cudaMalloc((void**)&saw_m_d, saw_m.size() * sizeof(int));
+    cudaMemcpy(saw_m_d, saw_m_arr, saw_m.size() * sizeof(int), cudaMemcpyHostToDevice);
+
+    int* saw_n_d;
+    cudaMalloc((void**)&saw_n_d, saw_n.size() * sizeof(int));
+    cudaMemcpy(saw_n_d, saw_n_arr, saw_n.size() * sizeof(int), cudaMemcpyHostToDevice);
+
+    double* saw_phihats_d;
+    cudaMalloc((void**)&saw_phihats_d, saw_phihats.size() * sizeof(double));
+    cudaMemcpy(saw_phihats_d, saw_phihats_arr, saw_phihats.size() * sizeof(double), cudaMemcpyHostToDevice);
+
+    double* out_d;
+    gpuErrchk( cudaMalloc((void**)&out_d, 5 * nparticles * sizeof(double)) );
+
+
+
+    // allocate and copy to device memory
+    double saw_srange_ext[4];
+    for(int i=0; i<3; ++i){
+        saw_srange_ext[i] = saw_srange_arr[i];
+    }
+    saw_srange_ext[3] = (saw_srange_ext[1] - saw_srange_ext[0]) / (saw_srange_ext[2] - 1);
+
+    gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
+    gpuErrchk(cudaMemcpyToSymbol(saw_srange_d, saw_srange_ext, 4*sizeof(double)) );
+    vector<double> particle_output = test_gpu_timestep<RHS::GC_BoozerNoKSAW>(quad_pts, x1_range, x2_range, x3_range, loc_init, m, q, v_total, vtang, tol, nparticles,
                                                                         saw_omega, saw_m_d, saw_n_d, saw_phihats_d, saw_nharmonics);
     for(int i=0; i<nparticles; ++i){
         double x1 = particle_output[5*i + 1];

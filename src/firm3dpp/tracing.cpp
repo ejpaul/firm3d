@@ -263,6 +263,8 @@ class GuidingCenterNoKBoozerPerturbedRHS : public BaseRHS {
             double dmodBdpsi = modB_derivs(0)/psi0;
             double dmodBdtheta = modB_derivs(1);
             double dmodBdzeta = modB_derivs(2);
+
+
             double v_perp2 = 2*mu*modB;
             double fak1 = m*v_par*v_par/modB + m*mu;
             double dPhidpsi = perturbed_field->dPhidpsi_ref()(0);
@@ -275,6 +277,7 @@ class GuidingCenterNoKBoozerPerturbedRHS : public BaseRHS {
             double dalphadzeta = perturbed_field->dalphadzeta_ref()(0);
             double denom = (q*(G + I*(-alpha*dGdpsi + iota) + alpha*G*dIdpsi)
                 + m*v_par/modB * (-dGdpsi*I + G*dIdpsi)); // q*G in vacuum
+
 
             stzvtdot[0] = (-G*dPhidtheta*q + I*dPhidzeta*q + modB*q*v_par*(dalphadtheta*G-dalphadzeta*I) + (-dmodBdtheta*G + dmodBdzeta*I)*fak1)/(denom*psi0);
             stzvtdot[1] = (G*q*dPhidpsi + modB*q*v_par*(-dalphadpsi*G - alpha*dGdpsi + iota) - dGdpsi*m*v_par*v_par \
@@ -959,7 +962,7 @@ vector<double> simsopt_derivs_boozer(shared_ptr<BoozerMagneticField> field, vect
 // compute derivative for a single point
 void particle_guiding_center_saw_derivs(
         shared_ptr<ShearAlfvenWave> perturbed_field, array<double, 5> stz_init, vector<double>&  out,
-        double m, double q, double vtotal, double vtang, double time)
+        double m, double q, double vtotal, double vtang, double time, std::string rhs)
 {
     Array2 stz({{stz_init[0], stz_init[1], stz_init[2]}});
     auto field = perturbed_field->get_B0();
@@ -972,12 +975,17 @@ void particle_guiding_center_saw_derivs(
     double t = stz_init[1];
 
     vector<double> y = {s*cos(t), s*sin(t), stz_init[2], vtang, time};
-    auto rhs_class = GuidingCenterVacuumBoozerPerturbedRHS(perturbed_field, m, q, mu, 2);
-
-    rhs_class(y, out, time);
+    
+    if(rhs == "vacuum_saw"){
+        auto rhs_class = GuidingCenterVacuumBoozerPerturbedRHS(perturbed_field, m, q, mu, 2);
+        rhs_class(y, out, time);
+    } else if (rhs == "nok_saw"){
+        auto rhs_class = GuidingCenterNoKBoozerPerturbedRHS(perturbed_field, m, q, mu, 2);
+        rhs_class(y, out, time);
+    }
 }
 
-vector<double> simsopt_derivs_saw(shared_ptr<ShearAlfvenWave> perturbed_field, vector<double> loc, double m, double q, double vtotal, double vtang, double time){
+vector<double> simsopt_derivs_saw(shared_ptr<ShearAlfvenWave> perturbed_field, vector<double> loc, double m, double q, double vtotal, double vtang, double time, std::string rhs){
 
     // py::buffer_info loc_buf = loc.request();
     // double* loc_arr = static_cast<double*>(loc_buf.ptr);
@@ -987,7 +995,7 @@ vector<double> simsopt_derivs_saw(shared_ptr<ShearAlfvenWave> perturbed_field, v
 
     vector<double> derivs(5);
 
-    particle_guiding_center_saw_derivs(perturbed_field, stzvt, derivs, m, q, vtotal, vtang, time);
+    particle_guiding_center_saw_derivs(perturbed_field, stzvt, derivs, m, q, vtotal, vtang, time, rhs);
 
     for(int i=0; i<4; ++i){
         out[i] = derivs[i];

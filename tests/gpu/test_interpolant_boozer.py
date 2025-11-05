@@ -38,7 +38,7 @@ def test_interpolant_bfield(field, nfp, n_metagrid_pts, n_test_pts):
     # Calculate interpolation
     # print(zrange)
     # exit()
-    new_interpolation = firm3dpp.test_gpu_interpolation(quad_info, srange, trange, zrange, stz, "boozer", stz.shape[0])
+    new_interpolation = firm3dpp.test_gpu_interpolation(quad_info, srange, trange, zrange, stz, "boozer_vacuum", stz.shape[0])
     new_interpolation = np.reshape(new_interpolation, (stz.shape[0], 6))
 
     # print(np.abs(simsopt_interpolation - new_interpolation) / simsopt_interpolation)

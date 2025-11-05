@@ -49,7 +49,7 @@ def test_derivs(field, saw_filename, nfp, n_metagrid_pts, n_test_pts):
         # print("computing simsopt derivatives")
         old_derivs = np.empty((n_test_pts, 4))
         for i in range(n_test_pts):
-                old_derivs[i,:] = firm3dpp.simsopt_derivs_saw(saw, stz[i,:], MASS, CHARGE, VELOCITY, vpar_init[i], time[i], "vacuum_saw")
+                old_derivs[i,:] = firm3dpp.simsopt_derivs_saw(saw, stz[i,:], MASS, CHARGE, VELOCITY, vpar_init[i], time[i], "nok_saw")
 
         # print("firm3d saw derivs", old_derivs)
         ### NEW INTERPOLANT
@@ -88,7 +88,7 @@ def test_derivs(field, saw_filename, nfp, n_metagrid_pts, n_test_pts):
         # print("saw_n", saw_n)
         # print("saw_phihats", saw_phihats)
         # print("calculating new derivatives")
-        new_derivs = firm3dpp.test_derivatives_saw(quad_info, srange, trange, zrange, 
+        new_derivs = firm3dpp.test_derivatives_saw_nok(quad_info, srange, trange, zrange, 
                                                    saw_omega, saw_srange, saw_m, saw_n, saw_phihats, saw_nharmonics,
                                                     stz, vpar_init, time, VELOCITY, MASS, CHARGE, psi0, stz.shape[0])
         new_derivs = np.reshape(new_derivs, (stz.shape[0], 4))
@@ -175,7 +175,7 @@ def test_timestep(field, saw_filename, nfp, n_metagrid_pts, n_test_pts):
         saw_n = [saw.get_wave(i).Phin for i in range(saw_nharmonics)]
         saw_phihats = np.ascontiguousarray(np.column_stack([np.array([ saw.get_wave(i).phihat(s_val) for s_val in s]) for i in range(saw_nharmonics)]))
 
-        last_time = firm3dpp.test_timestep_saw(
+        last_time = firm3dpp.test_timestep_saw_nok(
                 quad_pts=quad_info, 
                 srange=srange,
                 trange=trange,
@@ -228,7 +228,7 @@ def test_timestep(field, saw_filename, nfp, n_metagrid_pts, n_test_pts):
 if __name__ == "__main__":
     ### CREATE A FIELD FOR TRACING
         boozmn_filename = "examples/inputs/boozmn_aten_rescaled.nc"
-        bri = BoozerRadialInterpolant(boozmn_filename, 3, enforce_vacuum=True)
+        bri = BoozerRadialInterpolant(boozmn_filename, 3, no_K=True)
 
         nfp = bri.nfp
         degree = 3
