@@ -31,6 +31,17 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 // https://stackoverflow.com/questions/9116267/how-can-i-use-an-enumeration-as-a-template-parameter
 enum class RHS {GC_CartesianVacuum, GC_BoozerVacuum, GC_BoozerVacuumSAW};
 
+enum class CoordSys {Cartesian, Boozer};
+
+template<RHS id>
+__host__ __device__ constexpr CoordSys map_rhs_to_coord(){
+    if constexpr(id == RHS::GC_BoozerVacuum || id == RHS::GC_BoozerVacuumSAW){
+        return CoordSys::Boozer;
+    } else if constexpr (id == RHS::GC_CartesianVacuum) {
+        return CoordSys::Cartesian;
+    }
+}
+
 /* below are declarations of data that are stored in the constant memory cache on the GPU
  * they are referenced like global variables and need to be set here, or copied to before the kernel is launched
  * accesses to constant memory are serialized and broadcasted across a warp
@@ -414,13 +425,13 @@ __device__ void calc_derivs<RHS::GC_BoozerVacuumSAW>(double* derivs, int deriv_i
 // symmetry_exploited is a bool indicating whether stellarator symmetry was exploited
 // there's an option for optional parameters
 
-template<RHS id, typename... Args>
+template<CoordSys coord, typename... Args>
 __device__ void map_to_grid(double* interp_pt, double * xyz, bool* symmetry_exploited, Args... args);                                    
 
 
 // map_to_grid implementation for Cartesian tracing
 template <>
-__device__ void map_to_grid<RHS::GC_CartesianVacuum>(double* interp_pt, double* x_temp, bool* symmetry_exploited){
+__device__ void map_to_grid<CoordSys::Cartesian>(double* interp_pt, double* x_temp, bool* symmetry_exploited){
     double x = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
     double y = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
     double z = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
@@ -451,7 +462,7 @@ __device__ void map_to_grid<RHS::GC_CartesianVacuum>(double* interp_pt, double* 
 
 // map_to_grid implementation for Boozer tracing
 template <>
-__device__ void map_to_grid<RHS::GC_BoozerVacuum>(double* interp_pt, double* x_temp, bool* symmetry_exploited){
+__device__ void map_to_grid<CoordSys::Boozer>(double* interp_pt, double* x_temp, bool* symmetry_exploited){
 
     double x1 = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
     double x2 = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
@@ -480,12 +491,6 @@ __device__ void map_to_grid<RHS::GC_BoozerVacuum>(double* interp_pt, double* x_t
     interp_pt[2] = z;
 }
 
-// map_to_grid implementation for BoozerSAW tracing
-template <>
-__device__ void map_to_grid<RHS::GC_BoozerVacuumSAW>(double* interp_pt, double* x_temp, bool* symmetry_exploited){
-    map_to_grid<RHS::GC_BoozerVacuum>(interp_pt, x_temp, symmetry_exploited);
-}
-
 // build_state is part of the DP5 implementation
 template <RHS id>
 __device__ void build_state(double* x_temp, int deriv_id, bool* symmetry_exploited, int* index_i, int* index_j, int* index_k,
@@ -504,7 +509,9 @@ __device__ void build_state(double* x_temp, int deriv_id, bool* symmetry_exploit
     }
     
     double interp_pt[3];
-    map_to_grid<id>(interp_pt, x_temp, symmetry_exploited);
+
+    constexpr CoordSys coord = map_rhs_to_coord<id>();
+    map_to_grid<coord>(interp_pt, x_temp, symmetry_exploited);
   
     double x1 = interp_pt[0];
     double x2 = interp_pt[1];
@@ -551,13 +558,13 @@ __device__ void build_state(double* x_temp, int deriv_id, bool* symmetry_exploit
 
 
 // calculate maximum allowable timestep to allow at most a quarter of a revolution per stel
-template<RHS id>
+template<CoordSys coord>
 __device__ void calc_max_timestep_size(double* dtmax, double* loc, double* derivs){
     printf("default calc_max_timestep_size not implemented\n");
 };
 
 template<>
-__device__ void calc_max_timestep_size<RHS::GC_CartesianVacuum>(double* dtmax, double* loc, double* derivs){
+__device__ void calc_max_timestep_size<CoordSys::Cartesian>(double* dtmax, double* loc, double* derivs){
     double x = loc[1*PARTICLES_PER_BLOCK + threadIdx.x];
     double y = loc[2*PARTICLES_PER_BLOCK + threadIdx.x];
     double z = loc[3*PARTICLES_PER_BLOCK + threadIdx.x];
@@ -569,16 +576,12 @@ __device__ void calc_max_timestep_size<RHS::GC_CartesianVacuum>(double* dtmax, d
 
 
 template<>
-__device__ void calc_max_timestep_size<RHS::GC_BoozerVacuum>(double* dtmax, double* loc, double* derivs){
+__device__ void calc_max_timestep_size<CoordSys::Boozer>(double* dtmax, double* loc, double* derivs){
     double modB = derivs[(6*0 + 4)*PARTICLES_PER_BLOCK + threadIdx.x];
     double G = derivs[(6*0 + 5)*PARTICLES_PER_BLOCK + threadIdx.x];
     dtmax[threadIdx.x] = (G / modB)*0.5*M_PI / v_total_d;
 }
 
-template<>
-__device__ void calc_max_timestep_size<RHS::GC_BoozerVacuumSAW>(double* dtmax, double* loc, double* derivs){
-    calc_max_timestep_size<RHS::GC_BoozerVacuum>(dtmax, loc, derivs);
-}
 
 template<RHS id, typename... Args>
 __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax, double* x_temp, bool* symmetry_exploited, int* index_i, int* index_j, int* index_k,
@@ -618,8 +621,8 @@ __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax,
         // // can at most do quarter of a revolution per step
         // double r = sqrt(x*x + y*y);
         // dtmax[threadIdx.x] = r*0.5*M_PI/vtotal;
-
-        calc_max_timestep_size<id>(dtmax, x_temp, derivs);
+        constexpr CoordSys coord = map_rhs_to_coord<id>();
+        calc_max_timestep_size<coord>(dtmax, x_temp, derivs);
         dtmax[threadIdx.x] = fmin(dtmax[threadIdx.x], tmax_d);
 
         dt[threadIdx.x] = 1e-3*dtmax[threadIdx.x];
@@ -636,18 +639,18 @@ __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax,
 // determine whether a particle has been lost or not
 // in cartesian coordinates, we check the signed distance function
 // in boozer coordinates we check for s >= 1
-template<RHS id>
+template<CoordSys coord>
 __device__ void check_has_left(bool* has_left, double* state, double* derivs){
     printf("default check_has_left not implemented\n");
 };
 
 template<>
-__device__ void check_has_left<RHS::GC_CartesianVacuum>(bool* has_left, double* state, double* derivs){
+__device__ void check_has_left<CoordSys::Cartesian>(bool* has_left, double* state, double* derivs){
     has_left[threadIdx.x] = derivs[(6*6 + 5)*PARTICLES_PER_BLOCK + threadIdx.x] < 0; // boundary dist fn at new location
 }
 
 template<>
-__device__ void check_has_left<RHS::GC_BoozerVacuum>(bool* has_left, double* state, double* derivs){
+__device__ void check_has_left<CoordSys::Boozer>(bool* has_left, double* state, double* derivs){
     double x1 = state[0*PARTICLES_PER_BLOCK + threadIdx.x];
     double x2 = state[1*PARTICLES_PER_BLOCK + threadIdx.x];
     double s = sqrt(x1*x1 + x2*x2);
@@ -656,10 +659,6 @@ __device__ void check_has_left<RHS::GC_BoozerVacuum>(bool* has_left, double* sta
     has_left[threadIdx.x] = s >= 1; 
 }
 
-template<>
-__device__ void check_has_left<RHS::GC_BoozerVacuumSAW>(bool* has_left, double* state, double* derivs){
-    check_has_left<RHS::GC_BoozerVacuum>(has_left, state, derivs);
-}
 
 template<RHS id>
 __device__ void adjust_time(double* t, double* dt, double* state, double* derivs, double* x_temp, bool* has_left, double* dtmax){
@@ -705,7 +704,8 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
             state[i*PARTICLES_PER_BLOCK + threadIdx.x] = x_temp[(i+1)*PARTICLES_PER_BLOCK + threadIdx.x];
         }
         // check if particle has left the device
-        check_has_left<id>(has_left, state, derivs);
+        constexpr CoordSys coord = map_rhs_to_coord<id>();
+        check_has_left<coord>(has_left, state, derivs);
 
         // double x1 = state[0*PARTICLES_PER_BLOCK + threadIdx.x];
         // double x2 = state[1*PARTICLES_PER_BLOCK + threadIdx.x];
