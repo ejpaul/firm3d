@@ -833,8 +833,8 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
                                  + bhat5 * derivs[(6*4 + i)*PARTICLES_PER_BLOCK + threadIdx.x] 
                                  + bhat6 * derivs[(6*5 + i)*PARTICLES_PER_BLOCK + threadIdx.x] 
                                  + bhat7 * derivs[(6*6 + i)*PARTICLES_PER_BLOCK + threadIdx.x]);
-        err_elt = fabs(err_elt) / (atol_d + rtol_d*(fabs(state_i) + dt[threadIdx.x]*fabs(deriv_i)));
-        // printf("err_elt=%.15e, atol_d=%.15e, rtol_d=%.15e, state_i=%.15e, dt=%.15e, deriv_i=%.15e\n", err_elt, atol_d, rtol_d, state_i, dt[threadIdx.x], deriv_i);
+        double atol_i = i == 3 ?  atol_d * v_total_d : atol_d;
+        err_elt = fabs(err_elt) / (atol_i + rtol_d*(fabs(state_i) + dt[threadIdx.x]*fabs(deriv_i)));
         max_err = fmax(max_err, err_elt);
     }
 
