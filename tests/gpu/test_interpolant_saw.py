@@ -10,7 +10,7 @@ from firm3d.field.boozermagneticfield import (
 )
 np.random.seed(1865)
 
-from firm3d.util.gpu_utils import boozer_interpolant
+from firm3d.util.gpu_utils import boozer_saw_interpolant
 import firm3dpp
 
 def test_interpolant_bfield(field, nfp, n_metagrid_pts, n_test_pts):
@@ -35,7 +35,8 @@ def test_interpolant_bfield(field, nfp, n_metagrid_pts, n_test_pts):
     simsopt_interpolation = np.hstack((modB, modB_derivs, G, dGds, I, dIds, iota, diotads))
 
     ## NEW INTERPOLANT
-    srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, n_metagrid_pts)
+    srange, trange, zrange, quad_info, maxJ = boozer_saw_interpolant(field, nfp, n_metagrid_pts)
+    print("quad_info shape", quad_info.shape)
     stz = np.ascontiguousarray(stz)
 
     # print("stz", stz)
@@ -43,7 +44,7 @@ def test_interpolant_bfield(field, nfp, n_metagrid_pts, n_test_pts):
     # Calculate interpolation
     # print(zrange)
     # exit()
-    new_interpolation = firm3dpp.test_gpu_interpolation(quad_info, srange, trange, zrange, stz, "boozer_saw", stz.shape[0])
+    new_interpolation = firm3dpp.test_gpu_interpolation(quad_info, srange, trange, zrange, stz, "boozer_saw_vacuum", stz.shape[0])
     new_interpolation = np.reshape(new_interpolation, (stz.shape[0], 10))
 
     # print(np.abs(simsopt_interpolation - new_interpolation) / simsopt_interpolation)
@@ -52,7 +53,7 @@ def test_interpolant_bfield(field, nfp, n_metagrid_pts, n_test_pts):
     print("Maximum relative error in interpolation values on {} points: {}".format(n_test_pts, diff))
 
     if diff > 1e-8:
-        print("INTERPOLANT TEST FAILED")
+        print("SAW INTERPOLANT TEST FAILED")
         print("culprit particle:")
         row_index = np.argmax(rel_err) // rel_err.shape[1]
         print(stz[row_index, :])
@@ -60,7 +61,7 @@ def test_interpolant_bfield(field, nfp, n_metagrid_pts, n_test_pts):
         print("new", new_interpolation[row_index, :])
         print(rel_err[row_index, :])
     else:
-        print("INTERPOLANT TEST SUCCESS")
+        print("SAW INTERPOLANT TEST SUCCESS")
 
 
 

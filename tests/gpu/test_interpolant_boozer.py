@@ -38,7 +38,7 @@ def test_interpolant_bfield(field, nfp, n_metagrid_pts, n_test_pts):
     # Calculate interpolation
     # print(zrange)
     # exit()
-    new_interpolation = firm3dpp.test_gpu_interpolation(quad_info, srange, trange, zrange, stz, "boozer", stz.shape[0])
+    new_interpolation = firm3dpp.test_gpu_interpolation(quad_info, srange, trange, zrange, stz, "boozer_vacuum", stz.shape[0])
     new_interpolation = np.reshape(new_interpolation, (stz.shape[0], 6))
 
     # print(np.abs(simsopt_interpolation - new_interpolation) / simsopt_interpolation)
@@ -47,7 +47,7 @@ def test_interpolant_bfield(field, nfp, n_metagrid_pts, n_test_pts):
     print("Maximum relative error in interpolation values on {} points: {}".format(n_test_pts, diff))
 
     if diff > 1e-8:
-        print("INTERPOLANT TEST FAILED")
+        print("BOOZER INTERPOLANT TEST FAILED")
         print("culprit particle:")
         row_index = np.argmax(rel_err) // rel_err.shape[1]
         print(stz[row_index, :])
@@ -55,7 +55,7 @@ def test_interpolant_bfield(field, nfp, n_metagrid_pts, n_test_pts):
         print("new", new_interpolation[row_index, :])
         print(rel_err[row_index, :])
     else:
-        print("INTERPOLANT TEST SUCCESS")
+        print("BOOZER INTERPOLANT TEST SUCCESS")
 
 
 
