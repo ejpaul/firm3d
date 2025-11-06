@@ -54,6 +54,7 @@ __constant__ double mass_d, charge_d, tmax_d, atol_d, rtol_d;
 __constant__ int n_x2_d, n_x3_d, n_x23_d; // stores the number of interpolant cells in x2 and x3 direction, along with their product
 __constant__ int nparticles_d; // number of particles being traced
 __constant__ double v_total_d; // initial velocity
+__constant__ double maxloss_d; // maximum loss fraction for early termination
 
 __constant__ double psi0_d; // used for Boozer RHS only
 
@@ -653,8 +654,116 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
 
 
 template<RHS id, typename... Args>
+__global__ void particle_trace_kernel_maxloss(double* out, double* init_pos, double* quadpts_arr, int* global_lost_count, Args... args){
+    int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
+
+    __shared__ double x_temp[4 * PARTICLES_PER_BLOCK];
+    __shared__ double derivs[42 * PARTICLES_PER_BLOCK];
+    __shared__ double dt[PARTICLES_PER_BLOCK];
+    __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
+    __shared__ int index_i[PARTICLES_PER_BLOCK];
+    __shared__ int index_j[PARTICLES_PER_BLOCK];
+    __shared__ int index_k[PARTICLES_PER_BLOCK];
+    __shared__ double x1_shape[4 * PARTICLES_PER_BLOCK];
+    __shared__ double x2_shape[4 * PARTICLES_PER_BLOCK];
+    __shared__ double x3_shape[4 * PARTICLES_PER_BLOCK];
+    __shared__ double mu[PARTICLES_PER_BLOCK];
+    __shared__ double t[PARTICLES_PER_BLOCK];
+    __shared__ double dtmax[PARTICLES_PER_BLOCK];
+    __shared__ double dt_min[PARTICLES_PER_BLOCK];
+    __shared__ double dt_max[PARTICLES_PER_BLOCK];
+    __shared__ double state[4 * PARTICLES_PER_BLOCK];
+    __shared__ bool has_left[PARTICLES_PER_BLOCK];
+    __shared__ bool has_left_prev[PARTICLES_PER_BLOCK];
+
+
+    bool is_valid = idx < nparticles_d && threadIdx.x < PARTICLES_PER_BLOCK;
+    int nparticles_blk = __syncthreads_count(is_valid);
+
+    // if thread is responsible for a valid particle id, load that particle's data
+    if(is_valid){
+        has_left[threadIdx.x] = false;
+        has_left_prev[threadIdx.x] = false;
+        t[threadIdx.x] = 0.0;
+        for(int i=0; i<4; ++i){
+            state[i*PARTICLES_PER_BLOCK + threadIdx.x] = init_pos[4*idx + i];
+        }
+    }
+    __syncthreads();
+
+    // calculate the particle's magnetic moment mu, dt, dtmax
+    setup_particle<id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
+                        quadpts_arr, x1_shape, x2_shape, x3_shape, state, derivs, nparticles_blk, args...);
+    __syncthreads();
+
+    // initialize per-particle min/max accepted timestep trackers
+    if(is_valid){
+        dt_min[threadIdx.x] = dt[threadIdx.x];
+        dt_max[threadIdx.x] = dt[threadIdx.x];
+    }
+    __syncthreads();
+
+    // if there exists a particle which is real and hasn't not reached tmax or left, keep tracing
+    while(__syncthreads_count(is_valid && !(t[threadIdx.x] >= tmax_d || has_left[threadIdx.x])) > 0){
+
+        // calculate the 7 Dormand-Prince 5 derivatives
+        for(int k=0; k<7; ++k){
+            // if the thread is responsible for a particle, compute the point at which the derivative will be computed
+            if(is_valid){
+                build_state<id>(x_temp, k, symmetry_exploited, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, state, derivs, dt);
+            }
+
+            // ensure that all threads have updated x_temp before calculating derivatives, where a data race would occur
+            __syncthreads();
+            calc_derivs<id>(derivs, k, quadpts_arr, x_temp, symmetry_exploited, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, mu, nparticles_blk, args...);
+
+            // ensure all particles have derivative calculations before accepting/rejecting timestep
+            __syncthreads();
+
+        }
+
+        __syncthreads();
+        if(is_valid){
+            double t_before = t[threadIdx.x];
+            double dt_used = dt[threadIdx.x];
+            adjust_time<id>(t, dt, state, derivs, x_temp, has_left, dtmax);
+            
+            // Detect transition to lost state and atomically increment global counter
+            if(!has_left_prev[threadIdx.x] && has_left[threadIdx.x]) {
+                atomicAdd(global_lost_count, 1);
+                has_left_prev[threadIdx.x] = true;
+            }
+            
+            // if the step was accepted (time advanced), record dt_used
+            if(t[threadIdx.x] > t_before){
+                dt_min[threadIdx.x] = fmin(dt_min[threadIdx.x], dt_used);
+                dt_max[threadIdx.x] = fmax(dt_max[threadIdx.x], dt_used);
+            }
+        }
+        __syncthreads();
+        
+        // Check global loss fraction
+        int current_lost = *global_lost_count;
+        if(current_lost > maxloss_d * nparticles_d) {
+            break;  // Early termination due to excessive loss across all blocks
+        }
+    }
+    __syncthreads();
+    if(is_valid){
+        out[7*idx] = t[threadIdx.x];
+        for(int i=0; i<4; ++i){
+            out[7*idx + i + 1] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
+        }
+        out[7*idx + 5] = dt_min[threadIdx.x];
+        out[7*idx + 6] = dt_max[threadIdx.x];
+    }
+    return;
+}
+
+
+template<RHS id, typename... Args>
 vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, 
-    py::array_t<double> loc_init, double m, double q, double vtotal, py::array_t<double> vtang, double tmax, double tol, int nparticles, Args... args){
+    py::array_t<double> loc_init, double m, double q, double vtotal, py::array_t<double> vtang, double tmax, double tol, int nparticles, double maxloss, Args... args){
 
     //  read data in from python
     py::buffer_info loc_init_buf = loc_init.request();
@@ -703,6 +812,7 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     gpuErrchk(cudaMemcpyToSymbol(atol_d, &tol, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(rtol_d, &tol, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(v_total_d, &vtotal, sizeof(double)));
+    gpuErrchk(cudaMemcpyToSymbol(maxloss_d, &maxloss, sizeof(double)));
 
 
     gpuErrchk(cudaMemcpyToSymbol(n_x2_d, &n_x2, sizeof(int)) );
@@ -738,18 +848,34 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     double* out_d;
     gpuErrchk(cudaMalloc((void**)&out_d, 7 * nparticles * sizeof(double)) ); 
 
+    // Allocate and initialize global lost particle counter for maxloss kernel
+    int* global_lost_count_d = nullptr;
+    if (maxloss < 1.0) {
+        gpuErrchk(cudaMalloc((void**)&global_lost_count_d, sizeof(int)) );
+        int zero = 0;
+        gpuErrchk(cudaMemcpy(global_lost_count_d, &zero, sizeof(int), cudaMemcpyHostToDevice) );
+    }
+
 
     int nthreads = THREADS_PER_BLOCK;
 
     int nblks = nparticles  / PARTICLES_PER_BLOCK + 1;
-    std::cout << "starting particle tracing kernel\n";
-
+    if (maxloss >= 1.0) {
+        std::cout << "starting particle tracing kernel without maxloss tracking\n";
+    } else {
+        std::cout << "starting particle tracing kernel with maxloss tracking\n";
+    }
        
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    particle_trace_kernel<id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, args...);
+    
+    if (maxloss >= 1.0) {
+        particle_trace_kernel<id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, args...);
+    } else {
+        particle_trace_kernel_maxloss<id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, global_lost_count_d, args...);
+    }
 
     double out[7*nparticles];
     gpuErrchk(cudaMemcpy(out, out_d, 7 * nparticles * sizeof(double), cudaMemcpyDeviceToHost) );
@@ -770,6 +896,11 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     // gpuErrchk( cudaFree(zrange_d) );
 
     gpuErrchk( cudaFree(quadpts_d) );
+    
+    // Free global lost count if it was allocated
+    if (global_lost_count_d != nullptr) {
+        gpuErrchk( cudaFree(global_lost_count_d) );
+    }
 
     vector<double> particle_output(7*nparticles);
     for(int i=0; i<7*nparticles; ++i){
@@ -801,13 +932,13 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
 
 extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
-        double tmax, double tol, int nparticles){
-            return gpu_tracing<RHS::GC_CartesianVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles);
+        double tmax, double tol, int nparticles, double maxloss){
+            return gpu_tracing<RHS::GC_CartesianVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles, maxloss);
         }
 
 extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
-        double tmax, double tol, double psi0, int nparticles){
+        double tmax, double tol, double psi0, int nparticles, double maxloss){
 
             //  read data in from python
             py::buffer_info stz_init_buf = stz_init.request();
@@ -822,7 +953,7 @@ extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::a
             }
             gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
 
-            std::vector<double> results =  gpu_tracing<RHS::GC_BoozerVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles);
+            std::vector<double> results =  gpu_tracing<RHS::GC_BoozerVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles, maxloss);
 
             for(int i=0; i<nparticles; ++i){
                 double x1 = results[7*i+1];

@@ -12,11 +12,11 @@ using std::vector;
 
 extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
-        double tmax, double tol, int nparticles);
+        double tmax, double tol, int nparticles, double maxloss=10.0);
 
 extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
-        double tmax, double tol, double psi0, int nparticles);
+        double tmax, double tol, double psi0, int nparticles, double maxloss=10.0);
 
 extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, std::string coordinates, int n_points);
 
@@ -116,7 +116,8 @@ void init_tracing(py::module_ &m){
         py::arg("vtang"),
         py::arg("tmax"),
         py::arg("tol"),
-        py::arg("nparticles")
+        py::arg("nparticles"),
+        py::arg("maxloss")=10.0
         );
 
     
@@ -133,7 +134,8 @@ void init_tracing(py::module_ &m){
         py::arg("tmax"),
         py::arg("tol"),
         py::arg("psi0"),
-        py::arg("nparticles")
+        py::arg("nparticles"),
+        py::arg("maxloss")=10.0
         );
 
 
