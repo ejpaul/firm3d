@@ -1439,8 +1439,10 @@ class PassingPerturbedPoincare:
                     "No solution for vpar found! Check the parameters and "
                     "initial conditions."
                 )
-            else:
+            elif a != 0:
                 return (-b + self.sign_vpar * np.sqrt(b**2 - 4 * a * c)) / (2 * a)
+            else:
+                return (-c / b) * self.sign_vpar
 
         # Create mesh grid if not provided directly
         if not hasattr(self, "s_init") or not hasattr(self, "chis_init"):
@@ -1464,7 +1466,6 @@ class PassingPerturbedPoincare:
                 s_init.append(s[i])
                 chis_init.append(chis[i])
                 vpars_init.append(vpar)
-                theta, zeta = self.chi_eta_to_theta_zeta(chis[i], 0)
             except RuntimeError:
                 continue
 
