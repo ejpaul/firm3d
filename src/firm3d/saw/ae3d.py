@@ -148,7 +148,7 @@ class AE3DEigenvector:
             egn_value,
             egn_vector_sorted,
             modes_sorted,
-        ) = cls.get_nearest_eigenvector(target_eigenvalue)
+        ) = eig_mode_asci.get_nearest_eigenvector(target_eigenvalue)
         harmonics = [
             Harmonic(
                 m=modes_sorted["m"][i],
@@ -158,7 +158,7 @@ class AE3DEigenvector:
             for i in range(len(modes_sorted))
         ]
         return AE3DEigenvector(
-            eigenvalue=egn_value, s_coords=cls.s_coords, harmonics=harmonics
+            eigenvalue=egn_value, s_coords=eig_mode_asci.s_coords, harmonics=harmonics
         )
 
     def export_to_numpy(
@@ -171,6 +171,8 @@ class AE3DEigenvector:
             filename (str): The name of the file to export to.
             num_harmonics (int, optional): The number of harmonics to export.
                 If None, all harmonics are exported.
+            resolution_step (int): Number of indices to skip in the flux label
+                "s". The full resolution is used when this is set to 1.
         """
         num_harmonics = num_harmonics or len(self.harmonics)
         harmonics_data = {
@@ -223,7 +225,7 @@ class AE3DEigenvector:
         """
         harmonics_data = np.load(filename, allow_pickle=True).item()
         if num_harmonics is None:
-            num_harmonics = len(harmonics_data["harmonics"]) - 1
+            num_harmonics = len(harmonics_data["harmonics"])
         harmonics = [
             Harmonic(m=m, n=n, amplitudes=amplitudes)
             for m, n, amplitudes in harmonics_data["harmonics"][:num_harmonics]

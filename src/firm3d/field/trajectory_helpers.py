@@ -764,8 +764,8 @@ class TrappedPoincare:
             for _jj in range(self.Nmaps):
                 try:
                     # Apply trapped map twice to return to same vpar = 0 plane
-                    tr, time = self.trapped_map(tr)
-                    tr, time = self.trapped_map(tr)
+                    tr, time1 = self.trapped_map(tr)
+                    tr, time2 = self.trapped_map(tr)
                     if np.abs(tr[1] - chis_traj[-1]) > 2 * np.pi:
                         warn(
                             "Barely trapped particle detected in trapped_map.",
@@ -776,7 +776,7 @@ class TrappedPoincare:
                     s_traj.append(tr[0])
                     chis_traj.append(tr[1])
                     etas_traj.append(tr[2])
-                    t_traj.append(time)
+                    t_traj.append(time1 + time2)
                 except RuntimeError:
                     broken = True
                     break
@@ -1439,8 +1439,10 @@ class PassingPerturbedPoincare:
                     "No solution for vpar found! Check the parameters and "
                     "initial conditions."
                 )
-            else:
+            elif a != 0:
                 return (-b + self.sign_vpar * np.sqrt(b**2 - 4 * a * c)) / (2 * a)
+            else:
+                return (-c / b) * self.sign_vpar
 
         # Create mesh grid if not provided directly
         if not hasattr(self, "s_init") or not hasattr(self, "chis_init"):
@@ -1464,7 +1466,6 @@ class PassingPerturbedPoincare:
                 s_init.append(s[i])
                 chis_init.append(chis[i])
                 vpars_init.append(vpar)
-                theta, zeta = self.chi_eta_to_theta_zeta(chis[i], 0)
             except RuntimeError:
                 continue
 
