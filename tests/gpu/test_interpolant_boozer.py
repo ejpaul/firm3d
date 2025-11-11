@@ -30,7 +30,7 @@ def test_interpolant_bfield(field, nfp, n_metagrid_pts, n_test_pts):
     simsopt_interpolation = np.hstack((modB, modB_derivs, G, iota))
 
     ## NEW INTERPOLANT
-    srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, n_metagrid_pts)
+    srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, n_metagrid_pts, vacuum=True)
     stz = np.ascontiguousarray(stz)
 
     # print("stz", stz)

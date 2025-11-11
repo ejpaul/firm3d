@@ -43,7 +43,7 @@ field = InterpolatedBoozerField(
     nzeta_interp=n_metagrid_pts,
 ) 
 
-srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, 15)
+srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, 15, vacuum=True)
 
 
 # set seed for consistency
@@ -59,8 +59,8 @@ vpar_inits = vpar * np.random.uniform(low=-1, high=1, size=nparticles)
 
 print("tracing particles")
 
-# trace on GPU
-last_time = firm3dpp.boozer_gpu_tracing(
+# trace on GPU using vacuum approximation (gc_vac ODEs)
+last_time = firm3dpp.boozer_vacuum_gpu_tracing(
 	quad_pts=quad_info, 
 	srange=srange,
 	trange=trange,

@@ -38,7 +38,7 @@ def test_derivs(field, nfp, n_metagrid_pts, n_test_pts):
 
 
         ### NEW INTERPOLANT
-        srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, n_metagrid_pts)
+        srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, n_metagrid_pts, vacuum=True)
         stz = np.ascontiguousarray(stz)
 
         psi0 =field.psi0
@@ -94,7 +94,7 @@ def test_timestep(field, nfp, n_metagrid_pts, n_test_pts):
 
 
         # print("computing new timesteps")
-        srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, n_metagrid_pts)
+        srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, n_metagrid_pts, vacuum=True)
         stz = np.ascontiguousarray(stz)
         psi0 = field.psi0
         last_time = firm3dpp.test_timestep_boozer(

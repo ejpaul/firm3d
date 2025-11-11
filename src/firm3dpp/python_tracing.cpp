@@ -14,6 +14,10 @@ extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tmax, double tol, int nparticles);
 
+extern "C" vector<double> boozer_vacuum_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
+        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        double tmax, double tol, double psi0, int nparticles);
+
 extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tmax, double tol, double psi0, int nparticles);
@@ -144,6 +148,22 @@ void init_tracing(py::module_ &m){
         );
 
     
+    m.def("boozer_vacuum_gpu_tracing", &boozer_vacuum_gpu_tracing,
+        py::arg("quad_pts"),
+        py::arg("srange"),
+        py::arg("trange"),
+        py::arg("zrange"),
+        py::arg("stz_init"),
+        py::arg("m"),
+        py::arg("q"),
+        py::arg("vtotal"),
+        py::arg("vtang"),
+        py::arg("tmax"),
+        py::arg("tol"),
+        py::arg("psi0"),
+        py::arg("nparticles")
+        );
+
     m.def("boozer_gpu_tracing", &boozer_gpu_tracing,
         py::arg("quad_pts"),
         py::arg("srange"),
