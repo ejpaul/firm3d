@@ -31,19 +31,19 @@ def boozer_interpolant(field, nfp, n_metagrid_pts, vacuum=False):
     if vacuum:
         # Vacuum approximation: G=const, I=0, K=0
         quad_info = np.hstack((modB, modB_derivs, G, iota))
-        I = field.I()  # Still needed for J calculation
+        # calculate max J for sampling
+        J = G / (modB**2)
     else:
         # Full guiding center equations: include I and K
-        dGds = field.dGds()
         I = field.I()
+        dGds = field.dGds()
         dIds = field.dIds()
         diotads = field.diotads()
         K = field.K()
         K_derivs = field.K_derivs()
         quad_info = np.hstack((modB, modB_derivs, G, dGds, I, dIds, iota, diotads, K, K_derivs))
-
-    # calculate max J for sampling
-    J = (G + iota*I)/(modB**2)
+        # calculate max J for sampling
+        J = (G + iota * I) / (modB**2)
 
     # reorder for device memory acceesses
     # print("reordering interpolant data from device accesses")
