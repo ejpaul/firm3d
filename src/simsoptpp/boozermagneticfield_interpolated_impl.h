@@ -3,6 +3,7 @@
 #include "boozermagneticfield_interpolated.h"
 #include <nlohmann/json.hpp>
 #include <fstream>
+#include <stdexcept>
 
 // Implementation of save/load methods for InterpolatedBoozerField
 // These methods enable efficient serialization of interpolated field data to avoid recomputation
@@ -10,278 +11,168 @@
 std::map<std::string, std::map<std::string, std::vector<double>>> InterpolatedBoozerField::get_all_interpolant_data() const {
     std::map<std::string, std::map<std::string, std::vector<double>>> all_data;
     
-    // Save data for each interpolant that has been computed
-    // Use status flags for efficient checking - no need for is_computed() calls
-    if (status_modB) {
-        all_data["modB"] = interp_modB->get_interpolant_data();
-    }
-    if (status_dmodBdtheta) {
-        all_data["dmodBdtheta"] = interp_dmodBdtheta->get_interpolant_data();
-    }
-    if (status_dmodBdzeta) {
-        all_data["dmodBdzeta"] = interp_dmodBdzeta->get_interpolant_data();
-    }
-    if (status_dmodBds) {
-        all_data["dmodBds"] = interp_dmodBds->get_interpolant_data();
-    }
-    if (status_G) {
-        all_data["G"] = interp_G->get_interpolant_data();
-    }
-    if (status_I) {
-        all_data["I"] = interp_I->get_interpolant_data();
-    }
-    if (status_iota) {
-        all_data["iota"] = interp_iota->get_interpolant_data();
-    }
-    if (status_dGds) {
-        all_data["dGds"] = interp_dGds->get_interpolant_data();
-    }
-    if (status_dIds) {
-        all_data["dIds"] = interp_dIds->get_interpolant_data();
-    }
-    if (status_diotads) {
-        all_data["diotads"] = interp_diotads->get_interpolant_data();
-    }
-    if (status_psip) {
-        all_data["psip"] = interp_psip->get_interpolant_data();
-    }
-    if (status_R) {
-        all_data["R"] = interp_R->get_interpolant_data();
-    }
-    if (status_Z) {
-        all_data["Z"] = interp_Z->get_interpolant_data();
-    }
-    if (status_nu) {
-        all_data["nu"] = interp_nu->get_interpolant_data();
-    }
-    if (status_K) {
-        all_data["K"] = interp_K->get_interpolant_data();
-    }
-    if (status_dRdtheta) {
-        all_data["dRdtheta"] = interp_dRdtheta->get_interpolant_data();
-    }
-    if (status_dRdzeta) {
-        all_data["dRdzeta"] = interp_dRdzeta->get_interpolant_data();
-    }
-    if (status_dRds) {
-        all_data["dRds"] = interp_dRds->get_interpolant_data();
-    }
-    if (status_dZdtheta) {
-        all_data["dZdtheta"] = interp_dZdtheta->get_interpolant_data();
-    }
-    if (status_dZdzeta) {
-        all_data["dZdzeta"] = interp_dZdzeta->get_interpolant_data();
-    }
-    if (status_dZds) {
-        all_data["dZds"] = interp_dZds->get_interpolant_data();
-    }
-    if (status_dnudtheta) {
-        all_data["dnudtheta"] = interp_dnudtheta->get_interpolant_data();
-    }
-    if (status_dnudzeta) {
-        all_data["dnudzeta"] = interp_dnudzeta->get_interpolant_data();
-    }
-    if (status_dnuds) {
-        all_data["dnuds"] = interp_dnuds->get_interpolant_data();
-    }
-    if (status_dKdtheta) {
-        all_data["dKdtheta"] = interp_dKdtheta->get_interpolant_data();
-    }
-    if (status_dKdzeta) {
-        all_data["dKdzeta"] = interp_dKdzeta->get_interpolant_data();
-    }
-    if (status_K_derivs) {
-        all_data["K_derivs"] = interp_K_derivs->get_interpolant_data();
-    }
-    if (status_nu_derivs) {
-        all_data["nu_derivs"] = interp_nu_derivs->get_interpolant_data();
-    }
-    if (status_R_derivs) {
-        all_data["R_derivs"] = interp_R_derivs->get_interpolant_data();
-    }
-    if (status_Z_derivs) {
-        all_data["Z_derivs"] = interp_Z_derivs->get_interpolant_data();
-    }
-    if (status_modB_derivs) {
-        all_data["modB_derivs"] = interp_modB_derivs->get_interpolant_data();
-    }
+    // OPTIMIZATION: Save mapping arrays only ONCE (they're identical for all quantities)
+    // The mapping arrays (reduced_to_full_map, full_to_reduced_map, skip_cell) are ~50MB each
+    // Saving them 30+ times would waste ~1.5GB! Instead, save once as "shared_maps"
+    bool saved_shared_maps = false;
+    
+    // Helper lambda to save quantity data without redundant mapping arrays
+    // This extracts shared maps from the first quantity, then strips them from all quantities
+    auto save_quantity = [&](bool status, auto& interp, const std::string& name) {
+        if (status) {
+            auto data = interp->get_interpolant_data();
+            if (!saved_shared_maps) {
+                // First computed quantity: extract and save shared maps once
+                all_data["shared_maps"]["reduced_to_full_map"] = data["reduced_to_full_map"];
+                all_data["shared_maps"]["full_to_reduced_map"] = data["full_to_reduced_map"];
+                all_data["shared_maps"]["skip_cell"] = data["skip_cell"];
+                saved_shared_maps = true;
+            }
+            // Remove redundant mapping arrays from this quantity (already saved in shared_maps)
+            data.erase("reduced_to_full_map");
+            data.erase("full_to_reduced_map");
+            data.erase("skip_cell");
+            all_data[name] = data;
+        }
+    };
+    
+    // Save all 31 quantities using the helper (order matches header declaration)
+    // This removes ~1.5GB of redundant mapping array data from the JSON!
+    save_quantity(status_modB, interp_modB, "modB");
+    save_quantity(status_dmodBdtheta, interp_dmodBdtheta, "dmodBdtheta");
+    save_quantity(status_dmodBdzeta, interp_dmodBdzeta, "dmodBdzeta");
+    save_quantity(status_dmodBds, interp_dmodBds, "dmodBds");
+    save_quantity(status_modB_derivs, interp_modB_derivs, "modB_derivs");
+    save_quantity(status_G, interp_G, "G");
+    save_quantity(status_I, interp_I, "I");
+    save_quantity(status_iota, interp_iota, "iota");
+    save_quantity(status_dGds, interp_dGds, "dGds");
+    save_quantity(status_dIds, interp_dIds, "dIds");
+    save_quantity(status_diotads, interp_diotads, "diotads");
+    save_quantity(status_psip, interp_psip, "psip");
+    save_quantity(status_R, interp_R, "R");
+    save_quantity(status_Z, interp_Z, "Z");
+    save_quantity(status_nu, interp_nu, "nu");
+    save_quantity(status_K, interp_K, "K");
+    save_quantity(status_dRdtheta, interp_dRdtheta, "dRdtheta");
+    save_quantity(status_dRdzeta, interp_dRdzeta, "dRdzeta");
+    save_quantity(status_dRds, interp_dRds, "dRds");
+    save_quantity(status_dZdtheta, interp_dZdtheta, "dZdtheta");
+    save_quantity(status_dZdzeta, interp_dZdzeta, "dZdzeta");
+    save_quantity(status_dZds, interp_dZds, "dZds");
+    save_quantity(status_dnudtheta, interp_dnudtheta, "dnudtheta");
+    save_quantity(status_dnudzeta, interp_dnudzeta, "dnudzeta");
+    save_quantity(status_dnuds, interp_dnuds, "dnuds");
+    save_quantity(status_dKdtheta, interp_dKdtheta, "dKdtheta");
+    save_quantity(status_dKdzeta, interp_dKdzeta, "dKdzeta");
+    save_quantity(status_K_derivs, interp_K_derivs, "K_derivs");
+    save_quantity(status_nu_derivs, interp_nu_derivs, "nu_derivs");
+    save_quantity(status_R_derivs, interp_R_derivs, "R_derivs");
+    save_quantity(status_Z_derivs, interp_Z_derivs, "Z_derivs");
     
     return all_data;
 }
 
 void InterpolatedBoozerField::set_all_interpolant_data(const std::map<std::string, std::map<std::string, std::vector<double>>>& data) {
-    // Load data for each interpolant, creating interpolant objects as needed
-    // This method is called during field loading to restore saved interpolant data
-    for (const auto& pair : data) {
-        const std::string& quantity = pair.first;
-        const std::map<std::string, std::vector<double>>& interpolant_data = pair.second;
-        
-        // Create interpolant object if it doesn't exist, then load data
-        // This lazy creation matches the original behavior where interpolants are created on demand
-        if (quantity == "modB") {
-            if (!interp_modB) {
-                interp_modB = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_modB->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dmodBdtheta") {
-            if (!interp_dmodBdtheta) {
-                interp_dmodBdtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_dmodBdtheta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dmodBdzeta") {
-            if (!interp_dmodBdzeta) {
-                interp_dmodBdzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_dmodBdzeta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dmodBds") {
-            if (!interp_dmodBds) {
-                interp_dmodBds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_dmodBds->set_interpolant_data(interpolant_data);
-        } else if (quantity == "G") {
-            if (!interp_G) {
-                interp_G = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_G->set_interpolant_data(interpolant_data);
-        } else if (quantity == "I") {
-            if (!interp_I) {
-                interp_I = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_I->set_interpolant_data(interpolant_data);
-        } else if (quantity == "iota") {
-            if (!interp_iota) {
-                interp_iota = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_iota->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dGds") {
-            if (!interp_dGds) {
-                interp_dGds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_dGds->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dIds") {
-            if (!interp_dIds) {
-                interp_dIds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_dIds->set_interpolant_data(interpolant_data);
-        } else if (quantity == "diotads") {
-            if (!interp_diotads) {
-                interp_diotads = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_diotads->set_interpolant_data(interpolant_data);
-        } else if (quantity == "psip") {
-            if (!interp_psip) {
-                interp_psip = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_psip->set_interpolant_data(interpolant_data);
-        } else if (quantity == "R") {
-            if (!interp_R) {
-                interp_R = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_R->set_interpolant_data(interpolant_data);
-        } else if (quantity == "Z") {
-            if (!interp_Z) {
-                interp_Z = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_Z->set_interpolant_data(interpolant_data);
-        } else if (quantity == "nu") {
-            if (!interp_nu) {
-                interp_nu = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_nu->set_interpolant_data(interpolant_data);
-        } else if (quantity == "K") {
-            if (!interp_K) {
-                interp_K = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_K->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dRdtheta") {
-            if (!interp_dRdtheta) {
-                interp_dRdtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_dRdtheta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dRdzeta") {
-            if (!interp_dRdzeta) {
-                interp_dRdzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_dRdzeta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dRds") {
-            if (!interp_dRds) {
-                interp_dRds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_dRds->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dZdtheta") {
-            if (!interp_dZdtheta) {
-                interp_dZdtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_dZdtheta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dZdzeta") {
-            if (!interp_dZdzeta) {
-                interp_dZdzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_dZdzeta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dZds") {
-            if (!interp_dZds) {
-                interp_dZds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_dZds->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dnudtheta") {
-            if (!interp_dnudtheta) {
-                interp_dnudtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_dnudtheta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dnudzeta") {
-            if (!interp_dnudzeta) {
-                interp_dnudzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_dnudzeta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dnuds") {
-            if (!interp_dnuds) {
-                interp_dnuds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_dnuds->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dKdtheta") {
-            if (!interp_dKdtheta) {
-                interp_dKdtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_dKdtheta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "dKdzeta") {
-            if (!interp_dKdzeta) {
-                interp_dKdzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
-            interp_dKdzeta->set_interpolant_data(interpolant_data);
-        } else if (quantity == "K_derivs") {
-            if (!interp_K_derivs) {
-                interp_K_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 3, extrapolate);
-            }
-            interp_K_derivs->set_interpolant_data(interpolant_data);
-        } else if (quantity == "nu_derivs") {
-            if (!interp_nu_derivs) {
-                interp_nu_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 3, extrapolate);
-            }
-            interp_nu_derivs->set_interpolant_data(interpolant_data);
-        } else if (quantity == "R_derivs") {
-            if (!interp_R_derivs) {
-                interp_R_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 3, extrapolate);
-            }
-            interp_R_derivs->set_interpolant_data(interpolant_data);
-        } else if (quantity == "Z_derivs") {
-            if (!interp_Z_derivs) {
-                interp_Z_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 3, extrapolate);
-            }
-            interp_Z_derivs->set_interpolant_data(interpolant_data);
-        } else if (quantity == "modB_derivs") {
-            if (!interp_modB_derivs) {
-                interp_modB_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 3, extrapolate);
-            }
-            interp_modB_derivs->set_interpolant_data(interpolant_data);
-        }
+    // STRATEGY: We create interpolant objects using field's RangeTriplets (not saved values)
+    // This ensures consistency with normal operation and avoids floating-point rounding errors
+    // All interpolants share the same grid structure defined by s_range, theta_range, zeta_range
+    
+    // OPTIMIZATION: Load shared mapping arrays once and inject into all quantities
+    // These mapping arrays are ~50MB each and are identical for all quantities
+    std::map<std::string, std::vector<double>> shared_maps;
+    auto shared_it = data.find("shared_maps");
+    if (shared_it != data.end()) {
+        shared_maps = shared_it->second;
     }
     
-    // CRITICAL: Reset load mode flag and clear static load mode after data is loaded
-    // This allows the field to function normally for calculations
-    // Without this, the field would always return zeros instead of actual values
-    is_load_mode_constructor = false;
+    // VALUE_SIZE LOOKUP TABLE (only 5 quantities differ from the default of 1)
+    // Most quantities are scalars (value_size=1), so we use a map to store only exceptions
+    // modB: dynamically determined from saved data (usually 1)
+    // K_derivs: 2 (dK/dθ, dK/dζ)
+    // R_derivs, Z_derivs, nu_derivs, modB_derivs: 3 (ds, dθ, dζ)
+    std::map<std::string, int> value_size_map = {
+        {"K_derivs", 2},
+        {"R_derivs", 3},
+        {"Z_derivs", 3},
+        {"nu_derivs", 3},
+        {"modB_derivs", 3}
+    };
     
-    // Automatically clear the static load mode to restore normal operation
+    // MAPPING TABLE: Quantity name → interpolant pointer reference
+    // This avoids the massive if-else chain and makes the code maintainable
+    std::map<std::string, std::shared_ptr<RegularGridInterpolant3D<Array2>>*> interp_map = {
+        {"modB", &interp_modB}, {"dmodBdtheta", &interp_dmodBdtheta}, {"dmodBdzeta", &interp_dmodBdzeta},
+        {"dmodBds", &interp_dmodBds}, {"modB_derivs", &interp_modB_derivs}, {"G", &interp_G}, {"I", &interp_I},
+        {"iota", &interp_iota}, {"dGds", &interp_dGds}, {"dIds", &interp_dIds}, {"diotads", &interp_diotads},
+        {"psip", &interp_psip}, {"R", &interp_R}, {"Z", &interp_Z}, {"nu", &interp_nu}, {"K", &interp_K},
+        {"dRdtheta", &interp_dRdtheta}, {"dRdzeta", &interp_dRdzeta}, {"dRds", &interp_dRds},
+        {"dZdtheta", &interp_dZdtheta}, {"dZdzeta", &interp_dZdzeta}, {"dZds", &interp_dZds},
+        {"dnudtheta", &interp_dnudtheta}, {"dnudzeta", &interp_dnudzeta}, {"dnuds", &interp_dnuds},
+        {"dKdtheta", &interp_dKdtheta}, {"dKdzeta", &interp_dKdzeta}, {"K_derivs", &interp_K_derivs},
+        {"nu_derivs", &interp_nu_derivs}, {"R_derivs", &interp_R_derivs}, {"Z_derivs", &interp_Z_derivs}
+    };
+    
+    // LOAD EACH QUANTITY
+    for (const auto& pair : data) {
+        const std::string& quantity = pair.first;
+        
+        // Skip the shared_maps entry itself
+        if (quantity == "shared_maps") continue;
+        
+        // Check if this is a known quantity
+        auto interp_it = interp_map.find(quantity);
+        if (interp_it == interp_map.end()) {
+            // Unknown quantity - skip it (could be future extension or typo in JSON)
+            continue;
+        }
+        
+        // Make a copy and inject shared maps into this quantity's data
+        std::map<std::string, std::vector<double>> interpolant_data = pair.second;
+        if (!shared_maps.empty()) {
+            // Inject shared mapping arrays if they're not already in this quantity's data
+            if (interpolant_data.find("reduced_to_full_map") == interpolant_data.end()) {
+                interpolant_data["reduced_to_full_map"] = shared_maps["reduced_to_full_map"];
+            }
+            if (interpolant_data.find("full_to_reduced_map") == interpolant_data.end()) {
+                interpolant_data["full_to_reduced_map"] = shared_maps["full_to_reduced_map"];
+            }
+            if (interpolant_data.find("skip_cell") == interpolant_data.end()) {
+                interpolant_data["skip_cell"] = shared_maps["skip_cell"];
+            }
+        }
+        
+        // Get the interpolant pointer reference
+        std::shared_ptr<RegularGridInterpolant3D<Array2>>* interp_ptr = interp_it->second;
+        
+        // Create interpolant object if it doesn't exist
+        if (!(*interp_ptr)) {
+            // Determine value_size: check lookup table first, then default to 1
+            int value_size = 1; // Default for most quantities
+            auto vs_it = value_size_map.find(quantity);
+            if (vs_it != value_size_map.end()) {
+                value_size = vs_it->second;
+            }
+            
+            // Special case: modB can have dynamic value_size (though usually 1)
+            if (quantity == "modB" && interpolant_data.find("value_size") != interpolant_data.end()) {
+                value_size = static_cast<int>(interpolant_data.at("value_size")[0]);
+            }
+            
+            // Create the interpolant using field's grid parameters for consistency
+            *interp_ptr = std::make_shared<RegularGridInterpolant3D<Array2>>(
+                rule, s_range, theta_range, zeta_range, value_size, extrapolate
+            );
+        }
+        
+        // Load the data into the interpolant
+        (*interp_ptr)->set_interpolant_data(interpolant_data);
+    }
+    
+    // CRITICAL: Reset load mode to allow normal field evaluation
+    // During loading, load_mode=true prevents expensive computation
+    // Now that data is loaded, set load_mode=false to enable normal operation
+    is_load_mode_constructor = false;
     RegularGridInterpolant3D<Array2>::set_load_mode(false);
 }
 
@@ -402,12 +293,9 @@ void InterpolatedBoozerField::to_json(const std::string& json_file_path) const {
     // Save configuration, interpolant data, and status
     nlohmann::json save_dict = {
         {"config", {
-            {"boozmn_filename", "saved_field"},  // Placeholder since we don't have access to original filename
-            {"order", 3},  // Placeholder
-            {"no_K", true},  // Placeholder
             {"degree", rule.degree},
-            {"ns_interp", std::get<2>(s_range)},    
-            {"ntheta_interp", std::get<2>(theta_range)}, 
+            {"ns_interp", std::get<2>(s_range)},
+            {"ntheta_interp", std::get<2>(theta_range)},
             {"nzeta_interp", std::get<2>(zeta_range)},
             {"extrapolate", extrapolate},
             {"nfp", nfp},
@@ -423,9 +311,11 @@ void InterpolatedBoozerField::to_json(const std::string& json_file_path) const {
     
     // Write to file
     std::ofstream file(json_file_path);
-    if (!file.is_open()) {
-        throw std::runtime_error("Could not open JSON file for writing: " + json_file_path);
-    }
-    file << save_dict.dump(2);
-    file.close();
+      if (!file.is_open()) {
+          throw std::runtime_error("Could not open JSON file for writing: " + json_file_path);
+      }
+      // PERFORMANCE: Use compact format (no indentation) for ~2x faster save/load
+      // Keep full precision (default) to maintain numerical accuracy
+      file << save_dict.dump();
+      file.close();
 }
