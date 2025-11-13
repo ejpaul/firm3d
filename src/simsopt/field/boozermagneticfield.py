@@ -1060,19 +1060,34 @@ class BoozerRadialInterpolant(BoozerMagneticField):
                 "enforcing field symmetry."
             )
 
+        # Store values in temporary variables to avoid C++ setter issues with None
+        # The C++ property setters (like psi0) don't accept None, only floats
+        psi0_val = None
+        nfp_val = None
+        mpol_val = None
+        ntor_val = None
+        asym_val = None
+        
         if self.proc0:
-            self.asym = self.bx.asym  # Bool for stellarator asymmetry
-            self.psi0 = -self.bx.phi[-1] / (
+            asym_val = self.bx.asym  # Bool for stellarator asymmetry
+            psi0_val = -self.bx.phi[-1] / (
                 2 * np.pi
             )  # Sign flip to account for VMEC convention.
             # See https://terpconnect.umd.edu/~mattland/assets/notes/vmec_signs.pdf
             # for phiedge definition
-            self.nfp = self.bx.nfp
-            self.mpol = self.bx.mboz
-            self.ntor = self.bx.nboz
+            nfp_val = self.bx.nfp
+            mpol_val = self.bx.mboz
+            ntor_val = self.bx.nboz
             self.s_half_ext = np.zeros(self.bx.ns_b + 2)
             self.s_half_ext[1:-1] = self.bx.s_b
             self.s_half_ext[-1] = 1
+            # Set attributes immediately so init_splines() can access them
+            # They may be rebroadcast in MPI mode, but that's fine
+            self.asym = asym_val
+            self.psi0 = psi0_val
+            self.nfp = nfp_val
+            self.mpol = mpol_val
+            self.ntor = ntor_val
             self.init_splines()
         else:
             self.psip_spline = None
@@ -1102,18 +1117,26 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             self.dbmnsds_splines = None
             self.kmns_splines = None
             self.kmnc_splines = None
-            self.asym = None
-            self.psi0 = None
-            self.nfp = None
-            self.mpol = None
-            self.ntor = None
             self.s_half_ext = None
+        
+        # Broadcast values from root process to all processes (MPI) or assign directly (serial)
+        # Only assign to C++ properties after we have valid values (not None)
         if self.comm is not None:
-            self.psi0 = self.comm.bcast(self.psi0, root=0)
-            self.nfp = self.comm.bcast(self.nfp, root=0)
-            self.mpol = self.comm.bcast(self.mpol, root=0)
-            self.ntor = self.comm.bcast(self.ntor, root=0)
-            self.asym = self.comm.bcast(self.asym, root=0)
+            # MPI case: broadcast from root process to all processes
+            psi0_val = self.comm.bcast(psi0_val, root=0)
+            nfp_val = self.comm.bcast(nfp_val, root=0)
+            mpol_val = self.comm.bcast(mpol_val, root=0)
+            ntor_val = self.comm.bcast(ntor_val, root=0)
+            asym_val = self.comm.bcast(asym_val, root=0)
+            
+            # Now assign to C++ properties with valid values (not None)
+            self.psi0 = psi0_val
+            self.nfp = nfp_val
+            self.mpol = mpol_val
+            self.ntor = ntor_val
+            self.asym = asym_val
+            
+            # Broadcast spline objects
             self.psip_spline = self.comm.bcast(self.psip_spline, root=0)
             self.G_spline = self.comm.bcast(self.G_spline, root=0)
             self.I_spline = self.comm.bcast(self.I_spline, root=0)
@@ -1132,6 +1155,7 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             self.xm_b = self.comm.bcast(self.xm_b, root=0)
             self.xn_b = self.comm.bcast(self.xn_b, root=0)
             self.s_half_ext = self.comm.bcast(self.s_half_ext, root=0)
+            # Broadcast asymmetric-specific splines if needed
             if self.asym:
                 self.numnc_splines = self.comm.bcast(self.numnc_splines, root=0)
                 self.rmns_splines = self.comm.bcast(self.rmns_splines, root=0)
@@ -1141,6 +1165,10 @@ class BoozerRadialInterpolant(BoozerMagneticField):
                 self.dzmncds_splines = self.comm.bcast(self.dzmncds_splines, root=0)
                 self.bmns_splines = self.comm.bcast(self.bmns_splines, root=0)
                 self.dbmnsds_splines = self.comm.bcast(self.dbmnsds_splines, root=0)
+        else:
+            # Serial case: attributes already set in proc0 block above (line 1086-1090)
+            # No need to reassign - they're already correct
+            pass
 
         if not self.no_K:
             self.compute_K()
@@ -2209,6 +2237,13 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
         if isinstance(field_or_json_path, str):
             # This is a JSON file path - use the C++ JSON constructor
             sopp.InterpolatedBoozerField.__init__(self, field_or_json_path)
+            
+            # After loading from JSON, we need to call BoozerMagneticField.__init__()
+            # to set the Python attributes (nfp, stellsym, field_type, psi0)
+            # The C++ object has these values, but they need to be set as Python attributes
+            # Use getter methods to access the C++ values
+            BoozerMagneticField.__init__(self, self.psi0, self.field_type, self.get_nfp(), self.get_stellsym())
+            
             return
         
         # Otherwise, this is the normal field creation path
@@ -2323,6 +2358,7 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
         if initialize:
             for item in initialize:
                 getattr(self, item)()
+
 
     @classmethod
     def from_json(cls, json_file_path):
