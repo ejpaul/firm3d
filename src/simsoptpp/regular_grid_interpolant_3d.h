@@ -2,6 +2,7 @@
 
 #include "simdhelpers.h"
 #include <unordered_map>
+#include <map>
 #include <algorithm>
 #include <functional>
 #include <iostream>
@@ -285,6 +286,8 @@ class RegularGridInterpolant3D {
                 ydoftensor_reduced[i] = ydoftensor[reduced_to_full_map[i]];
                 zdoftensor_reduced[i] = zdoftensor[reduced_to_full_map[i]];
             }
+            
+            
             vals = Vec(dofs_to_keep * value_size, 0.);
 
             // round up value_size to nearest multiple of simdcount
@@ -303,6 +306,20 @@ class RegularGridInterpolant3D {
         void evaluate_batch_1D(Array &xyz, Array &fxyz);
 
         std::pair<double, double> estimate_error(std::function<Vec(Vec, Vec, Vec)> &f, int samples);
+        
+        // Save/load methods for interpolant data
+        // These methods enable serialization of interpolant data to avoid recomputation
+        std::map<std::string, std::vector<double>> get_interpolant_data() const;
+        void set_interpolant_data(const std::map<std::string, std::vector<double>>& data);
+        bool is_computed() const { return !vals.empty(); }  // Check if interpolant has actual data
+        
+        // Load mode control - static methods to prevent expensive computation during data loading
+        // These methods control a global flag that prevents interpolate_batch() from running
+        static void set_load_mode(bool load_mode);
+        static bool get_load_mode();
+    private:
+        static bool& get_load_mode_flag(); // Helper method to access shared static variable
+        // This ensures both set_load_mode() and get_load_mode() use the same static variable
 };
 
 class UniformInterpolationRule : public InterpolationRule {

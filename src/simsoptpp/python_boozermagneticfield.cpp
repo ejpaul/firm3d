@@ -398,6 +398,14 @@ void init_boozermagneticfields(py::module_ &m){
         &BoozerMagneticField::set_points,
         "Set the points where the field should be evaluated in "
         "Boozer coordinates `(s,theta,zeta)`."
+    )
+    .def_readwrite(
+        "psi0",
+        &BoozerMagneticField::psi0
+    )
+    .def_readwrite(
+        "field_type",
+        &BoozerMagneticField::field_type
     );
 
   auto ifield = py::class_<
@@ -426,6 +434,9 @@ void init_boozermagneticfields(py::module_ &m){
           int,
           bool,
           string>()
+      )
+      .def(
+          py::init<string>()
       )
       .def(
           "estimate_error_K",
@@ -475,6 +486,9 @@ void init_boozermagneticfields(py::module_ &m){
           "rule",
           &InterpolatedBoozerField::rule
       )
+      .def("get_nfp", &InterpolatedBoozerField::get_nfp)
+      .def("get_stellsym", &InterpolatedBoozerField::get_stellsym)
+      .def("get_extrapolate", &InterpolatedBoozerField::get_extrapolate)
       .def_readwrite("status_modB",&InterpolatedBoozerField::status_modB)
       .def_readwrite("status_dmodBdtheta",&InterpolatedBoozerField::status_dmodBdtheta)
       .def_readwrite("status_dmodBdzeta",&InterpolatedBoozerField::status_dmodBdzeta)
@@ -506,6 +520,12 @@ void init_boozermagneticfields(py::module_ &m){
       .def_readwrite("status_Z_derivs",&InterpolatedBoozerField::status_Z_derivs)
       .def_readwrite("status_nu_derivs",&InterpolatedBoozerField::status_nu_derivs)
       .def_readwrite("status_modB_derivs",&InterpolatedBoozerField::status_modB_derivs)
+      // Save/load methods for field data serialization
+      .def("get_all_interpolant_data", &InterpolatedBoozerField::get_all_interpolant_data, "Get all interpolant data for saving to avoid recomputation.")
+      .def("set_all_interpolant_data", &InterpolatedBoozerField::set_all_interpolant_data, "Set all interpolant data from saved data to restore field state.")
+      .def("get_status_flags", &InterpolatedBoozerField::get_status_flags, "Get status flags indicating which interpolants are computed.")
+      .def("set_status_flags", &InterpolatedBoozerField::set_status_flags, "Set status flags after loading interpolant data.")
+      .def("to_json", &InterpolatedBoozerField::to_json, "Save field data to JSON file.")
       ;
 
     // ShearAlfvenWave:
