@@ -2,27 +2,27 @@ import time
 
 import numpy as np
 
-from simsopt.field.boozermagneticfield import (
+from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
     ShearAlfvenWavesSuperposition,
 )
-from simsopt.field.tracing import (
+from firm3d.field.tracing import (
     MaxToroidalFluxStoppingCriterion,
     trace_particles_boozer_perturbed,
 )
-from simsopt.field.tracing_helpers import (
+from firm3d.field.tracing_helpers import (
     initialize_position_profile,
     initialize_velocity_uniform,
 )
-from simsopt.saw.ae3d import AE3DEigenvector
-from simsopt.util.constants import (
+from firm3d.saw.ae3d import AE3DEigenvector
+from firm3d.util.constants import (
     ALPHA_PARTICLE_CHARGE,
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
-from simsopt.util.functions import proc0_print, setup_logging
-from simsopt.util.mpi import comm_size, comm_world, verbose
+from firm3d.util.functions import proc0_print, setup_logging
+from firm3d.util.mpi import comm_size, comm_world, verbose
 
 resolution = 48  # Resolution for field interpolation
 nParticles = 5000  # Number of particles to trace
@@ -31,7 +31,7 @@ abstol = 1e-8  # Absolute tolerance for the ODE solver
 order = 3  # Order for radial interpolation
 degree = 3  # Degree for 3d interpolation
 boozmn_filename = "../inputs/boozmn_beta2.5_QA.nc"
-saw_filename = "ae3d_output/eig_mode_asci.dat"
+saw_filename = "ae.npy"
 tmax = 1e-2  # Time for integration
 ns_interp = resolution
 ntheta_interp = resolution
@@ -115,9 +115,9 @@ proc0_print("Elapsed time for tracing = ", time2 - time1)
 
 ## Post-process results to obtain lost particles
 if verbose:
-    from simsopt.field.trajectory_helpers import compute_loss_fraction
+    from firm3d.field.trajectory_helpers import compute_loss_fraction
 
-    times, loss_frac = compute_loss_fraction(res_tys, tmin=1e-5, tmax=1e-2)
+    times, loss_frac = compute_loss_fraction(res_tys, tmin=1e-5, tmax=tmax)
     import matplotlib
 
     matplotlib.use("Agg")  # Don't use interactive backend
@@ -125,7 +125,7 @@ if verbose:
 
     plt.figure()
     plt.loglog(times, loss_frac)
-    plt.xlim([1e-5, 1e-2])
+    plt.xlim([1e-5, tmax])
     plt.ylim([1e-3, 1])
     plt.xlabel("Time [s]")
     plt.ylabel("Fraction of lost particles")
