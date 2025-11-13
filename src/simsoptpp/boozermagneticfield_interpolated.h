@@ -37,7 +37,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
     protected:
         void _psip_impl(Array2& psip) override {
           if(!interp_psip)
-              interp_psip = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, angle0_range, angle0_range, 1, extrapolate);
+              interp_psip = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
           
           // In load mode constructor, skip expensive computation and return zeros
           // This prevents recomputation during field loading from saved data
@@ -59,16 +59,21 @@ class InterpolatedBoozerField : public BoozerMagneticField {
               this->field->set_points(old_points_py);
               status_psip = true;
           }
-          Array2 stz = this->get_points_ref();
-          points_sym.resize({npoints, 3});
-          Array2 stz0 = this->get_sym_points_ref();
-          exploit_fluxfunction_points(stz, stz0);
-          interp_psip->evaluate_batch(stz0, psip);
+            // Flux functions only depend on s, not theta/zeta
+            // Evaluate at (s, 0, 0) to avoid numerical issues
+            Array2 stz = this->get_points_ref();
+            Array2 stz0({static_cast<long>(stz.shape(0)), 3});
+            exploit_fluxfunction_points(stz, stz0);
+            interp_psip->evaluate_batch(stz0, psip);
       }
 
         void _G_impl(Array2& G) override {
-            if(!interp_G)
-                interp_G = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, angle0_range, angle0_range, 1, extrapolate);
+            // CRITICAL FIX: Don't recreate interpolant if it already exists (from loading)
+            // This ensures loaded interpolant objects with correct data are used
+            if(!interp_G) {
+                interp_G = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            }
+            
             
             // In load mode constructor, skip expensive computation and return zeros
             // This prevents recomputation during field loading from saved data
@@ -90,16 +95,18 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 this->field->set_points(old_points_py);
                 status_G = true;
             }
+            // Flux functions only depend on s, not theta/zeta
+            // Evaluate at (s, 0, 0) to avoid numerical issues
             Array2 stz = this->get_points_ref();
-            points_sym.resize({npoints, 3});
-            Array2 stz0 = this->get_sym_points_ref();
+            Array2 stz0({static_cast<long>(stz.shape(0)), 3});
             exploit_fluxfunction_points(stz, stz0);
             interp_G->evaluate_batch(stz0, G);
         }
 
         void _I_impl(Array2& I) override {
             if(!interp_I)
-                interp_I = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, angle0_range, angle0_range, 1, extrapolate);
+                interp_I = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
+            
             
             // In load mode constructor, skip expensive computation and return zeros
             // This prevents recomputation during field loading from saved data
@@ -121,16 +128,17 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 this->field->set_points(old_points_py);
                 status_I = true;
             }
+            // Flux functions only depend on s, not theta/zeta
+            // Evaluate at (s, 0, 0) to avoid numerical issues
             Array2 stz = this->get_points_ref();
-            points_sym.resize({npoints, 3});
-            Array2 stz0 = this->get_sym_points_ref();
+            Array2 stz0({static_cast<long>(stz.shape(0)), 3});
             exploit_fluxfunction_points(stz, stz0);
             interp_I->evaluate_batch(stz0, I);
         }
 
         void _iota_impl(Array2& iota) override {
             if(!interp_iota)
-                interp_iota = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, angle0_range, angle0_range, 1, extrapolate);
+                interp_iota = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
             // In load mode constructor, skip expensive computation and return zeros
             // This prevents recomputation during field loading from saved data
@@ -152,16 +160,17 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 this->field->set_points(old_points_py);
                 status_iota = true;
             }
+            // Flux functions only depend on s, not theta/zeta
+            // Evaluate at (s, 0, 0) to avoid numerical issues
             Array2 stz = this->get_points_ref();
-            points_sym.resize({npoints, 3});
-            Array2 stz0 = this->get_sym_points_ref();
+            Array2 stz0({static_cast<long>(stz.shape(0)), 3});
             exploit_fluxfunction_points(stz, stz0);
             interp_iota->evaluate_batch(stz0, iota);
         }
 
         void _dGds_impl(Array2& dGds) override {
             if(!interp_dGds)
-                interp_dGds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, angle0_range, angle0_range, 1, extrapolate);
+                interp_dGds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
             // In load mode constructor, skip expensive computation and return zeros
             // This prevents recomputation during field loading from saved data
@@ -183,16 +192,17 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 this->field->set_points(old_points_py);
                 status_dGds = true;
             }
+            // Flux functions only depend on s, not theta/zeta
+            // Evaluate at (s, 0, 0) to avoid numerical issues
             Array2 stz = this->get_points_ref();
-            points_sym.resize({npoints, 3});
-            Array2 stz0 = this->get_sym_points_ref();
+            Array2 stz0({static_cast<long>(stz.shape(0)), 3});
             exploit_fluxfunction_points(stz, stz0);
             interp_dGds->evaluate_batch(stz0, dGds);
         }
 
         void _dIds_impl(Array2& dIds) override {
             if(!interp_dIds)
-                interp_dIds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, angle0_range, angle0_range, 1, extrapolate);
+                interp_dIds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
             // In load mode constructor, skip expensive computation and return zeros
             // This prevents recomputation during field loading from saved data
@@ -214,16 +224,17 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 this->field->set_points(old_points_py);
                 status_dIds = true;
             }
+            // Flux functions only depend on s, not theta/zeta
+            // Evaluate at (s, 0, 0) to avoid numerical issues
             Array2 stz = this->get_points_ref();
-            points_sym.resize({npoints, 3});
-            Array2 stz0 = this->get_sym_points_ref();
+            Array2 stz0({static_cast<long>(stz.shape(0)), 3});
             exploit_fluxfunction_points(stz, stz0);
             interp_dIds->evaluate_batch(stz0, dIds);
         }
 
         void _diotads_impl(Array2& diotads) override {
             if(!interp_diotads)
-                interp_diotads = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, angle0_range, angle0_range, 1, extrapolate);
+                interp_diotads = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
             // In load mode constructor, skip expensive computation and return zeros
             // This prevents recomputation during field loading from saved data
@@ -245,9 +256,10 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 this->field->set_points(old_points_py);
                 status_diotads = true;
             }
+            // Flux functions only depend on s, not theta/zeta
+            // Evaluate at (s, 0, 0) to avoid numerical issues
             Array2 stz = this->get_points_ref();
-            points_sym.resize({npoints, 3});
-            Array2 stz0 = this->get_sym_points_ref();
+            Array2 stz0({static_cast<long>(stz.shape(0)), 3});
             exploit_fluxfunction_points(stz, stz0);
             interp_diotads->evaluate_batch(stz0, diotads);
         }
@@ -870,6 +882,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_modB)
                 interp_modB = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
+            
             // In load mode constructor, skip expensive computation and return zeros
             // This prevents recomputation during field loading from saved data
             if (is_load_mode_constructor) {
@@ -893,6 +906,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             }
             Array2& stz = this->get_points_ref();
             points_sym.resize({npoints, 3});
+            points_sym.fill(0.0);  // CRITICAL FIX: Initialize to zeros to avoid stale data
             Array2& stz_sym = this->get_sym_points_ref();               exploit_symmetries_points(stz, stz_sym);
             interp_modB->evaluate_batch(stz_sym, modB);
         }
@@ -1216,7 +1230,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
 
     public:
         const shared_ptr<BoozerMagneticField> field;
-        const RangeTriplet s_range, theta_range, zeta_range, angle0_range = {0., M_PI, 1};
+        const RangeTriplet s_range, theta_range, zeta_range;
         using BoozerMagneticField::npoints;
         const InterpolationRule rule;
 
@@ -1244,6 +1258,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
         // This constructor takes only the JSON file path and handles all loading internally
         InterpolatedBoozerField(const std::string& json_file_path) : 
             BoozerMagneticField(0.0, ""),  // Will be set from JSON data
+            field(std::make_shared<BoozerMagneticField>(0.0, "")),  // Create dummy field for loaded data
             rule(UniformInterpolationRule(1)),  // Temporary, will be set from JSON
             s_range(0.0, 1.0, 10),  // Temporary, will be set from JSON
             theta_range(0.0, 2*M_PI, 10),  // Temporary, will be set from JSON
@@ -1307,6 +1322,10 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             BoozerMagneticField::psi0 = psi0;  // Load psi0 from JSON
             BoozerMagneticField::field_type = field_type;
             
+            // Update the dummy field with correct values
+            field->psi0 = psi0;
+            field->field_type = field_type;
+            
             // ACTIVATE LOAD MODE - prevent computation during construction
             RegularGridInterpolant3D<Array2>::set_load_mode(true);
             is_load_mode_constructor = true;
@@ -1367,12 +1386,39 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             // Load interpolant data (this will create interpolant objects and load data)
             set_all_interpolant_data(interpolant_data);
             
-            // Load status flags
-            std::map<std::string, bool> flags_map;
-            for (auto& [key, value] : status_flags.items()) {
-                flags_map[key] = value.get<bool>();
-            }
-            set_status_flags(flags_map);
+            // CRITICAL: Set status flags based on what was actually loaded, not what was saved
+            // This ensures that only the interpolants that were successfully loaded are marked as ready
+            status_modB = (interpolant_data.find("modB") != interpolant_data.end());
+            status_dmodBdtheta = (interpolant_data.find("dmodBdtheta") != interpolant_data.end());
+            status_dmodBdzeta = (interpolant_data.find("dmodBdzeta") != interpolant_data.end());
+            status_dmodBds = (interpolant_data.find("dmodBds") != interpolant_data.end());
+            status_G = (interpolant_data.find("G") != interpolant_data.end());
+            status_I = (interpolant_data.find("I") != interpolant_data.end());
+            status_iota = (interpolant_data.find("iota") != interpolant_data.end());
+            status_dGds = (interpolant_data.find("dGds") != interpolant_data.end());
+            status_dIds = (interpolant_data.find("dIds") != interpolant_data.end());
+            status_diotads = (interpolant_data.find("diotads") != interpolant_data.end());
+            status_psip = (interpolant_data.find("psip") != interpolant_data.end());
+            status_R = (interpolant_data.find("R") != interpolant_data.end());
+            status_Z = (interpolant_data.find("Z") != interpolant_data.end());
+            status_nu = (interpolant_data.find("nu") != interpolant_data.end());
+            status_K = (interpolant_data.find("K") != interpolant_data.end());
+            status_dRdtheta = (interpolant_data.find("dRdtheta") != interpolant_data.end());
+            status_dRdzeta = (interpolant_data.find("dRdzeta") != interpolant_data.end());
+            status_dRds = (interpolant_data.find("dRds") != interpolant_data.end());
+            status_dZdtheta = (interpolant_data.find("dZdtheta") != interpolant_data.end());
+            status_dZdzeta = (interpolant_data.find("dZdzeta") != interpolant_data.end());
+            status_dZds = (interpolant_data.find("dZds") != interpolant_data.end());
+            status_dnudtheta = (interpolant_data.find("dnudtheta") != interpolant_data.end());
+            status_dnudzeta = (interpolant_data.find("dnudzeta") != interpolant_data.end());
+            status_dnuds = (interpolant_data.find("dnuds") != interpolant_data.end());
+            status_dKdtheta = (interpolant_data.find("dKdtheta") != interpolant_data.end());
+            status_dKdzeta = (interpolant_data.find("dKdzeta") != interpolant_data.end());
+            status_K_derivs = (interpolant_data.find("K_derivs") != interpolant_data.end());
+            status_nu_derivs = (interpolant_data.find("nu_derivs") != interpolant_data.end());
+            status_R_derivs = (interpolant_data.find("R_derivs") != interpolant_data.end());
+            status_Z_derivs = (interpolant_data.find("Z_derivs") != interpolant_data.end());
+            status_modB_derivs = (interpolant_data.find("modB_derivs") != interpolant_data.end());
             
             // Load mode is automatically cleared by set_all_interpolant_data()
             // Field is now ready for normal operation
@@ -1465,7 +1511,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
 
                 std::pair<double, double> estimate_error_G(int samples) {
                     if(!interp_G) {
-                      interp_G = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, angle0_range, angle0_range, 1, extrapolate);
+                      interp_G = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
                     }
                     std::function<Vec(Vec, Vec, Vec)> fbatch = [this](Vec s, Vec theta, Vec zeta) {
                       return fbatch_scalar(s,theta,zeta,"G");
@@ -1482,7 +1528,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
 
                 std::pair<double, double> estimate_error_I(int samples) {
                     if(!interp_I) {
-                      interp_I = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, angle0_range, angle0_range, 1, extrapolate);
+                      interp_I = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
                     }
                     std::function<Vec(Vec, Vec, Vec)> fbatch = [this](Vec s, Vec theta, Vec zeta) {
                       return fbatch_scalar(s,theta,zeta,"I");
@@ -1499,7 +1545,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
 
                 std::pair<double, double> estimate_error_iota(int samples) {
                     if(!interp_iota) {
-                      interp_iota = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, angle0_range, angle0_range, 1, extrapolate);
+                      interp_iota = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
                     }
                     std::function<Vec(Vec, Vec, Vec)> fbatch = [this](Vec s, Vec theta, Vec zeta) {
                       return fbatch_scalar(s,theta,zeta,"iota");
@@ -1519,6 +1565,11 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 void set_all_interpolant_data(const std::map<std::string, std::map<std::string, std::vector<double>>>& data);
                 std::map<std::string, bool> get_status_flags() const;
                 void set_status_flags(const std::map<std::string, bool>& flags);
+                
+                // Getter methods for const members
+                int get_nfp() const { return nfp; }
+                bool get_stellsym() const { return stellsym; }
+                bool get_extrapolate() const { return extrapolate; }
                 
                 // Save field data to JSON file
                 void to_json(const std::string& json_file_path) const;
