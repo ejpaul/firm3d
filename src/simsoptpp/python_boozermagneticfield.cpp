@@ -398,6 +398,14 @@ void init_boozermagneticfields(py::module_ &m){
         &BoozerMagneticField::set_points,
         "Set the points where the field should be evaluated in "
         "Boozer coordinates `(s,theta,zeta)`."
+    )
+    .def_readwrite(
+        "psi0",
+        &BoozerMagneticField::psi0
+    )
+    .def_readwrite(
+        "field_type",
+        &BoozerMagneticField::field_type
     );
 
   auto ifield = py::class_<
@@ -478,6 +486,9 @@ void init_boozermagneticfields(py::module_ &m){
           "rule",
           &InterpolatedBoozerField::rule
       )
+      .def("get_nfp", &InterpolatedBoozerField::get_nfp)
+      .def("get_stellsym", &InterpolatedBoozerField::get_stellsym)
+      .def("get_extrapolate", &InterpolatedBoozerField::get_extrapolate)
       .def_readwrite("status_modB",&InterpolatedBoozerField::status_modB)
       .def_readwrite("status_dmodBdtheta",&InterpolatedBoozerField::status_dmodBdtheta)
       .def_readwrite("status_dmodBdzeta",&InterpolatedBoozerField::status_dmodBdzeta)
