@@ -286,6 +286,8 @@ class RegularGridInterpolant3D {
                 ydoftensor_reduced[i] = ydoftensor[reduced_to_full_map[i]];
                 zdoftensor_reduced[i] = zdoftensor[reduced_to_full_map[i]];
             }
+            
+            
             vals = Vec(dofs_to_keep * value_size, 0.);
 
             // round up value_size to nearest multiple of simdcount
