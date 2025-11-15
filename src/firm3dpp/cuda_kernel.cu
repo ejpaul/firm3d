@@ -1393,6 +1393,28 @@ __device__ void account_for_symmetry<CoordSys::Boozer>(double* interpolants, boo
     }
 }
 
+// RHS-aware symmetry correction used by the interpolation test helper
+template<RHS id, int n>
+__device__ void account_for_symmetry_rhs(double* interpolants, bool* symmetry_exploited){
+    if(!symmetry_exploited[threadIdx.x]) return;
+    if constexpr (id == RHS::GC_CartesianVacuum){
+        interpolants[0] *= -1.0;
+        interpolants[4] *= -1.0;
+        interpolants[5] *= -1.0;
+    } else if constexpr (id == RHS::GC_BoozerVacuum || id == RHS::GC_BoozerVacuumSAW){
+        // Only theta/zeta derivatives flip sign
+        interpolants[2] *= -1.0;
+        interpolants[3] *= -1.0;
+    } else if constexpr (id == RHS::GC_Boozer){
+        // 13-field ordering: flip dB/dtheta, dB/dzeta, and K
+        interpolants[2] *= -1.0;  // d|B|/dtheta
+        interpolants[3] *= -1.0;  // d|B|/dzeta
+        if constexpr (n >= 13) {
+            interpolants[10] *= -1.0; // K
+        }
+    }
+}
+
 
 template <RHS id, int n>
 __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* loc, double* out, int n_points){
@@ -1446,8 +1468,8 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* loc, dou
             out_arr[i] = block_interpolants[i*PARTICLES_PER_BLOCK + threadIdx.x];
 
         }
-        constexpr CoordSys coord = map_rhs_to_coord<id>();
-        account_for_symmetry<coord>(out_arr, symmetry_exploited);
+        // Apply symmetry fixes with RHS/layout awareness
+        account_for_symmetry_rhs<id, n>(out_arr, symmetry_exploited);
     }
 
 
@@ -1485,7 +1507,7 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
     }
 
     // Boozer Coordinates
-    if((rhs == "boozer_vacuum") || (rhs == "boozer_saw_vacuum")) {
+    if((rhs == "boozer_vacuum") || (rhs == "boozer_saw_vacuum") || (rhs == "boozer")) {
         for(int i=0; i<n_points; ++i){
             double x1 = loc_arr[3*i] * cos(loc_arr[3*i + 1]);
             double x2 = loc_arr[3*i] * sin(loc_arr[3*i + 1]);
@@ -1504,6 +1526,8 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
 
     } else if(rhs == "boozer_saw_vacuum"){
         n=10;
+    } else if(rhs == "boozer"){
+        n=13;
     }
 
 
@@ -1568,6 +1592,8 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
         test_gpu_interpolation_kernel<RHS::GC_BoozerVacuum, 6><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
     } else if(rhs == "boozer_saw_vacuum") {
         test_gpu_interpolation_kernel<RHS::GC_BoozerVacuumSAW, 10><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
+    } else if(rhs == "boozer") {
+        test_gpu_interpolation_kernel<RHS::GC_Boozer, 13><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
     }
     double out[n*n_points];
     gpuErrchk( cudaMemcpy(&out, out_d, n*n_points * sizeof(double), cudaMemcpyDeviceToHost) );
