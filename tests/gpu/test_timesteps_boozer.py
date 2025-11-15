@@ -271,7 +271,7 @@ if __name__ == "__main__":
     print("\n" + "=" * linewidth)
     print("TESTING VACUUM CASE")
     print("=" * linewidth)
-    boozmn_filename = "examples/inputs/boozmn_aten_rescaled.nc"
+    boozmn_filename = "examples/inputs/boozmn_aten_rescaled_low_res.nc"
     bri = BoozerRadialInterpolant(boozmn_filename, 3, enforce_vacuum=True)
 
     nfp = bri.nfp
