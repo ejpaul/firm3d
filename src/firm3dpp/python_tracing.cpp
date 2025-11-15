@@ -330,7 +330,8 @@ void init_tracing(py::module_ &m){
         py::arg("m"),
         py::arg("q"),
         py::arg("vtotal"),
-        py::arg("vtang")
+        py::arg("vtang"),
+        py::arg("vacuum")
         );
     
     m.def("simsopt_derivs_saw", &simsopt_derivs_saw,

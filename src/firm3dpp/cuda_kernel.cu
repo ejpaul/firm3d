@@ -318,8 +318,7 @@ __device__ void calc_derivs<RHS::GC_Boozer>(double* derivs, int deriv_id, double
         if(symmetry_exploited[threadIdx.x]){
             dmodBdtheta *= -1.0;
             dmodBdzeta *= -1.0;
-            dKdtheta *= -1.0;
-            dKdzeta *= -1.0;
+            K *= -1.0;
         }
 
         // General guiding center equations (mode='gc')

@@ -1,17 +1,15 @@
-import numpy as np
-import unittest
-from numpy.testing import assert_raises
-import numpy as np
 import os
+import numpy as np
 
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
 )
-np.random.seed(1865)
 
 from firm3d.util.gpu_utils import boozer_interpolant
 import firm3dpp
+
+np.random.seed(1865)
 
 def test_interpolant_bfield_vacuum(field, nfp, n_metagrid_pts, n_test_pts):
 
@@ -109,6 +107,10 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=300)
 
     ### Vacuum case
+    linewidth = 80
+    print("\n" + "=" * linewidth)
+    print("TESTING VACUUM CASE")
+    print("=" * linewidth)
     boozmn_filename = "examples/inputs/boozmn_aten_rescaled.nc"
     bri = BoozerRadialInterpolant(boozmn_filename, 3, no_K=True)
 
@@ -128,6 +130,9 @@ if __name__ == "__main__":
     test_interpolant_bfield_vacuum(field, nfp, n_metagrid_pts, 10000)
 
     ### Finite-beta case
+    print("\n" + "=" * linewidth)
+    print("TESTING FINITE-BETA CASE")
+    print("=" * linewidth)
     boozmn_filename = "examples/inputs/boozmn_ariescs.nc"
     bri = BoozerRadialInterpolant(boozmn_filename, 3, no_K=False)
 

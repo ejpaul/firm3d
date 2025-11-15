@@ -1,3 +1,6 @@
+import os
+import time
+import numpy as np
 import firm3dpp
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
@@ -13,10 +16,8 @@ from firm3d.util.constants import (
         FUSION_ALPHA_PARTICLE_ENERGY as ENERGY,
         ALPHA_PARTICLE_CHARGE as CHARGE
         )
-import os
 from firm3d.util.gpu_utils import boozer_interpolant
 
-import numpy as np
 np.random.seed(1800)
 
 
@@ -34,14 +35,14 @@ def test_derivs_vacuum(field, nfp, n_metagrid_pts, n_test_pts):
         # print("computing simsopt derivatives")
         old_derivs = np.empty((n_test_pts, 4))
         for i in range(n_test_pts):
-                old_derivs[i,:] = firm3dpp.simsopt_derivs_boozer(field, stz[i,:], MASS, CHARGE, VELOCITY, vpar_init[i])
+                old_derivs[i,:] = firm3dpp.simsopt_derivs_boozer(field, stz[i,:], MASS, CHARGE, VELOCITY, vpar_init[i], True)
 
 
         ### NEW INTERPOLANT
         srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, n_metagrid_pts, vacuum=True)
         stz = np.ascontiguousarray(stz)
 
-        psi0 =field.psi0
+        psi0 = field.psi0
 
         # print("calculating new derivatives")
         new_derivs = firm3dpp.test_derivatives_boozer_vacuum(quad_info, srange, trange, zrange, stz, vpar_init, VELOCITY, MASS, CHARGE, psi0, stz.shape[0])
@@ -79,18 +80,24 @@ def test_derivs_finitebeta(field, nfp, n_metagrid_pts, n_test_pts):
 
         # print("computing simsopt derivatives")
         old_derivs = np.empty((n_test_pts, 4))
+        start_time = time.time()
         for i in range(n_test_pts):
-                old_derivs[i,:] = firm3dpp.simsopt_derivs_boozer(field, stz[i,:], MASS, CHARGE, VELOCITY, vpar_init[i])
+                old_derivs[i,:] = firm3dpp.simsopt_derivs_boozer(field, stz[i,:], MASS, CHARGE, VELOCITY, vpar_init[i], False)
+        print(f"Time to compute simsopt derivatives: {time.time() - start_time} seconds")
 
 
         ### NEW INTERPOLANT
+        start_time = time.time()
         srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, n_metagrid_pts, vacuum=False)
+        print(f"Time to call boozer_interpolant: {time.time() - start_time} seconds")
         stz = np.ascontiguousarray(stz)
 
-        psi0 =field.psi0
+        psi0 = field.psi0
 
         # print("calculating new derivatives")
+        start_time = time.time()
         new_derivs = firm3dpp.test_derivatives_boozer(quad_info, srange, trange, zrange, stz, vpar_init, VELOCITY, MASS, CHARGE, psi0, stz.shape[0])
+        print(f"Time to compute new derivatives: {time.time() - start_time} seconds")
         new_derivs = np.reshape(new_derivs, (stz.shape[0], 4))
 
         rel_err = np.abs((old_derivs - new_derivs) / old_derivs)
@@ -258,9 +265,10 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=300)
 
     ### Vacuum case
-    print("\n" + "="*80)
+    linewidth = 80
+    print("\n" + "=" * linewidth)
     print("TESTING VACUUM CASE")
-    print("="*80)
+    print("=" * linewidth)
     boozmn_filename = "examples/inputs/boozmn_aten_rescaled.nc"
     bri = BoozerRadialInterpolant(boozmn_filename, 3, enforce_vacuum=True)
 
@@ -277,15 +285,17 @@ if __name__ == "__main__":
         ntheta_interp=n_metagrid_pts,
         nzeta_interp=n_metagrid_pts,
     ) 
-    test_derivs_vacuum(field, nfp, 15, 10000)
-    test_timestep_vacuum(field, nfp, 15, 10000)
+    test_derivs_vacuum(field, nfp, n_metagrid_pts, 10000)
+    test_timestep_vacuum(field, nfp, n_metagrid_pts, 10000)
 
     ### Finite-beta case
-    print("\n" + "="*80)
+    print("\n" + "=" * linewidth)
     print("TESTING FINITE-BETA CASE")
-    print("="*80)
+    print("=" * linewidth)
     boozmn_filename = "examples/inputs/boozmn_ariescs.nc"
-        bri = BoozerRadialInterpolant(boozmn_filename, 3, no_K=False)
+    start_time = time.time()
+    bri = BoozerRadialInterpolant(boozmn_filename, 3)
+    print(f"Time to initialize BoozerRadialInterpolant: {time.time() - start_time} seconds")
 
     nfp = bri.nfp
     degree = 3
@@ -293,6 +303,7 @@ if __name__ == "__main__":
     srange = (0, 1, n_metagrid_pts)
     thetarange = (0, np.pi, n_metagrid_pts)
     zetarange = (0, 2*np.pi/nfp, n_metagrid_pts)
+    start_time = time.time()
     field = InterpolatedBoozerField(
         bri,
         degree,
@@ -300,5 +311,6 @@ if __name__ == "__main__":
         ntheta_interp=n_metagrid_pts,
         nzeta_interp=n_metagrid_pts,
     ) 
-    test_derivs_finitebeta(field, nfp, 15, 10000)
-    test_timestep_finitebeta(field, nfp, 15, 10000)
+    print(f"Time to initialize InterpolatedBoozerField: {time.time() - start_time} seconds")
+    test_derivs_finitebeta(field, nfp, n_metagrid_pts, 10000)
+    test_timestep_finitebeta(field, nfp, n_metagrid_pts, 10000)
