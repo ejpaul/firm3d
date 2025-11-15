@@ -294,7 +294,7 @@ if __name__ == "__main__":
     print("\n" + "=" * linewidth)
     print("TESTING FINITE-BETA CASE")
     print("=" * linewidth)
-    boozmn_filename = "examples/inputs/boozmn_ariescs.nc"
+    boozmn_filename = "examples/inputs/boozmn_ariescs_low_res.nc"
     start_time = time.time()
     bri = BoozerRadialInterpolant(boozmn_filename, 3)
     print(f"Time to initialize BoozerRadialInterpolant: {time.time() - start_time} seconds")

@@ -133,7 +133,7 @@ if __name__ == "__main__":
     print("\n" + "=" * linewidth)
     print("TESTING FINITE-BETA CASE")
     print("=" * linewidth)
-    boozmn_filename = "examples/inputs/boozmn_ariescs.nc"
+    boozmn_filename = "examples/inputs/boozmn_ariescs_low_res.nc"
     bri = BoozerRadialInterpolant(boozmn_filename, 3, no_K=False)
 
     nfp = bri.nfp
