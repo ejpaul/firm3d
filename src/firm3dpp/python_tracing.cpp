@@ -32,6 +32,7 @@ extern "C" vector<double> boozer_saw_nok_gpu_tracing(py::array_t<double> quad_pt
 
 extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, std::string coordinates, int n_points);
 extern "C" py::array_t<double> test_derivatives_cartesian(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, py::array_t<double> vpar, double v_total, double m, double q,  int n_points);
+extern "C" py::array_t<double> test_derivatives_boozer_vacuum(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, py::array_t<double> vpar, double v_total, double m, double q,  double psi0, int n_points);
 extern "C" py::array_t<double> test_derivatives_boozer(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, py::array_t<double> vpar, double v_total, double m, double q,  double psi0, int n_points);
 extern "C" py::array_t<double> test_derivatives_saw(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, 
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
@@ -43,6 +44,10 @@ extern "C" py::array_t<double> test_derivatives_saw_nok(py::array_t<double> quad
 extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tol, int nparticles);
+
+extern "C" vector<double> test_timestep_boozer_vacuum(py::array_t<double> quad_pts, py::array_t<double> srange,
+        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        double tol, double psi0, int nparticles);
 
 extern "C" vector<double> test_timestep_boozer(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
@@ -249,6 +254,20 @@ void init_tracing(py::module_ &m){
         py::arg("n_points")
         );
 
+    m.def("test_derivatives_boozer_vacuum", &test_derivatives_boozer_vacuum,
+        py::arg("quad_pts"),
+        py::arg("srange"),
+        py::arg("trange"),
+        py::arg("zrange"),
+        py::arg("loc"),
+        py::arg("vpar"),
+        py::arg("v_total"),
+        py::arg("m"),
+        py::arg("q"),
+        py::arg("psi0"),
+        py::arg("n_points")
+        );
+
     m.def("test_derivatives_boozer", &test_derivatives_boozer,
         py::arg("quad_pts"),
         py::arg("srange"),
@@ -337,6 +356,21 @@ void init_tracing(py::module_ &m){
         py::arg("vtotal"),
         py::arg("vtang"),
         py::arg("tol"),
+        py::arg("nparticles")
+        );
+
+    m.def("test_timestep_boozer_vacuum", &test_timestep_boozer_vacuum,
+        py::arg("quad_pts"),
+        py::arg("srange"),
+        py::arg("trange"),
+        py::arg("zrange"),
+        py::arg("stz_init"),
+        py::arg("m"),
+        py::arg("q"),
+        py::arg("vtotal"),
+        py::arg("vtang"),
+        py::arg("tol"),
+        py::arg("psi0"),
         py::arg("nparticles")
         );
 

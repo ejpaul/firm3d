@@ -2,7 +2,7 @@ name: Ruff
 
 on:
   pull_request:
-    branches: [ main, develop, gpu_finite_beta ]
+    branches: [ main, develop ]
   push:
     branches: [ main, develop ]
 
