@@ -148,7 +148,7 @@ def test_timestep_vacuum(field, nfp, n_metagrid_pts, n_test_pts):
         srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, n_metagrid_pts, vacuum=True)
         stz = np.ascontiguousarray(stz)
         psi0 = field.psi0
-        last_time = firm3dpp.test_timestep_boozer_vacuum(
+        last_time = firm3dpp.test_timestep_boozer(
                 quad_pts=quad_info, 
                 srange=srange,
                 trange=trange,
@@ -158,9 +158,10 @@ def test_timestep_vacuum(field, nfp, n_metagrid_pts, n_test_pts):
                 q=CHARGE, 
                 vtotal=np.sqrt(2*ENERGY/MASS),  
                 vtang=vpar_init, 
-                tol=1e-9, 
+                tol=1e-9,
                 psi0=psi0, 
-                nparticles=n_test_pts)
+                nparticles=n_test_pts,
+                vacuum=True)
 
 
         last_time = np.reshape(last_time, (n_test_pts, 5))
@@ -228,9 +229,10 @@ def test_timestep_finitebeta(field, nfp, n_metagrid_pts, n_test_pts):
                 q=CHARGE, 
                 vtotal=np.sqrt(2*ENERGY/MASS),  
                 vtang=vpar_init, 
-                tol=1e-9, 
+                tol=1e-9,
                 psi0=psi0, 
-                nparticles=n_test_pts)
+                nparticles=n_test_pts,
+                vacuum=False)
 
 
         last_time = np.reshape(last_time, (n_test_pts, 5))

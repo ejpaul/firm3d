@@ -45,14 +45,10 @@ extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, 
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tol, int nparticles);
 
-extern "C" vector<double> test_timestep_boozer_vacuum(py::array_t<double> quad_pts, py::array_t<double> srange,
-        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
-        double tol, double psi0, int nparticles);
-
 extern "C" vector<double> test_timestep_boozer(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
-        double tol, double psi0, int nparticles);
-
+        double tol, double psi0, int nparticles, bool vacuum);
+        
 extern "C" vector<double> test_timestep_saw(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, 
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
         py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, py::array_t<double> time,
@@ -360,21 +356,6 @@ void init_tracing(py::module_ &m){
         py::arg("nparticles")
         );
 
-    m.def("test_timestep_boozer_vacuum", &test_timestep_boozer_vacuum,
-        py::arg("quad_pts"),
-        py::arg("srange"),
-        py::arg("trange"),
-        py::arg("zrange"),
-        py::arg("stz_init"),
-        py::arg("m"),
-        py::arg("q"),
-        py::arg("vtotal"),
-        py::arg("vtang"),
-        py::arg("tol"),
-        py::arg("psi0"),
-        py::arg("nparticles")
-        );
-
     m.def("test_timestep_boozer", &test_timestep_boozer,
         py::arg("quad_pts"),
         py::arg("srange"),
@@ -387,7 +368,8 @@ void init_tracing(py::module_ &m){
         py::arg("vtang"),
         py::arg("tol"),
         py::arg("psi0"),
-        py::arg("nparticles")
+        py::arg("nparticles"),
+        py::arg("vacuum")=false
         );
 
     m.def("test_timestep_saw", &test_timestep_saw,
