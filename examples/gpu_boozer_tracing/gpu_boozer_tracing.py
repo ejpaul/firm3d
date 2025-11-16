@@ -59,21 +59,24 @@ vpar_inits = vpar * np.random.uniform(low=-1, high=1, size=nparticles)
 
 print("tracing particles")
 
+
 # trace on GPU using vacuum approximation (gc_vac ODEs)
-last_time = firm3dpp.boozer_vacuum_gpu_tracing(
-	quad_pts=quad_info, 
+last_time = firm3dpp.boozer_gpu_tracing(
+	quad_pts=quad_info,
 	srange=srange,
 	trange=trange,
-	zrange=zrange, 
+	zrange=zrange,
 	stz_init=stz_inits,
-	m=MASS, 
-	q=CHARGE, 
-	vtotal=sqrt(2*ENERGY/MASS),  
-	vtang=vpar_inits, 
-	tmax=1e-4, 
-	tol=1e-9, 
-	psi0=field.psi0, 
-	nparticles=nparticles)
+	m=MASS,
+	q=CHARGE,
+	vtotal=sqrt(2*ENERGY/MASS),
+	vtang=vpar_inits,
+	tmax=1e-4,
+	tol=1e-9,
+	psi0=field.psi0,
+	nparticles=nparticles,
+	vacuum=True
+)
 
 last_time = np.reshape(last_time, (nparticles, 5))
 

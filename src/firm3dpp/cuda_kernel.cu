@@ -1180,40 +1180,10 @@ extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py
             return gpu_tracing<RHS::GC_CartesianVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles);
         }
 
-extern "C" vector<double> boozer_vacuum_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
-        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
-        double tmax, double tol, double psi0, int nparticles){
-
-    //  read data in from python
-    py::buffer_info stz_init_buf = stz_init.request();
-    double* stz_init_arr = static_cast<double*>(stz_init_buf.ptr);
-    
-    for(int i=0; i<nparticles; ++i){
-        double s = stz_init_arr[3*i];
-        double theta = stz_init_arr[3*i+1];
-
-        stz_init_arr[3*i] = s*cos(theta);
-        stz_init_arr[3*i+1] = s*sin(theta);
-    }
-    gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
-
-    std::vector<double> results =  gpu_tracing<RHS::GC_BoozerVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles);
-
-    for(int i=0; i<nparticles; ++i){
-        double x1 = results[5*i+1];
-        double x2 = results[5*i+2];
-
-        results[5*i+1] = sqrt(x1*x1 + x2*x2);
-        results[5*i+2] = atan2(x2, x1);
-    }
-
-    return results;
-}
-
 
 extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
-        double tmax, double tol, double psi0, int nparticles){
+        double tmax, double tol, double psi0, int nparticles, bool vacuum=false){
 
     //  read data in from python
     py::buffer_info stz_init_buf = stz_init.request();
@@ -1228,7 +1198,12 @@ extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::a
     }
     gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
 
-    std::vector<double> results =  gpu_tracing<RHS::GC_Boozer>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles);
+    std::vector<double> results;
+    if (vacuum) {
+        results = gpu_tracing<RHS::GC_BoozerVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles);
+    } else {
+        results = gpu_tracing<RHS::GC_Boozer>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles);
+    }
 
     for(int i=0; i<nparticles; ++i){
         double x1 = results[5*i+1];
