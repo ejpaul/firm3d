@@ -277,6 +277,8 @@ __device__ void calc_derivs<RHS::GC_BoozerVacuum>(double* derivs, int deriv_id, 
 
 
 // calc_derivs implementation for general guiding center Boozer tracing (with K != 0)
+// The equations in this function match those for the CPU tracing at
+// tracing.cpp::GuidingCenterBoozerRHS
 template <> 
 __device__ void calc_derivs<RHS::GC_Boozer>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
                                     int* index_i, int* index_j, int* index_k, double* x1_shape, double* x2_shape, double* x3_shape,
