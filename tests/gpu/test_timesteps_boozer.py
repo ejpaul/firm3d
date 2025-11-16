@@ -45,7 +45,7 @@ def test_derivs_vacuum(field, nfp, n_metagrid_pts, n_test_pts):
         psi0 = field.psi0
 
         # print("calculating new derivatives")
-        new_derivs = firm3dpp.test_derivatives_boozer_vacuum(quad_info, srange, trange, zrange, stz, vpar_init, VELOCITY, MASS, CHARGE, psi0, stz.shape[0])
+        new_derivs = firm3dpp.test_derivatives_boozer(quad_info, srange, trange, zrange, stz, vpar_init, VELOCITY, MASS, CHARGE, psi0, stz.shape[0], True)
         new_derivs = np.reshape(new_derivs, (stz.shape[0], 4))
 
         rel_err = np.abs((old_derivs - new_derivs) / old_derivs)
@@ -96,7 +96,7 @@ def test_derivs_finitebeta(field, nfp, n_metagrid_pts, n_test_pts):
 
         # print("calculating new derivatives")
         start_time = time.time()
-        new_derivs = firm3dpp.test_derivatives_boozer(quad_info, srange, trange, zrange, stz, vpar_init, VELOCITY, MASS, CHARGE, psi0, stz.shape[0])
+        new_derivs = firm3dpp.test_derivatives_boozer(quad_info, srange, trange, zrange, stz, vpar_init, VELOCITY, MASS, CHARGE, psi0, stz.shape[0], False)
         print(f"Time to compute new derivatives: {time.time() - start_time} seconds")
         new_derivs = np.reshape(new_derivs, (stz.shape[0], 4))
 
