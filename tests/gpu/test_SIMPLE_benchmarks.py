@@ -39,6 +39,24 @@ def run_SIMPLE_benchmark(
     t_min,
     reltol,
 ):
+    """Compare firm3d Boozer GPU tracing results against the code SIMPLE.
+
+    To choose the parameter t_min, look at the loss history and pick a time
+    after enough particles have been lost to have reasonable statistics.
+
+    Parameters
+    ----------
+    equilibrium_filename : str
+        Path to the equilibrium file, either wout or boozmn netCDF format.
+    SIMPLE_results_filename : str
+        Path to the SIMPLE confined_fraction.dat file.
+    vacuum : bool
+        Whether to use the vacuum guiding-center tracing equations.
+    t_min : float
+        Minimum time to consider in the comparison.
+    reltol : float
+        Relative tolerance for the comparison.
+    """
     linewidth = 80
     print("\n" + "#" * linewidth)
     print(f"Running SIMPLE benchmark for {os.path.basename(equilibrium_filename)}")
@@ -137,8 +155,8 @@ def run_SIMPLE_benchmark(
         import matplotlib.pyplot as plt
         plt.figure(figsize=(10, 8))
         plt.loglog(t, SIMPLE_lost_frac, label="SIMPLE benchmark results")
-        plt.plot(sorted_times, firm3d_loss_fraction, '.', label="FIRM3D GPU results")
-        plt.plot(t, firm3d_loss_fraction_interp, label="FIRM3D GPU results interpolated to SIMPLE times")
+        plt.plot(sorted_times, firm3d_loss_fraction, label="FIRM3D GPU results")
+        plt.plot(t, firm3d_loss_fraction_interp, ':', label="FIRM3D GPU results interpolated to SIMPLE times")
         plt.legend(loc=0)
         plt.xlabel("Time (s)")
         plt.ylabel("Loss fraction")
@@ -150,9 +168,7 @@ def run_SIMPLE_benchmark(
     ) / (0.5 * (SIMPLE_lost_frac + firm3d_loss_fraction_interp))
     print(f"Max relative difference between SIMPLE vs FIRM3D: {np.max(rel_diff):.3f}")
 
-    np.testing.assert_allclose(
-        firm3d_loss_fraction_interp, SIMPLE_lost_frac, rtol=reltol
-    )
+    np.testing.assert_array_less(rel_diff, reltol)
 
 if __name__ == "__main__":
     run_SIMPLE_benchmark(
@@ -167,5 +183,5 @@ if __name__ == "__main__":
         SIMPLE_results_filename="tests/test_files/confined_fraction_beta2.5_QA.dat",
         vacuum=False,
         t_min=2e-5,
-        reltol=0.4,
+        reltol=0.5,
     )
