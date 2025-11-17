@@ -3,21 +3,18 @@ import pandas as pd
 
 import os
 import logging
-import numpy as np
-import matplotlib.pyplot as plt
-import math
-import time
 from math import sqrt
-from booz_xform import Booz_xform
+import time
+import numpy as np
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
 )
 from firm3d.util.constants import (
-        ALPHA_PARTICLE_MASS as MASS,
-        FUSION_ALPHA_PARTICLE_ENERGY as ENERGY,
-        ALPHA_PARTICLE_CHARGE as CHARGE
-        )
+	ALPHA_PARTICLE_MASS as MASS,
+	FUSION_ALPHA_PARTICLE_ENERGY as ENERGY,
+	ALPHA_PARTICLE_CHARGE as CHARGE
+)
 
 
 import firm3dpp 
@@ -43,7 +40,7 @@ field = InterpolatedBoozerField(
     nzeta_interp=n_metagrid_pts,
 ) 
 
-srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, 15, vacuum=True)
+srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, n_metagrid_pts, vacuum=True)
 
 
 # set seed for consistency
