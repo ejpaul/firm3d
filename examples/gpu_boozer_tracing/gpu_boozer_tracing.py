@@ -3,21 +3,18 @@ import pandas as pd
 
 import os
 import logging
-import numpy as np
-import matplotlib.pyplot as plt
-import math
-import time
 from math import sqrt
-from booz_xform import Booz_xform
+import time
+import numpy as np
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
 )
 from firm3d.util.constants import (
-        ALPHA_PARTICLE_MASS as MASS,
-        FUSION_ALPHA_PARTICLE_ENERGY as ENERGY,
-        ALPHA_PARTICLE_CHARGE as CHARGE
-        )
+	ALPHA_PARTICLE_MASS as MASS,
+	FUSION_ALPHA_PARTICLE_ENERGY as ENERGY,
+	ALPHA_PARTICLE_CHARGE as CHARGE
+)
 
 
 import firm3dpp 
@@ -43,7 +40,7 @@ field = InterpolatedBoozerField(
     nzeta_interp=n_metagrid_pts,
 ) 
 
-srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, 15)
+srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, n_metagrid_pts, vacuum=True)
 
 
 # set seed for consistency
@@ -59,27 +56,30 @@ vpar_inits = vpar * np.random.uniform(low=-1, high=1, size=nparticles)
 
 print("tracing particles")
 
-# trace on GPU
+
+# trace on GPU using vacuum approximation (gc_vac ODEs)
 last_time = firm3dpp.boozer_gpu_tracing(
-	quad_pts=quad_info, 
+	quad_pts=quad_info,
 	srange=srange,
 	trange=trange,
-	zrange=zrange, 
+	zrange=zrange,
 	stz_init=stz_inits,
-	m=MASS, 
-	q=CHARGE, 
-	vtotal=sqrt(2*ENERGY/MASS),  
-	vtang=vpar_inits, 
-	tmax=1e-4, 
-	tol=1e-9, 
-	psi0=field.psi0, 
-	nparticles=nparticles)
+	m=MASS,
+	q=CHARGE,
+	vtotal=sqrt(2*ENERGY/MASS),
+	vtang=vpar_inits,
+	tmax=1e-4,
+	tol=1e-9,
+	psi0=field.psi0,
+	nparticles=nparticles,
+	vacuum=True
+)
 
 last_time = np.reshape(last_time, (nparticles, 5))
 
 
 particle_data = pd.DataFrame({'s_start': stz_inits[:,0], 't_start': stz_inits[:,1], 'z_start':stz_inits[:,2], 'vpar_start':vpar_inits,
-							  's_end': last_time[:,1], 't_end':last_time[:,2], 'z_end':last_time[:,3], 'vpar_end':last_time[:,3], 'last_time':last_time[:,0]})
+							  's_end': last_time[:,1], 't_end':last_time[:,2], 'z_end':last_time[:,3], 'vpar_end':last_time[:,4], 'last_time':last_time[:,0]})
 particle_data.to_csv('./examples/gpu_boozer_tracing/particle_data.csv')
 
 

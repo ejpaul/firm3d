@@ -2,7 +2,7 @@ import numpy as np
 
 __all__ = ['boozer_interpolant', 'cartesian_interpolant']
 
-def boozer_interpolant(field, nfp, n_metagrid_pts):
+def boozer_interpolant(field, nfp, n_metagrid_pts, vacuum=False):
     ### NEW INTERPOLANT
 
     srange = (0, 1.0, 3*n_metagrid_pts+1)
@@ -27,11 +27,23 @@ def boozer_interpolant(field, nfp, n_metagrid_pts):
     iota = field.iota()
     modB = field.modB()
     modB_derivs = field.modB_derivs()
-    quad_info = np.hstack((modB, modB_derivs, G, iota))
-
-    # calculate max J for sampling
-    I = field.I()
-    J = (G + iota*I)/(modB**2)
+    
+    if vacuum:
+        # Vacuum approximation: G=const, I=0, K=0
+        quad_info = np.hstack((modB, modB_derivs, G, iota))
+        # calculate max J for sampling
+        J = G / (modB**2)
+    else:
+        # Full guiding center equations: include I and K
+        I = field.I()
+        dGds = field.dGds()
+        dIds = field.dIds()
+        diotads = field.diotads()
+        K = field.K()
+        K_derivs = field.K_derivs()
+        quad_info = np.hstack((modB, modB_derivs, G, dGds, I, dIds, iota, diotads, K, K_derivs))
+        # calculate max J for sampling
+        J = (G + iota * I) / (modB**2)
 
     # reorder for device memory acceesses
     # print("reordering interpolant data from device accesses")
