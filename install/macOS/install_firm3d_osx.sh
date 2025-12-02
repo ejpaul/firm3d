@@ -19,7 +19,7 @@ echo "Enter the name for the new conda environment (e.g., firm3d):"
 read -p "Your input: " env_name
 
 echo "Creating conda environment: $env_name"
-# At 25/12/02, NERSC Conda had Python 3.11.7:
+# At 2025-12-02, NERSC Conda had Python 3.11.7:
 conda create -n "$env_name" python=3.11.7
 check_success "Failed to create conda environment $env_name"
 
