@@ -622,8 +622,9 @@ particle_guiding_center_boozer_perturbed_tracing(
     double r0 = G0/modB;
     double vnorm = vtotal; // Normalizing velocity = vtotal
     double tnorm = r0*2*M_PI/vtotal; // Normalizing time = time for one toroidal revolution
-    double dtau_max = 0.25; // can at most do quarter of a revolution per step
-    double dtau = 1e-3 * dtau_max; // initial guess for first timestep, will be adjusted by adaptive timestepper
+    double dtau, dtau_max;
+    dtau_max = 0.25; // can at most do quarter of a revolution per step
+    dtau = 1e-3 * dtau_max; // initial guess for first timestep, will be adjusted by adaptive timestepper
 
     if (dtau<0) {
         throw std::invalid_argument("dtau needs to be positive.");

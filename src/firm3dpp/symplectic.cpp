@@ -71,7 +71,6 @@ void SymplField::get_val(double pzeta) {
     H = pow(vpar,2)/2.0 + mu*modB/pow(vnorm,2);
     // ptheta is normalized by vnorm
     ptheta = (m*htheta*vpar + q*Atheta/vnorm) / (m * vnorm * tnorm);
-    // ptheta = (m*htheta*vpar + q*Atheta/vnorm) / (q * Atheta / vnorm);
 }
 
 // computes H, ptheta and vpar at z=(s, theta, zeta, pzeta) and their derivatives
@@ -95,7 +94,7 @@ void SymplField::get_derivatives(double pzeta) {
 
 double SymplField::get_dsdtau() {
     // H is normalized by m*vnorm**2 
-    // ptheta is normalized by q * Atheta / vnorm
+    // ptheta is normalized by m*vnorm**2 * tnorm
     // dsdt is normalized by tnorm
     return (-dH[1] + dptheta[3]*dH[2] - dptheta[2]*dH[3])/dptheta[0];
 }
@@ -112,16 +111,16 @@ double SymplField::get_dzedtau() {
     // H is normalized by m*vnorm**2 
     // ptheta is normalized by m*vnorm**2 * tnorm
     // htheta and hzeta have units of length -> normalized by tnorm/vnorm 
-    return (vpar - dH[0]/dptheta[0]*htheta / (vnorm * tnorm))/(hzeta / (vnorm * tnorm));
+    return (vpar * tnorm * vnorm - dH[0]/dptheta[0]*htheta) / (hzeta);
 }
 
 double SymplField::get_dvpardtau() {
     double dsdtau = get_dsdtau();
     double dthdtau = get_dthdtau();
     double dzedtau = get_dzedtau();
-    double dpzdaut = (-dH[2] + dH[0]*dptheta[2]/dptheta[0]);
+    double dpzdtau = (-dH[2] + dH[0]*dptheta[2]/dptheta[0]);
 
-    return dvpar[0] * dsdtau + dvpar[1] * dthdtau + dvpar[2] * dzedtau + dvpar[3] * dpzdaut;
+    return dvpar[0] * dsdtau + dvpar[1] * dthdtau + dvpar[2] * dzedtau + dvpar[3] * dpzdtau;
 }
 
 double cubic_hermite_interp(double t_last, double t_current, double y_last, double y_current, double dy_last, double dy_current, double t)
@@ -401,7 +400,7 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
         // htheta = G/B
         // hzeta = I/B
         z[1] = z[1] + dtau*f.dH[0]/f.dptheta[0]; // (2.9) in JPP 2020
-        z[2] = z[2] + dtau*(f.vpar - f.dH[0]/f.dptheta[0]*f.htheta)/f.hzeta; // (2.10) in JPP 2020
+        z[2] = z[2] + dtau*(f.vpar * f.tnorm * f.vnorm - f.dH[0]/f.dptheta[0]*f.htheta)/f.hzeta; // (2.10) in JPP 2020
 
         // Translate z back to normalized y coordinates
         f.eval_field(z[0], z[1], z[2]);
