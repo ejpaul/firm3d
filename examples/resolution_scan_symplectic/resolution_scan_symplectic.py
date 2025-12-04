@@ -113,14 +113,17 @@ for i in range(len(resolutions)):
                 mass=mass,
                 charge=charge,
                 Ekin=Ekin,
-                stopping_criteria=[MinToroidalFluxStoppingCriterion(0.01), MaxToroidalFluxStoppingCriterion(1.0)],
+                stopping_criteria=[
+                    MinToroidalFluxStoppingCriterion(0.01),
+                    MaxToroidalFluxStoppingCriterion(1.0),
+                ],
                 forget_exact_path=False,
                 ODE_solver="symplectic",
                 roottol=1e-14,
                 predictor_step=True,
                 dt=dts[j],
                 dt_save=dts[j],
-                axis=0
+                axis=0,
             )
 
             # Compute p_eta along trajectory and compare to initial value
