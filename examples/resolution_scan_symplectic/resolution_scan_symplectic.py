@@ -8,8 +8,8 @@ from firm3d.field.boozermagneticfield import (
     InterpolatedBoozerField,
 )
 from firm3d.field.tracing import (
-    MinToroidalFluxStoppingCriterion,
     MaxToroidalFluxStoppingCriterion,
+    MinToroidalFluxStoppingCriterion,
     trace_particles_boozer,
 )
 from firm3d.field.tracing_helpers import (
