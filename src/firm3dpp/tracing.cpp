@@ -565,7 +565,7 @@ solve(
         tau_max = res_hits.back()[0] / tnorm;
     }
     double t_max = tau_max * tnorm;
-    if (std::abs(t_max - res.back()[0]/tnorm) > 1e-15) {
+    if (std::abs(t_max - res.back()[0]) > 1e-15) {
         solver->calc_state(tau_max, y);
         y_to_stzvt(y, stzvt, axis, vnorm, tnorm);
         vector<double> final_state = {t_max};
