@@ -480,7 +480,7 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
     }
     tau = tau_max; 
     double t_final_physical = tau * f.tnorm;
-    if (t_final_physical != res.back()[0]) {
+    if (std::abs(t_final_physical - res.back()[0]) > 1e-15) {
         dense.calc_state(tau, y);
         vector<double> stzvt(4);
         y_to_stzvt(y, stzvt, 0, f.vnorm, f.tnorm);
