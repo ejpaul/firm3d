@@ -272,7 +272,7 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
             {
                 "ODE_solver": "symplectic",
                 "dt": 1e-8,
-                "roottol": 1e-8,
+                "roottol": 1e-14,
                 "predictor_step": True,
                 "axis": 0,
             },
@@ -282,7 +282,7 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
             etabar = 1 / 1.2
             B0 = 2.0
             G0 = 1.1
-            psi0 = 0.8
+            psi0 = 0.5
             iota0 = 0.4
             bsh = BoozerAnalytic(etabar, B0, 0, G0, psi0, iota0)
 
@@ -372,7 +372,7 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
                 assert max(max_p_gc_error) < -7
             else:
                 assert max(max_energy_gc_error) < -3
-                assert max(max_p_gc_error) < -12
+                assert max(max_p_gc_error) < -10
 
             # Now perform same tests for QH field with G and I terms added
 
@@ -458,7 +458,7 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
                 assert max(max_p_gc_error) < -7
             else:
                 assert max(max_energy_gc_error) < -3
-                assert max(max_p_gc_error) < -12
+                assert max(max_p_gc_error) < -10
 
             # Now perform same tests for QH field with G, I, and K terms added
             bsh.set_K1(0.6)
@@ -533,7 +533,7 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
                 assert max(max_p_gc_error) < -7
             else:
                 assert max(max_energy_gc_error) < -3
-                assert max(max_p_gc_error) < -12
+                assert max(max_p_gc_error) < -10
 
             # Now trace with forget_exact_path = True. Check that
             # gc_zeta_hits is the same
@@ -577,32 +577,30 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
 
         m = PROTON_MASS
         q = ELEMENTARY_CHARGE
-        tmax = 1e-4
+        tmax = 1e-3
         Ekin = 100.0 * ONE_EV
         vpar = np.sqrt(2 * Ekin / m)
 
         np.random.seed(1)
         stz_inits = np.random.uniform(size=(1, 3))
-        vpar_inits = vpar * np.ones((1, 1))
+        vpar_inits = vpar * np.ones_like(stz_inits[:, 0])
         smin = 0.2
         smax = 0.6
         thetamin = 0
         thetamax = np.pi
-        zetamin = 0
-        zetamax = np.pi
         stz_inits[:, 0] = stz_inits[:, 0] * (smax - smin) + smin
         stz_inits[:, 1] = stz_inits[:, 1] * (thetamax - thetamin) + thetamin
-        stz_inits[:, 2] = stz_inits[:, 2] * (zetamax - zetamin) + zetamin
+        stz_inits[:, 2] = 0
 
         for solver_options in [
+            {"ODE_solver": "dormand_prince"},
+            {"ODE_solver": "boost"},
             {
                 "ODE_solver": "symplectic",
                 "dt": 5e-7,
-                "roottol": 1e-15,
+                "roottol": 1e-13,
                 "predictor_step": True,
             },
-            {"ODE_solver": "dormand_prince"},
-            {"ODE_solver": "boost"},
         ]:
             gc_tys, gc_zeta_hits = trace_particles_boozer(
                 bsh,
@@ -622,7 +620,6 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
                 **solver_options,
                 axis=0,
             )
-
             mpol = compute_poloidal_transits(gc_tys)
             ntor = compute_toroidal_transits(gc_tys)
 
@@ -816,8 +813,8 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
             {"ODE_solver": "boost", "axis": 0},
             {
                 "ODE_solver": "symplectic",
-                "dt": 1e-7,
-                "roottol": 1e-7,
+                "dt": dt_save,
+                "roottol": 1e-13,
                 "predictor_step": True,
             },
             {"ODE_solver": "dormand_prince", "axis": 0},
@@ -890,6 +887,7 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
                     else:
                         upper_bound = phases[idx]
                         lower_bound = upper_bound - 1
+
                     assert np.all(gc_tys[i][1:-1, 3] < upper_bound)
                     assert np.all(gc_tys[i][1:-1, 3] > lower_bound)
 

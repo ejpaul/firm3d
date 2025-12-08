@@ -559,16 +559,19 @@ solve(
             }
         }
     } while(tau < tau_max && !stop);
-    // Save t = tmax
+
+    // Save t = tmax if we not already saved it 
     if (stop) {
         tau_max = res_hits.back()[0] / tnorm;
     }
     double t_max = tau_max * tnorm;
-    solver->calc_state(tau_max, y);
-    y_to_stzvt(y, stzvt, axis, vnorm, tnorm);
-    vector<double> final_state = {t_max};
-    final_state.insert(final_state.end(), stzvt.begin(), stzvt.end());
-    res.push_back(final_state);
+    if (std::abs(t_max - res.back()[0]) > 1e-15) {
+        solver->calc_state(tau_max, y);
+        y_to_stzvt(y, stzvt, axis, vnorm, tnorm);
+        vector<double> final_state = {t_max};
+        final_state.insert(final_state.end(), stzvt.begin(), stzvt.end());
+        res.push_back(final_state);
+    }
 
     return std::make_tuple(res, res_hits);
 }
@@ -619,8 +622,9 @@ particle_guiding_center_boozer_perturbed_tracing(
     double r0 = G0/modB;
     double vnorm = vtotal; // Normalizing velocity = vtotal
     double tnorm = r0*2*M_PI/vtotal; // Normalizing time = time for one toroidal revolution
-    double dtau_max = 0.25; // can at most do quarter of a revolution per step
-    double dtau = 1e-3 * dtau_max; // initial guess for first timestep, will be adjusted by adaptive timestepper
+    double dtau, dtau_max;
+    dtau_max = 0.25; // can at most do quarter of a revolution per step
+    dtau = 1e-3 * dtau_max; // initial guess for first timestep, will be adjusted by adaptive timestepper
 
     if (dtau<0) {
         throw std::invalid_argument("dtau needs to be positive.");
@@ -742,17 +746,15 @@ particle_guiding_center_boozer_tracing(
     vector<double> stzv(4);
     double vnorm, tnorm, dtau_max, dtau;
 
-    if (ode_solver != "symplectic"){
-        double G0 = std::abs(field->G()(0));
-        double r0 = G0/modB;
-        vnorm = vtotal; // Normalizing velocity = vtotal
-        tnorm = r0*2*M_PI/vtotal; // Normalizing time = time for one toroidal revolution
+    double G0 = std::abs(field->G()(0));
+    double r0 = G0/modB;
+    vnorm = vtotal; // Normalizing velocity = vtotal
+    tnorm = r0*2*M_PI/vtotal; // Normalizing time = time for one toroidal revolution
+    if (ode_solver == "symplectic") {
+        dtau = dt / tnorm;
+    } else {
         dtau_max = 0.25; // can at most do quarter of a revolution per step
         dtau = 1e-3 * dtau_max; // initial guess for first timestep, will be adjusted by adaptive timestepper
-    } else {
-        vnorm = 1;
-        tnorm = 1;
-        dtau = dt / tnorm;
     }
     if (dtau<0) {
         throw std::invalid_argument("dtau needs to be positive.");
@@ -877,9 +879,9 @@ particle_guiding_center_boozer_tracing(
 tuple<vector<vector<double>>, vector<vector<double>>>
 solve_sympl_wrapper(
     SymplField f,
-    vector<double> stzv,
-    double tmax,
-    double dt,
+    vector<double> y,
+    double tau_max,
+    double dtau,
     double roottol,
     vector<double> phases,
     vector<double> n_zetas,
@@ -891,14 +893,14 @@ solve_sympl_wrapper(
     bool vpars_stop=false,
     bool forget_exact_path=false, 
     bool predictor_step=true,
-    double dt_save=1e-6
+    double dtau_save=1e-6
 ) {  
     // Call the vector-based symplectic solver directly
     return solve_sympl_vector(
         f,
-        stzv,
-        tmax,
-        dt,
+        y,
+        tau_max,
+        dtau,
         roottol,
         phases,
         n_zetas,
@@ -910,6 +912,6 @@ solve_sympl_wrapper(
         vpars_stop, 
         forget_exact_path,
         predictor_step,
-        dt_save
+        dtau_save
     );
 }

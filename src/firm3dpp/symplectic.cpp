@@ -2,7 +2,9 @@
 #include <gsl/gsl_multiroots.h>
 #include "boozermagneticfield.h"
 #include "symplectic.h"
+#include <cassert>
 #include "tracing_helpers.h"
+
 
 using std::shared_ptr;
 using std::vector;
@@ -56,16 +58,19 @@ void SymplField::eval_field(double s, double theta, double zeta)
 
 }
 
-// compute pzeta for given vpar
+// compute pzeta normalized by m * vnorm**2 * tnorm 
 double SymplField::get_pzeta(double vpar) {
-    return vpar*hzeta*m + q*Azeta; // q*psi0
+    double pzeta = (m*hzeta*vpar + q*Azeta/vnorm) / (m * vnorm * tnorm);
+    return pzeta;
 }
 
 // computes values of H, ptheta and vpar at z=(s, theta, zeta, pzeta)
 void SymplField::get_val(double pzeta) {
-    vpar = (pzeta - q*Azeta)/(hzeta*m);
-    H = m*pow(vpar,2)/2.0 + m*mu*modB;
-    ptheta = m*htheta*vpar + q*Atheta;
+    vpar = (pzeta * m * vnorm * tnorm - q*Azeta/vnorm)/(hzeta*m);
+    // H is normalized by m * vnorm**2 
+    H = pow(vpar,2)/2.0 + mu*modB/pow(vnorm,2);
+    // ptheta is normalized by vnorm
+    ptheta = (m*htheta*vpar + q*Atheta/vnorm) / (m * vnorm * tnorm);
 }
 
 // computes H, ptheta and vpar at z=(s, theta, zeta, pzeta) and their derivatives
@@ -73,39 +78,49 @@ void SymplField::get_derivatives(double pzeta) {
     get_val(pzeta);
 
     for (int i=0; i<3; i++)
-        dvpar[i] = -q*dAzeta[i]/(hzeta*m) - (vpar/hzeta)*dhzeta[i];
+        dvpar[i] = -q*dAzeta[i]/(vnorm*hzeta*m) - (vpar/hzeta)*dhzeta[i];
 
-    dvpar[3]   = 1.0/(hzeta*m); // dvpardpzeta
-
-    for (int i=0; i<3; i++)
-        dH[i] = m*vpar*dvpar[i] + m*mu*dmodB[i];
-    dH[3]   = m*vpar*dvpar[3]; // dHdpzeta
+    dvpar[3]   = vnorm * tnorm / hzeta; // dvpardpzeta
 
     for (int i=0; i<3; i++)
-        dptheta[i] = m*dvpar[i]*htheta + m*vpar*dhtheta[i] + q*dAtheta[i];
+        dH[i] = vpar*dvpar[i] + mu*dmodB[i]/pow(vnorm,2);
+    dH[3]   = vpar*dvpar[3]; // dHdpzeta
 
-    dptheta[3] = m*htheta*dvpar[3]; // dpthetadpzeta
+    // ptheta = (m*htheta*vpar + q*Atheta/vnorm) / (m * vnorm * tnorm);
+    for (int i=0; i<3; i++)
+        dptheta[i] = (m*dvpar[i]*htheta + m*vpar*dhtheta[i] + q*dAtheta[i]/vnorm) / (m * vnorm * tnorm);
+    dptheta[3] = (m*htheta*dvpar[3]) / (m * vnorm * tnorm); // dpthetadpzeta
 }
 
-double SymplField::get_dsdt() {
+double SymplField::get_dsdtau() {
+    // H is normalized by m*vnorm**2 
+    // ptheta is normalized by m*vnorm**2 * tnorm
+    // dsdt is normalized by tnorm
     return (-dH[1] + dptheta[3]*dH[2] - dptheta[2]*dH[3])/dptheta[0];
 }
 
-double SymplField::get_dthdt() {
+double SymplField::get_dthdtau() {
+    // H is normalized by m*vnorm**2 
+    // ptheta is normalized by m*vnorm**2 * tnorm
+    // dthdt is normalized by tnorm
     return dH[0]/dptheta[0];
 }
 
-double SymplField::get_dzedt() {
-    return (vpar - dH[0]/dptheta[0]*htheta)/hzeta;
+double SymplField::get_dzedtau() {
+    // vpar is normalized by vnorm
+    // H is normalized by m*vnorm**2 
+    // ptheta is normalized by m*vnorm**2 * tnorm
+    // htheta and hzeta have units of length -> normalized by tnorm/vnorm 
+    return (vpar * tnorm * vnorm - dH[0]/dptheta[0]*htheta) / (hzeta);
 }
 
-double SymplField::get_dvpardt() {
-    double dsdt = (-dH[1] + dptheta[3]*dH[2] - dptheta[2]*dH[3])/dptheta[0];
-    double dthdt = dH[0]/dptheta[0];
-    double dzdt = (vpar - dH[0]/dptheta[0]*htheta)/hzeta;
-    double dpzdt = (-dH[2] + dH[0]*dptheta[2]/dptheta[0]);
+double SymplField::get_dvpardtau() {
+    double dsdtau = get_dsdtau();
+    double dthdtau = get_dthdtau();
+    double dzedtau = get_dzedtau();
+    double dpzdtau = (-dH[2] + dH[0]*dptheta[2]/dptheta[0]);
 
-    return dvpar[0] * dsdt + dvpar[1] * dthdt + dvpar[2] * dzdt + dvpar[3] * dpzdt;
+    return dvpar[0] * dsdtau + dvpar[1] * dthdtau + dvpar[2] * dzedtau + dvpar[3] * dpzdtau;
 }
 
 double cubic_hermite_interp(double t_last, double t_current, double y_last, double y_current, double dy_last, double dy_current, double t)
@@ -122,21 +137,21 @@ class sympl_dense_vector {
 public:
     // for interpolation
     array<double, 2> bracket_s = {};
-    array<double, 2> bracket_dsdt = {};
+    array<double, 2> bracket_dsdtau = {};
     array<double, 2> bracket_theta = {};
-    array<double, 2> bracket_dthdt = {};
+    array<double, 2> bracket_dthdtau = {};
     array<double, 2> bracket_zeta = {};
-    array<double, 2> bracket_dzedt = {};
+    array<double, 2> bracket_dzedtau = {};
     array<double, 2> bracket_vpar = {};
-    array<double, 2> bracket_dvpardt = {};
+    array<double, 2> bracket_dvpardtau = {};
 
     // bounds of interval for interpolation between time steps
-    double tlast = 0.0;
-    double tcurrent = 0.0;
+    double tau_last = 0.0;
+    double tau_current = 0.0;
 
-    void update(double t, double dt, vector<double> y, SymplField f) {
-        tlast = t;
-        tcurrent = t + dt;
+    void update(double tau, double dtau, vector<double> y, SymplField f) {
+        tau_last = tau;
+        tau_current = tau + dtau;
         
         // Store the state and derivatives at the endpoints
         bracket_s[0] = y[0];
@@ -144,50 +159,54 @@ public:
         bracket_zeta[0] = y[2];
         bracket_vpar[0] = y[3];
         
-        // Calculate derivatives at t
+        // Calculate derivatives at tau
+        // Convert to physical coordinates only for field evaluation
         f.eval_field(y[0], y[1], y[2]);
         f.get_derivatives(f.get_pzeta(y[3]));
-        bracket_dsdt[0] = -f.dH[1] + f.dptheta[3]*f.dH[2] - f.dptheta[2]*f.dH[3];
-        bracket_dthdt[0] = f.dH[0]/f.dptheta[0];
-        bracket_dzedt[0] = (f.vpar - f.dH[0]/f.dptheta[0]*f.htheta)/f.hzeta;
-        bracket_dvpardt[0] = -f.dH[2] + f.dH[0]*f.dptheta[2]/f.dptheta[0];
+        vector<double> ydot(4);
+        bracket_dsdtau[0] = f.get_dsdtau();
+        bracket_dthdtau[0] = f.get_dthdtau();
+        bracket_dzedtau[0] = f.get_dzedtau();
+        bracket_dvpardtau[0] = f.get_dvpardtau();
         
-        // Calculate state at t+dt (this is approximate)
-        double dt_small = dt * 0.1;
+        // Calculate state at tau+dtau (this is approximate)
+        double dtau_small = dtau * 0.1;
         vector<double> y_next = y;
-        y_next[0] += dt_small * bracket_dsdt[0];
-        y_next[1] += dt_small * bracket_dthdt[0];
-        y_next[2] += dt_small * bracket_dzedt[0];
-        y_next[3] += dt_small * bracket_dvpardt[0];
+        y_next[0] += dtau_small * bracket_dsdtau[0];
+        y_next[1] += dtau_small * bracket_dthdtau[0];
+        y_next[2] += dtau_small * bracket_dzedtau[0];
+        y_next[3] += dtau_small * bracket_dvpardtau[0];
         
         bracket_s[1] = y_next[0];
         bracket_theta[1] = y_next[1];
         bracket_zeta[1] = y_next[2];
         bracket_vpar[1] = y_next[3];
         
-        // Calculate derivatives at t+dt (approximate)
+        // Calculate derivatives at tau+dtau (approximate)
+        // Convert to physical coordinates only for field evaluation
         f.eval_field(y_next[0], y_next[1], y_next[2]);
         f.get_derivatives(f.get_pzeta(y_next[3]));
-        bracket_dsdt[1] = -f.dH[1] + f.dptheta[3]*f.dH[2] - f.dptheta[2]*f.dH[3];
-        bracket_dthdt[1] = f.dH[0]/f.dptheta[0];
-        bracket_dzedt[1] = (f.vpar - f.dH[0]/f.dptheta[0]*f.htheta)/f.hzeta;
-        bracket_dvpardt[1] = -f.dH[2] + f.dH[0]*f.dptheta[2]/f.dptheta[0];
+        vector<double> ydot_next(4);
+        bracket_dsdtau[1] = f.get_dsdtau();
+        bracket_dthdtau[1] = f.get_dthdtau();
+        bracket_dzedtau[1] = f.get_dzedtau();
+        bracket_dvpardtau[1] = f.get_dvpardtau();
     }
     
-    void calc_state(double eval_t, vector<double> &temp) {
-        assert (tlast <= eval_t && eval_t <= tcurrent);
+    void calc_state(double eval_tau, vector<double> &temp) {
+        assert (tau_last <= eval_tau && eval_tau <= tau_current);
         temp.resize(4);
-        temp[0] = cubic_hermite_interp(tlast, tcurrent, bracket_s[0], bracket_s[1], bracket_dsdt[0], bracket_dsdt[1], eval_t);
-        temp[1] = cubic_hermite_interp(tlast, tcurrent, bracket_theta[0], bracket_theta[1], bracket_dthdt[0], bracket_dthdt[1], eval_t);
-        temp[2] = cubic_hermite_interp(tlast, tcurrent, bracket_zeta[0], bracket_zeta[1], bracket_dzedt[0], bracket_dzedt[1], eval_t);
-        temp[3] = cubic_hermite_interp(tlast, tcurrent, bracket_vpar[0], bracket_vpar[1], bracket_dvpardt[0], bracket_dvpardt[1], eval_t);
+        temp[0] = cubic_hermite_interp(tau_last, tau_current, bracket_s[0], bracket_s[1], bracket_dsdtau[0], bracket_dsdtau[1], eval_tau);
+        temp[1] = cubic_hermite_interp(tau_last, tau_current, bracket_theta[0], bracket_theta[1], bracket_dthdtau[0], bracket_dthdtau[1], eval_tau);
+        temp[2] = cubic_hermite_interp(tau_last, tau_current, bracket_zeta[0], bracket_zeta[1], bracket_dzedtau[0], bracket_dzedtau[1], eval_tau);
+        temp[3] = cubic_hermite_interp(tau_last, tau_current, bracket_vpar[0], bracket_vpar[1], bracket_dvpardtau[0], bracket_dvpardtau[1], eval_tau);
     }
 };
 
 class f_quasi_params_vector{
 public:
     double ptheta_old;
-    double dt;
+    double dtau;
     vector<double> z;
     SymplField f;
 };
@@ -196,7 +215,7 @@ int f_euler_quasi_func_vector(const gsl_vector* x, void* p, gsl_vector* f)
 {
     struct f_quasi_params_vector * params = (struct f_quasi_params_vector *)p;
     const double ptheta_old = (params->ptheta_old);
-    const double dt = (params->dt);
+    const double dtau = (params->dtau);
     auto z = (params->z);
     SymplField field = (params->f);
 
@@ -206,10 +225,12 @@ int f_euler_quasi_func_vector(const gsl_vector* x, void* p, gsl_vector* f)
     field.eval_field(x0, z[1], z[2]);
     field.get_derivatives(x1);
 
+    // Apply normalization factor to make order unity 
+    double norm = field.q * field.Atheta / (field.m * field.vnorm * field.vnorm * field.tnorm);
     const double f0 = (field.dptheta[0]*(field.ptheta - ptheta_old)
-        + dt*(field.dH[1]*field.dptheta[0] - field.dH[0]*field.dptheta[1]))/pow(field.field->psi0 * field.q, 2); // corresponds with (2.6) in JPP 2020
+        + dtau*(field.dH[1]*field.dptheta[0] - field.dH[0]*field.dptheta[1])) / (norm * norm); // corresponds with (2.6) in JPP 2020
     const double f1  = (field.dptheta[0]*(x1 - z[3])
-        + dt*(field.dH[2]*field.dptheta[0] - field.dH[0]*field.dptheta[2]))/pow(field.field->psi0 * field.q, 2); // corresponds with (2.7) in JPP 2020
+        + dtau*(field.dH[2]*field.dptheta[0] - field.dH[0]*field.dptheta[2])) / (norm * norm); // corresponds with (2.7) in JPP 2020
 
     gsl_vector_set(f, 0, f0);
     gsl_vector_set(f, 1, f1);
@@ -237,10 +258,10 @@ void sympl_dense::update(double t, double dt, array<double, 4>  y, SymplField f)
     bracket_zeta[1] = y[2];
     bracket_vpar[1] = y[3];
 
-    bracket_dsdt[1] = f.get_dsdt();
-    bracket_dthdt[1] = f.get_dthdt();
-    bracket_dzedt[1] = f.get_dzedt();
-    bracket_dvpardt[1] = f.get_dvpardt();
+    bracket_dsdt[1] = f.get_dsdtau();
+    bracket_dthdt[1] = f.get_dthdtau();
+    bracket_dzedt[1] = f.get_dzedtau();
+    bracket_dvpardt[1] = f.get_dvpardtau();
 }
 
 // Perform hermite interpolation between timesteps for computing stopping criteria
@@ -256,9 +277,9 @@ void sympl_dense::calc_state(double eval_t, State &temp) {
 //         orbit_symplectic_quasi.f90:timestep_euler1_quasi
 tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
     SymplField f,
-    vector<double> y,
-    double tmax,
-    double dt,
+    vector<double> y, 
+    double tau_max,
+    double dtau,
     double roottol,
     vector<double> phases,
     vector<double> n_zetas,
@@ -270,7 +291,7 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
     bool vpars_stop,
     bool forget_exact_path,
     bool predictor_step,
-    double dt_save
+    double dtau_save
 )
 {
     double abstol = 0;
@@ -280,13 +301,14 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
 
     vector<vector<double>> res = {};
     vector<vector<double>> res_hits = {};
-    double t = 0.0;
+    double tau = 0.0;
     bool stop = false;
 
     vector<double> z(4); // s, theta, zeta, pzeta
     vector<double> temp(4);
-    // y = [s, theta, zeta, vpar]
 
+    y[3] /= f.vnorm;
+    // y = [y1, y2, y3, vpar]
     // Translate y to z
     // y = [s, theta, zeta, vpar]
     // z = [s, theta, zeta, pzeta]
@@ -298,19 +320,18 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
     z[3] = f.get_pzeta(y[3]);
     f.get_derivatives(z[3]);
     double ptheta_old = f.ptheta;
-
-    double t_last = t;
+    double tau_last = tau;
 
     // for interpolation
     sympl_dense_vector dense;
-    dense.update(t, dt, y, f);
+    dense.update(tau, dtau, y, f);
 
     // set up root solvers
     const gsl_multiroot_fsolver_type * Newt = gsl_multiroot_fsolver_hybrids;
     gsl_multiroot_fsolver *s_euler;
     s_euler = gsl_multiroot_fsolver_alloc(Newt, 2);
 
-    struct f_quasi_params_vector params = {ptheta_old, dt, z, f};
+    struct f_quasi_params_vector params = {ptheta_old, dtau, z, f};
     gsl_multiroot_function F_euler_quasi = {&f_euler_quasi_func_vector, 2, &params};
     gsl_vector* xvec_quasi = gsl_vector_alloc(2);
 
@@ -321,16 +342,19 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
 
     do {
         // Save initial point
-        if (t==0){
-            vector<double> save_point = {t};
-            save_point.insert(save_point.end(), y.begin(), y.end());
+        if (tau==0){
+            double t_save = tau * f.tnorm;
+            vector<double> stzvt(4);
+            y_to_stzvt(y, stzvt, 0, f.vnorm, f.tnorm);
+            vector<double> save_point = {t_save};
+            save_point.insert(save_point.end(), stzvt.begin(), stzvt.end());
             res.push_back(save_point);
         }
 
         params.ptheta_old = ptheta_old;
         params.z = z;
-        params.dt = dt;
-        gsl_vector_set(xvec_quasi, 0,s_guess);
+        params.dtau = dtau;
+        gsl_vector_set(xvec_quasi, 0, s_guess);
         gsl_vector_set(xvec_quasi, 1, pzeta_guess);
         gsl_multiroot_fsolver_set(s_euler, &F_euler_quasi, xvec_quasi);
 
@@ -343,13 +367,7 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
             root_iter++;
 
             status = gsl_multiroot_fsolver_iterate(s_euler);
-            //  printf("iter = %3u x = % .10e % .10e "
-            //            "f(x) = % .10e % .10e\n",
-            //            iter,
-            //            gsl_vector_get (s_euler->x, 0),
-            //            gsl_vector_get (s_euler->x, 1),
-            //            gsl_vector_get (s_euler->f, 0),
-            //            gsl_vector_get (s_euler->f, 1));
+
 
             if (status) {  /* check if solver is stuck */
                 printf("iter = %3u x = % .10e % .10e "
@@ -364,7 +382,7 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
             }
             status = gsl_multiroot_test_residual(s_euler->f, roottol); //tolerance --> roottol ~ 1e-15
           }
-        while (status == GSL_CONTINUE && root_iter < 20);
+        while (status == GSL_CONTINUE && root_iter < 50);
         iter++;
 
         z[0] = gsl_vector_get(s_euler->x, 0);  // s
@@ -381,13 +399,10 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
         // dptheta[0] = dptheta/dr
         // htheta = G/B
         // hzeta = I/B
-        z[1] = z[1] + dt*f.dH[0]/f.dptheta[0]; // (2.9) in JPP 2020
-        z[2] = z[2] + dt*(f.vpar - f.dH[0]/f.dptheta[0]*f.htheta)/f.hzeta; // (2.10) in JPP 2020
+        z[1] = z[1] + dtau*f.dH[0]/f.dptheta[0]; // (2.9) in JPP 2020
+        z[2] = z[2] + dtau*(f.vpar * f.tnorm * f.vnorm - f.dH[0]/f.dptheta[0]*f.htheta)/f.hzeta; // (2.10) in JPP 2020
 
-        // Translate z back to y
-        // y = [s, theta, zeta, vpar]
-        // z = [s, theta, zeta, pzeta]
-        // pzeta = m*vpar*hzeta + q*Azeta
+        // Translate z back to normalized y coordinates
         f.eval_field(z[0], z[1], z[2]);
         f.get_derivatives(z[3]);
         y[0] = z[0];
@@ -396,28 +411,28 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
         y[3] = f.vpar;
         ptheta_old = f.ptheta;
 
-        dense.update(t, dt, y, f); // tlast = t; tcurrent = t+dt;
+        dense.update(tau, dtau, y, f); // tau_last = tau; tau_current = tau+dtau;
 
         if (predictor_step) {
-            s_guess = z[0] + dt*(-f.dH[1] + f.dptheta[3]*f.dH[2] - f.dptheta[2]*f.dH[3])/f.dptheta[0];
-            pzeta_guess = z[3] + dt*(- f.dH[2] + f.dH[0]*f.dptheta[2]/f.dptheta[0]); // corresponds with (2.7s) in JPP 2020
+            s_guess = z[0] + dtau*(-f.dH[1] + f.dptheta[3]*f.dH[2] - f.dptheta[2]*f.dH[3])/f.dptheta[0];
+            pzeta_guess = z[3] + dtau*(- f.dH[2] + f.dH[0]*f.dptheta[2]/f.dptheta[0]); // corresponds with (2.7s) in JPP 2020
         } else {
             s_guess = z[0];
             pzeta_guess = z[3];
         }
 
-        t += dt;
+        tau += dtau;
 
-        double t_current = t;
+        double tau_current = tau;
 
         stop = check_stopping_criteria(
             4,
             iter,
             res_hits,
             dense,
-            t_last,
-            t_current,
-            dt,
+            tau_last,
+            tau_current,
+            dtau,
             abstol,
             phases,
             n_zetas,
@@ -434,38 +449,45 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
 
         // Save path if forget_exact_path = False
         if (forget_exact_path == 0) {
-            double t_last_save;
+            double tau_last_save;
             // If we have hit a stopping criterion, we still want to save the trajectory up to that point
             if (stop) {
-                t_last_save = res_hits.back()[0];
+                tau_last_save = res_hits.back()[0] / f.tnorm;
             } else {
-                t_last_save = t_current;
+                tau_last_save = tau_current;
             }
-            // This will give the first save point after t_last
-            double t_save_last = dt_save * std::ceil(t_last_save/dt_save);
-
-            for (double t_save = t_save_last; t_save <= t_last_save; t_save += dt_save) {
-                if (t_save != 0) { // t = 0 is already saved.
-                    dense.calc_state(t_save, temp);
-                    vector<double> save_point = {t_save};
-                    save_point.insert(save_point.end(), temp.begin(), temp.end());
+            // This will give the first save point after tau_last
+            double tau_save_last = dtau_save * std::ceil(tau_last/dtau_save);
+            for (double tau_save = tau_save_last; tau_save <= tau_last_save; tau_save += dtau_save) {
+                if (tau_save != 0) { // tau = 0 is already saved.
+                    dense.calc_state(tau_save, temp);
+                    double t_save_physical = tau_save * f.tnorm;
+                    vector<double> stzvt(4);
+                    y_to_stzvt(temp, stzvt, 0, f.vnorm, f.tnorm);
+                    vector<double> save_point = {t_save_physical};
+                    save_point.insert(save_point.end(), stzvt.begin(), stzvt.end());
                     res.push_back(save_point);
                 }
             }
         }
 
-        t_last = t_current;
-    } while(t < tmax && !stop);
-    // Save t = tmax
-    if(!stop){
-        t = tmax;
-    } else {
-        t = res_hits.back()[0];
+        tau_last = tau_current;
+    } while(tau < tau_max && !stop);
+
+    // Save tau = tau_max if we have not already saved it 
+    if (stop) {
+        tau_max = res_hits.back()[0] / f.tnorm;
     }
-    dense.calc_state(t, y);
-    vector<double> final_point = {t};
-    final_point.insert(final_point.end(), y.begin(), y.end());
-    res.push_back(final_point);
+    tau = tau_max; 
+    double t_final_physical = tau * f.tnorm;
+    if (std::abs(t_final_physical - res.back()[0]) > 1e-15) {
+        dense.calc_state(tau, y);
+        vector<double> stzvt(4);
+        y_to_stzvt(y, stzvt, 0, f.vnorm, f.tnorm);
+        vector<double> final_point = {t_final_physical};
+        final_point.insert(final_point.end(), stzvt.begin(), stzvt.end());
+        res.push_back(final_point);
+    }
 
     gsl_multiroot_fsolver_free(s_euler);
     gsl_vector_free(xvec_quasi);

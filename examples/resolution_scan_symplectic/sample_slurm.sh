@@ -7,4 +7,4 @@
 
 module load python cray-hdf5/1.14.3.1 cray-netcdf/4.9.0.13
 conda activate firm3d # Change to the name of your environment
-srun -n 64 -c 1 python -u resolution_scan.py 
+srun -n 32 -c 1 python -u resolution_scan_symplectic.py 
