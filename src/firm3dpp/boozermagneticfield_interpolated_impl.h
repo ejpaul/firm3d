@@ -4,20 +4,30 @@
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <stdexcept>
+#include <cstdint>
 
-// Implementation of save/load methods for InterpolatedBoozerField
-// These methods enable efficient serialization of interpolated field data to avoid recomputation
+// ============================================================================
+// SAVE/LOAD IMPLEMENTATION FOR InterpolatedBoozerField
+// 
+// PURPOSE: Enable serialization of interpolated magnetic field data to JSON,
+//          avoiding the 10+ minute computation time for large grids.
+// 
+// KEY METHODS:
+// - get_all_interpolant_data(): Extracts all 31 interpolant arrays for saving
+// - set_all_interpolant_data(): Reconstructs interpolants from saved data
+// - get/set_status_flags(): Track which quantities are computed
+// - to_json(): Main entry point for saving field to JSON file
+// 
+// OPTIMIZATION: Mapping arrays (reduced_to_full_map, etc.) are saved only once
+//               under "shared_maps" key, reducing JSON size by ~95%.
+// ============================================================================
 
 std::map<std::string, std::map<std::string, std::vector<double>>> InterpolatedBoozerField::get_all_interpolant_data() const {
     std::map<std::string, std::map<std::string, std::vector<double>>> all_data;
     
-    // OPTIMIZATION: Save mapping arrays only ONCE (they're identical for all quantities)
-    // The mapping arrays (reduced_to_full_map, full_to_reduced_map, skip_cell) are ~50MB each
-    // Saving them 30+ times would waste ~1.5GB! Instead, save once as "shared_maps"
+    // Save mapping arrays only once (they're identical for all quantities)
     bool saved_shared_maps = false;
     
-    // Helper lambda to save quantity data without redundant mapping arrays
-    // This extracts shared maps from the first quantity, then strips them from all quantities
     auto save_quantity = [&](bool status, auto& interp, const std::string& name) {
         if (status) {
             auto data = interp->get_interpolant_data();
@@ -28,7 +38,6 @@ std::map<std::string, std::map<std::string, std::vector<double>>> InterpolatedBo
                 all_data["shared_maps"]["skip_cell"] = data["skip_cell"];
                 saved_shared_maps = true;
             }
-            // Remove redundant mapping arrays from this quantity (already saved in shared_maps)
             data.erase("reduced_to_full_map");
             data.erase("full_to_reduced_map");
             data.erase("skip_cell");
@@ -36,8 +45,7 @@ std::map<std::string, std::map<std::string, std::vector<double>>> InterpolatedBo
         }
     };
     
-    // Save all 31 quantities using the helper (order matches header declaration)
-    // This removes ~1.5GB of redundant mapping array data from the JSON!
+    // Save all quantities
     save_quantity(status_modB, interp_modB, "modB");
     save_quantity(status_dmodBdtheta, interp_dmodBdtheta, "dmodBdtheta");
     save_quantity(status_dmodBdzeta, interp_dmodBdzeta, "dmodBdzeta");
@@ -74,23 +82,14 @@ std::map<std::string, std::map<std::string, std::vector<double>>> InterpolatedBo
 }
 
 void InterpolatedBoozerField::set_all_interpolant_data(const std::map<std::string, std::map<std::string, std::vector<double>>>& data) {
-    // STRATEGY: We create interpolant objects using field's RangeTriplets (not saved values)
-    // This ensures consistency with normal operation and avoids floating-point rounding errors
-    // All interpolants share the same grid structure defined by s_range, theta_range, zeta_range
-    
-    // OPTIMIZATION: Load shared mapping arrays once and inject into all quantities
-    // These mapping arrays are ~50MB each and are identical for all quantities
+    // Load shared mapping arrays once and inject into all quantities
     std::map<std::string, std::vector<double>> shared_maps;
     auto shared_it = data.find("shared_maps");
     if (shared_it != data.end()) {
         shared_maps = shared_it->second;
     }
     
-    // VALUE_SIZE LOOKUP TABLE (only 5 quantities differ from the default of 1)
-    // Most quantities are scalars (value_size=1), so we use a map to store only exceptions
-    // modB: dynamically determined from saved data (usually 1)
-    // K_derivs: 2 (dK/dθ, dK/dζ)
-    // R_derivs, Z_derivs, nu_derivs, modB_derivs: 3 (ds, dθ, dζ)
+    // Value sizes: most quantities are 1, exceptions listed here
     std::map<std::string, int> value_size_map = {
         {"K_derivs", 2},
         {"R_derivs", 3},
@@ -99,8 +98,7 @@ void InterpolatedBoozerField::set_all_interpolant_data(const std::map<std::strin
         {"modB_derivs", 3}
     };
     
-    // MAPPING TABLE: Quantity name → interpolant pointer reference
-    // This avoids the massive if-else chain and makes the code maintainable
+    // Map quantity names to interpolant pointers
     std::map<std::string, std::shared_ptr<RegularGridInterpolant3D<Array2>>*> interp_map = {
         {"modB", &interp_modB}, {"dmodBdtheta", &interp_dmodBdtheta}, {"dmodBdzeta", &interp_dmodBdzeta},
         {"dmodBds", &interp_dmodBds}, {"modB_derivs", &interp_modB_derivs}, {"G", &interp_G}, {"I", &interp_I},
@@ -113,24 +111,18 @@ void InterpolatedBoozerField::set_all_interpolant_data(const std::map<std::strin
         {"nu_derivs", &interp_nu_derivs}, {"R_derivs", &interp_R_derivs}, {"Z_derivs", &interp_Z_derivs}
     };
     
-    // LOAD EACH QUANTITY
     for (const auto& pair : data) {
         const std::string& quantity = pair.first;
         
         // Skip the shared_maps entry itself
         if (quantity == "shared_maps") continue;
         
-        // Check if this is a known quantity
         auto interp_it = interp_map.find(quantity);
-        if (interp_it == interp_map.end()) {
-            // Unknown quantity - skip it (could be future extension or typo in JSON)
-            continue;
-        }
+        if (interp_it == interp_map.end()) continue;
         
-        // Make a copy and inject shared maps into this quantity's data
+        // Inject shared maps into this quantity's data
         std::map<std::string, std::vector<double>> interpolant_data = pair.second;
         if (!shared_maps.empty()) {
-            // Inject shared mapping arrays if they're not already in this quantity's data
             if (interpolant_data.find("reduced_to_full_map") == interpolant_data.end()) {
                 interpolant_data["reduced_to_full_map"] = shared_maps["reduced_to_full_map"];
             }
@@ -142,43 +134,30 @@ void InterpolatedBoozerField::set_all_interpolant_data(const std::map<std::strin
             }
         }
         
-        // Get the interpolant pointer reference
         std::shared_ptr<RegularGridInterpolant3D<Array2>>* interp_ptr = interp_it->second;
         
-        // Create interpolant object if it doesn't exist
         if (!(*interp_ptr)) {
-            // Determine value_size: check lookup table first, then default to 1
-            int value_size = 1; // Default for most quantities
+            int value_size = 1;
             auto vs_it = value_size_map.find(quantity);
             if (vs_it != value_size_map.end()) {
                 value_size = vs_it->second;
             }
-            
-            // Special case: modB can have dynamic value_size (though usually 1)
             if (quantity == "modB" && interpolant_data.find("value_size") != interpolant_data.end()) {
                 value_size = static_cast<int>(interpolant_data.at("value_size")[0]);
             }
-            
-            // Create the interpolant using field's grid parameters for consistency
             *interp_ptr = std::make_shared<RegularGridInterpolant3D<Array2>>(
                 rule, s_range, theta_range, zeta_range, value_size, extrapolate
             );
         }
-        
-        // Load the data into the interpolant
         (*interp_ptr)->set_interpolant_data(interpolant_data);
     }
     
-    // CRITICAL: Reset load mode to allow normal field evaluation
-    // During loading, load_mode=true prevents expensive computation
-    // Now that data is loaded, set load_mode=false to enable normal operation
+    // Reset load mode to allow normal field evaluation
     is_load_mode_constructor = false;
     RegularGridInterpolant3D<Array2>::set_load_mode(false);
 }
 
 std::map<std::string, bool> InterpolatedBoozerField::get_status_flags() const {
-    // Return all status flags indicating which interpolants have been computed
-    // These flags are used to restore the field state after loading
     std::map<std::string, bool> flags;
     flags["status_modB"] = status_modB;
     flags["status_dmodBdtheta"] = status_dmodBdtheta;
@@ -215,8 +194,6 @@ std::map<std::string, bool> InterpolatedBoozerField::get_status_flags() const {
 }
 
 void InterpolatedBoozerField::set_status_flags(const std::map<std::string, bool>& flags) {
-    // Restore status flags after loading interpolant data
-    // This ensures the field knows which quantities are available for evaluation
     if (flags.find("status_modB") != flags.end()) status_modB = flags.at("status_modB");
     if (flags.find("status_dmodBdtheta") != flags.end()) status_dmodBdtheta = flags.at("status_dmodBdtheta");
     if (flags.find("status_dmodBdzeta") != flags.end()) status_dmodBdzeta = flags.at("status_dmodBdzeta");
@@ -250,72 +227,51 @@ void InterpolatedBoozerField::set_status_flags(const std::map<std::string, bool>
     if (flags.find("status_modB_derivs") != flags.end()) status_modB_derivs = flags.at("status_modB_derivs");
 }
 
-// Implementation of to_json method
 void InterpolatedBoozerField::to_json(const std::string& json_file_path) const {
-    // Get the actual interpolated data from C++ objects (only already computed ones)
     auto interpolant_data = get_all_interpolant_data();
     auto status_flags = get_status_flags();
     
-    // Find which quantities are actually computed
-    std::vector<std::string> computed_quantities;
-    for (const auto& [quantity, data] : interpolant_data) {
-        if (!data.empty()) {
-            computed_quantities.push_back(quantity);
-        }
-    }
+    // Extract tuple elements once to avoid repeated std::get calls
+    int ns_interp = std::get<2>(this->s_range);
+    int ntheta_interp = std::get<2>(this->theta_range);
+    int nzeta_interp = std::get<2>(this->zeta_range);
     
-    // Get the interpolation grid information
-    auto s_range = this->s_range;
-    auto theta_range = this->theta_range;  
-    auto zeta_range = this->zeta_range;
-    auto rule = this->rule;
-    
-    // Save grid and rule information
     nlohmann::json grid_info = {
-        {"s_range", {std::get<0>(s_range), std::get<1>(s_range), std::get<2>(s_range)}},
-        {"theta_range", {std::get<0>(theta_range), std::get<1>(theta_range), std::get<2>(theta_range)}}, 
-        {"zeta_range", {std::get<0>(zeta_range), std::get<1>(zeta_range), std::get<2>(zeta_range)}},
-        {"rule_degree", rule.degree},
-        {"rule_nodes", rule.nodes},
-        {"rule_scalings", rule.scalings}
+        {"s_range", {std::get<0>(this->s_range), std::get<1>(this->s_range), ns_interp}},
+        {"theta_range", {std::get<0>(this->theta_range), std::get<1>(this->theta_range), ntheta_interp}}, 
+        {"zeta_range", {std::get<0>(this->zeta_range), std::get<1>(this->zeta_range), nzeta_interp}},
+        {"rule_degree", this->rule.degree},
+        {"rule_nodes", this->rule.nodes},
+        {"rule_scalings", this->rule.scalings}
     };
     
-    // Convert interpolant data to JSON-serializable format
-    nlohmann::json json_interpolant_data;
-    for (const auto& [quantity, data] : interpolant_data) {
-        nlohmann::json json_data;
-        for (const auto& [key, value] : data) {
-            json_data[key] = value;
-        }
-        json_interpolant_data[quantity] = json_data;
-    }
+    // nlohmann::json can directly convert nested maps
+    nlohmann::json json_interpolant_data = interpolant_data;
     
-    // Save configuration, interpolant data, and status
     nlohmann::json save_dict = {
         {"config", {
-            {"degree", rule.degree},
-            {"ns_interp", std::get<2>(s_range)},     // ✅ Actual grid size from RangeTriplet
-            {"ntheta_interp", std::get<2>(theta_range)}, // ✅ Actual grid size from RangeTriplet
-            {"nzeta_interp", std::get<2>(zeta_range)},   // ✅ Actual grid size from RangeTriplet
+            {"degree", this->rule.degree},
+            {"ns_interp", ns_interp},
+            {"ntheta_interp", ntheta_interp},
+            {"nzeta_interp", nzeta_interp},
             {"extrapolate", extrapolate},
             {"nfp", nfp},
             {"stellsym", stellsym},
             {"field_type", field_type},
-            {"psi0", psi0}  // Save the psi0 value from the original field
+            {"psi0", psi0}
         }},
         {"grid_info", grid_info},
         {"interpolant_data", json_interpolant_data},
-        {"status_flags", status_flags},
-        {"computed_quantities", computed_quantities}
+        {"status_flags", status_flags}
     };
     
-    // Write to file
-    std::ofstream file(json_file_path);
-      if (!file.is_open()) {
-          throw std::runtime_error("Could not open JSON file for writing: " + json_file_path);
-      }
-      // PERFORMANCE: Use compact format (no indentation) for ~2x faster save/load
-      // Keep full precision (default) to maintain numerical accuracy
-      file << save_dict.dump();
-      file.close();
+    std::ofstream file(json_file_path, std::ios::binary);
+    if (!file.is_open()) {
+        throw std::runtime_error("Could not open file for writing: " + json_file_path);
+    }
+    
+    // Use MessagePack binary format for faster save/load vs text JSON
+    std::vector<std::uint8_t> msgpack = nlohmann::json::to_msgpack(save_dict);
+    file.write(reinterpret_cast<const char*>(msgpack.data()), msgpack.size());
+    file.close();
 }

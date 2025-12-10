@@ -5,7 +5,7 @@
 #include <math.h>
 #include <boost/format.hpp>
 #include <stdexcept>
-#include <iostream>
+#include <utility>
 
 #define _EPS_ 1e-13
 
@@ -14,8 +14,7 @@ const int RegularGridInterpolant3D<Array>::simdcount;
 
 template<class Array>
 void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, Vec, Vec)> &f) {
-    // Check if we're in load mode - if so, skip expensive computation
-    // This prevents recomputation during field loading from saved data
+    // Skip computation if in load mode (data will be loaded from saved file)
     if (get_load_mode()) {
         return;
     }
@@ -44,22 +43,12 @@ void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, V
                 int meshidx = idx_cell(xidx, yidx, zidx);
                 if(skip_cell[meshidx])
                     continue;
-                // Zero-initialize ALL memory including SIMD padding
+                // Vector constructor already zero-initializes
                 AlignedPaddedVec local_vals(local_vals_size, 0.);
-                // Explicitly zero any SIMD padding beyond local_vals_size
-                size_t simdcount = XSIMD_DEFAULT_ALIGNMENT / sizeof(double);
-                size_t allocated_size = (local_vals_size + simdcount) - (local_vals_size % simdcount);
-                for (size_t idx = local_vals_size; idx < allocated_size && idx < local_vals.size(); ++idx) {
-                    local_vals[idx] = 0.0;
-                }
                 for (int i = 0; i < degree+1; ++i) {
                     for (int j = 0; j < degree+1; ++j) {
                         for (int k = 0; k < degree+1; ++k) {
                             int dof_global_idx = idx_dof(xidx*degree+i, yidx*degree+j, zidx*degree+k);
-                            if(dof_global_idx < 0 || dof_global_idx >= full_to_reduced_map.size()) {
-                                throw std::runtime_error("ERROR: Invalid dof_global_idx in interpolate_batch: " + std::to_string(dof_global_idx) + 
-                                                       " (full_to_reduced_map.size()=" + std::to_string(full_to_reduced_map.size()) + ")");
-                            }
                             int dof_idx = full_to_reduced_map[dof_global_idx];
                             int offset_local = padded_value_size * idx_dof_local(i, j, k);
                             for (int l = 0; l < value_size; ++l) {
@@ -68,7 +57,7 @@ void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, V
                         }
                     }
                 }
-                all_local_vals_map.insert({meshidx, local_vals});
+                all_local_vals_map.emplace(meshidx, std::move(local_vals));
             }
         }
     }
@@ -99,12 +88,11 @@ Vec RegularGridInterpolant3D<Array>::evaluate(double x, double y, double z){
     Vec fxyz(value_size, 0.);
     evaluate_inplace(x, y, z, fxyz.data());
     return fxyz;
-
 }
 
 template<class Array>
 int RegularGridInterpolant3D<Array>::locate_unsafe(double x, double y, double z){
-    int xidx = int(nx*(x-xmin)/(xmax-xmin)); // find idx so that xmesh[xidx] <= x <= xs[xidx+1]
+    int xidx = int(nx*(x-xmin)/(xmax-xmin));
     int yidx = int(ny*(y-ymin)/(ymax-ymin));
     int zidx = int(nz*(z-zmin)/(zmax-zmin));
     return idx_cell(xidx, yidx, zidx);
@@ -112,9 +100,7 @@ int RegularGridInterpolant3D<Array>::locate_unsafe(double x, double y, double z)
 
 template<class Array>
 void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double y, double z, double* res){
-
-    // to avoid funny business when the data is just a tiny bit out of bounds
-    // due to machine precision, we perform this check and shift
+    // Handle machine precision issues at boundaries
     if(x >= xmax) x -= _EPS_;
     else if (x <= xmin) x += _EPS_;
     if(y >= ymax) y -= _EPS_;
@@ -122,7 +108,7 @@ void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double y, doubl
     if(z >= zmax) z -= _EPS_;
     else if (z <= zmin) z += _EPS_;
 
-    int xidx = int(nx*(x-xmin)/(xmax-xmin)); // find idx so that xmesh[xidx] <= x <= xs[xidx+1]
+    int xidx = int(nx*(x-xmin)/(xmax-xmin));
     int yidx = int(ny*(y-ymin)/(ymax-ymin));
     int zidx = int(nz*(z-zmin)/(zmax-zmin));
     if(!out_of_bounds_ok){
@@ -132,11 +118,8 @@ void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double y, doubl
             throw std::runtime_error((boost::format("yidxs={} not within [0, {}]") % yidx % (ny-1)).str());
         if(zidx < 0 || zidx >= nz)
             throw std::runtime_error((boost::format("zidxs={} not within [0, {}]") % zidx % (nz-1)).str());
-    } else {
     }
     int cell_idx = idx_cell(xidx, yidx, zidx);
-    
-    
     double xlocal = (x-xmesh[xidx])/hx;
     double ylocal = (y-ymesh[yidx])/hy;
     double zlocal = (z-zmesh[zidx])/hz;
@@ -145,14 +128,11 @@ void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double y, doubl
 
 template<class Array>
 void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double* res){
-
-    // to avoid funny business when the data is just a tiny bit out of bounds
-    // due to machine precision, we perform this check and shift
+    // Handle machine precision issues at boundaries
     if(x >= xmax) x -= _EPS_;
     else if (x <= xmin) x += _EPS_;
 
-    int xidx = int(nx*(x-xmin)/(xmax-xmin)); // find idx so that xmesh[xidx] <= x <= xs[xidx+1]
-
+    int xidx = int(nx*(x-xmin)/(xmax-xmin));
     if(!out_of_bounds_ok){
         if(xidx < 0 || xidx >= nx)
             throw std::runtime_error((boost::format("xidxs={} not within [0, {}]") % xidx % (nx-1)).str());
@@ -172,12 +152,9 @@ void RegularGridInterpolant3D<Array>::evaluate_local(double x, double y, double 
         else
             throw std::runtime_error((boost::format("cell_idx={} not in all_local_vals_map") % cell_idx).str());
     }
-    
-    
-    
 
     double* vals_local = got->second.data();
-    
+
     if(xsimd::simd_type<double>::size >= 3){
         simd_t xyz;
         xyz[0] = x;
@@ -197,10 +174,8 @@ void RegularGridInterpolant3D<Array>::evaluate_local(double x, double y, double 
         }
     }
 
-    // Potential optimization: use barycentric interpolation here right now the
-    // implementation in O(degree^3) in memory and O(degree^4) in computation,
-    // using Barycentric interpolation this could be reduced to O(degree^3) in
-    // memory and O(degree^3) in computation.
+    // Potential optimization: use barycentric interpolation to reduce
+    // O(degree^4) computation to O(degree^3)
     for(int l=0; l<padded_value_size; l += simdcount) {
         simd_t sumi(0.);
         for (int i = 0; i < degree+1; ++i) {
@@ -209,14 +184,8 @@ void RegularGridInterpolant3D<Array>::evaluate_local(double x, double y, double 
                 simd_t sumk(0.);
                 for (int k = 0; k < degree+1; ++k) {
                     int offset_local = padded_value_size * idx_dof_local(i, j, k) + l;
-                    if (offset_local < 0 || offset_local + simdcount > got->second.size()) {
-                        throw std::runtime_error("ERROR: Invalid offset_local: " + std::to_string(offset_local) + 
-                                               " (size=" + std::to_string(got->second.size()) + ")");
-                    }
                     double* val_ptr = &(vals_local[offset_local]);
                     double pkz = pkzs[k];
-                    
-                    
                     sumk = xsimd::fma(xsimd::load_aligned(val_ptr), simd_t(pkz), sumk);
                 }
                 double pjy = pkys[j];
@@ -229,9 +198,8 @@ void RegularGridInterpolant3D<Array>::evaluate_local(double x, double y, double 
             res[l+ll] = sumi[ll];
         }
     }
-    
 }
-//TODO memory usage not fixed
+
 template<class Array>
 void RegularGridInterpolant3D<Array>::evaluate_local(double x, int cell_idx, double* res)
 {
@@ -300,8 +268,6 @@ std::pair<double, double> RegularGridInterpolant3D<Array>::estimate_error(std::f
     return std::make_pair(mean-std, mean+std);
 }
 
-
-
 Vec linspace(double min, double max, int n, bool endpoint) {
     Vec res(n, 0.);
     if(endpoint) {
@@ -316,16 +282,27 @@ Vec linspace(double min, double max, int n, bool endpoint) {
     return res;
 }
 
+// ============================================================================
+// SAVE/LOAD METHODS FOR INTERPOLANT SERIALIZATION
+// 
+// PURPOSE: Avoid expensive recomputation by saving/loading interpolant data.
+// 
+// get_interpolant_data(): Extracts the vals array and grid parameters.
+//                         The vals array contains function values at all DOFs.
+// 
+// set_interpolant_data(): Loads the vals array and reconstructs all_local_vals_map.
+//                         all_local_vals_map is a cell-indexed hash map enabling
+//                         fast O(1) lookup during evaluation.
+// ============================================================================
+
 template<class Array>
 std::map<std::string, std::vector<double>> RegularGridInterpolant3D<Array>::get_interpolant_data() const {
     std::map<std::string, std::vector<double>> data;
     
-    // Save ONLY the essential interpolated values - this is what we need to restore the field
-    // The vals array contains the actual interpolated function values on the grid
+    // Save the interpolated values (core data needed to restore the field)
     data["vals"] = vals;
     
-    // Save grid parameters (for verification, but these are const and can't be modified during load)
-    // These parameters define the grid structure and are needed to reconstruct the interpolant
+    // Save grid parameters for verification during load
     data["nx"] = {static_cast<double>(nx)};
     data["ny"] = {static_cast<double>(ny)};
     data["nz"] = {static_cast<double>(nz)};
@@ -344,12 +321,12 @@ std::map<std::string, std::vector<double>> RegularGridInterpolant3D<Array>::get_
     data["cells_to_keep"] = {static_cast<double>(cells_to_keep)};
     data["local_vals_size"] = {static_cast<double>(local_vals_size)};
     
-    // Save interpolation rule (needed for verification, but rule is const and can't be modified)
+    // Save interpolation rule parameters
     data["rule_degree"] = {static_cast<double>(rule.degree)};
     data["rule_nodes"] = rule.nodes;
     data["rule_scalings"] = rule.scalings;
     
-    // Save the mapping arrays for complete reconstruction
+    // Save mapping arrays for reconstruction
     std::vector<double> reduced_to_full_double(reduced_to_full_map.begin(), reduced_to_full_map.end());
     std::vector<double> full_to_reduced_double(full_to_reduced_map.begin(), full_to_reduced_map.end());
     std::vector<double> skip_cell_double(skip_cell.begin(), skip_cell.end());
@@ -358,121 +335,62 @@ std::map<std::string, std::vector<double>> RegularGridInterpolant3D<Array>::get_
     data["full_to_reduced_map"] = full_to_reduced_double;
     data["skip_cell"] = skip_cell_double;
     
-    // NOTE: We do NOT save all_local_vals_map to keep JSON small and fast
-    // It will be reconstructed from vals during loading using the fallback path
-    // This reconstruction is fast (just memory operations) compared to saving/loading 100x more data
-    
     return data;
 }
 
 template<class Array>
 void RegularGridInterpolant3D<Array>::set_interpolant_data(const std::map<std::string, std::vector<double>>& data) {
-    // CRITICAL: Load vals array first - this contains the actual interpolated function values
+    // Load the vals array (contains interpolated function values)
     auto vals_it = data.find("vals");
-    if (vals_it != data.end()) {
-        vals = vals_it->second;
-    } else {
-        throw std::runtime_error("ERROR: vals array not found in saved data!");
+    if (vals_it == data.end() || vals_it->second.empty()) {
+        throw std::runtime_error("vals array not found or empty in saved data");
     }
+    vals = vals_it->second;
     
-    // Verify that vals was loaded correctly
-    if (vals.size() == 0) {
-        throw std::runtime_error("ERROR: vals array is empty after loading from JSON!");
-    }
-    
-    // Verify that vals array size is consistent with expected size
-    // The vals array should have size dofs_to_keep * value_size
+    // Validate vals array size
     if (data.find("dofs_to_keep") != data.end()) {
         uint32_t expected_dofs = static_cast<uint32_t>(data.at("dofs_to_keep")[0]);
-        size_t expected_size = expected_dofs * value_size;
-        if (vals.size() != expected_size) {
-            throw std::runtime_error("ERROR: vals array size mismatch! Expected: " + std::to_string(expected_size) + 
-                                   ", Got: " + std::to_string(vals.size()) + 
-                                   " (dofs_to_keep=" + std::to_string(expected_dofs) + 
-                                   ", value_size=" + std::to_string(value_size) + ")");
+        if (vals.size() != expected_dofs * value_size) {
+            throw std::runtime_error("vals array size mismatch with expected dofs_to_keep * value_size");
         }
     }
     
-    // Load only the non-const grid parameters that can be modified
-    // Const parameters (nx, ny, nz, xmin, etc.) are already set during construction
+    // Load grid parameters
     if (data.find("hx") != data.end()) hx = data.at("hx")[0];
     if (data.find("hy") != data.end()) hy = data.at("hy")[0];
     if (data.find("hz") != data.end()) hz = data.at("hz")[0];
-    // Note: value_size is const and set during construction, cannot be modified here
-    // These values must match exactly what was used during saving to ensure compatibility
-    // The constructor's calculated values might be different due to different simdcount or other factors
     if (data.find("padded_value_size") != data.end()) padded_value_size = static_cast<int>(data.at("padded_value_size")[0]);
     if (data.find("local_vals_size") != data.end()) local_vals_size = static_cast<int>(data.at("local_vals_size")[0]);
-    
-    // Validate that the saved value_size matches the constructor parameter
-    if (data.find("value_size") != data.end()) {
-        int saved_value_size = static_cast<int>(data.at("value_size")[0]);
-        if (saved_value_size != value_size) {
-            throw std::runtime_error("ERROR: Saved value_size (" + std::to_string(saved_value_size) + 
-                                   ") does not match constructor value_size (" + std::to_string(value_size) + ")");
-        }
-    }
-    
     if (data.find("dofs_to_keep") != data.end()) dofs_to_keep = static_cast<uint32_t>(data.at("dofs_to_keep")[0]);
     if (data.find("cells_to_keep") != data.end()) cells_to_keep = static_cast<uint32_t>(data.at("cells_to_keep")[0]);
     
-    // Safety checks to prevent segfault
-    // Note: value_size is const and set during construction, so we can't check it here
-    if (padded_value_size <= 0 || padded_value_size > 1000) {
-        throw std::runtime_error("ERROR: Invalid padded_value_size value: " + std::to_string(padded_value_size));
-    }
-    if (dofs_to_keep == 0 || dofs_to_keep > 10000000) {
-        throw std::runtime_error("ERROR: Invalid dofs_to_keep value: " + std::to_string(dofs_to_keep));
-    }
-    if (cells_to_keep == 0 || cells_to_keep > 10000000) {
-        throw std::runtime_error("ERROR: Invalid cells_to_keep value: " + std::to_string(cells_to_keep));
-    }
-    if (local_vals_size <= 0 || local_vals_size > 10000) {
-        throw std::runtime_error("ERROR: Invalid local_vals_size value: " + std::to_string(local_vals_size));
+    // Validate value_size matches
+    if (data.find("value_size") != data.end()) {
+        int saved_value_size = static_cast<int>(data.at("value_size")[0]);
+        if (saved_value_size != value_size) {
+            throw std::runtime_error("Saved value_size does not match constructor value_size");
+        }
     }
     
-    // CRITICAL: Validate that local_vals_size is consistent with padded_value_size and degree
-    // This validation is now done using the loaded values from saved data
+    // Validate local_vals_size consistency
     int expected_local_vals_size = padded_value_size * (rule.degree + 1) * (rule.degree + 1) * (rule.degree + 1);
     if (local_vals_size != expected_local_vals_size) {
-        throw std::runtime_error("ERROR: local_vals_size mismatch! Loaded local_vals_size=" + std::to_string(local_vals_size) + 
-                               " but expected " + std::to_string(expected_local_vals_size) + 
-                               " based on padded_value_size=" + std::to_string(padded_value_size) + 
-                               " and degree=" + std::to_string(rule.degree) + 
-                               ". This indicates incompatible saved data.");
+        throw std::runtime_error("local_vals_size inconsistent with padded_value_size and degree");
     }
     
-    // CRITICAL: Do NOT reconstruct xmesh, ymesh, zmesh, xdof, ydof, zdof!
-    // The RegularGridInterpolant3D constructor already created these correctly
-    // when the object was created with the loaded RangeTriplet values.
-    // Reconstructing them here would introduce floating-point errors from saved hx, hy, hz values.
-    // The constructor logic (regular_grid_interpolant_3d.h lines 161-224) already handles everything.
+    // Use constructor-calculated grid spacing (more accurate than loaded values)
+    hx = (xmax - xmin) / nx;
+    hy = (ymax - ymin) / ny;
+    hz = (zmax - zmin) / nz;
     
-    // Only verify that hx, hy, hz match what the constructor calculated
-    // This is just for sanity checking - we don't actually need to load them
-    double expected_hx = (xmax - xmin) / nx;
-    double expected_hy = (ymax - ymin) / ny;
-    double expected_hz = (zmax - zmin) / nz;
-    
-    // Small tolerance for floating point comparison
-    if (std::abs(hx - expected_hx) > 1e-10 || 
-        std::abs(hy - expected_hy) > 1e-10 || 
-        std::abs(hz - expected_hz) > 1e-10) {
-        // This is OK - just use what the constructor calculated
-        // The constructor's values are more accurate
-        hx = expected_hx;
-        hy = expected_hy;
-        hz = expected_hz;
-    }
-    
-    // Load the mapping arrays from saved data
+    // Load mapping arrays
     auto reduced_it = data.find("reduced_to_full_map");
     if (reduced_it != data.end()) {
         const std::vector<double>& reduced_double = reduced_it->second;
         reduced_to_full_map.assign(reduced_double.begin(), reduced_double.end());
     } else {
         reduced_to_full_map.resize(dofs_to_keep);
-        for (int i = 0; i < dofs_to_keep; ++i) {
+        for (uint32_t i = 0; i < dofs_to_keep; ++i) {
             reduced_to_full_map[i] = i;
         }
     }
@@ -482,24 +400,10 @@ void RegularGridInterpolant3D<Array>::set_interpolant_data(const std::map<std::s
         const std::vector<double>& full_double = full_it->second;
         full_to_reduced_map.assign(full_double.begin(), full_double.end());
     } else {
-       
-        // The total number of degrees of freedom is (nx*degree+1) * (ny*degree+1) * (nz*degree+1)
         int total_dofs = (nx * rule.degree + 1) * (ny * rule.degree + 1) * (nz * rule.degree + 1);
-        
-        // Safety check to prevent segfault
-        if (total_dofs <= 0 || total_dofs > 10000000) {  // Reasonable upper bound
-            throw std::runtime_error("ERROR: Invalid total_dofs calculation: " + std::to_string(total_dofs) + 
-                                   " (nx=" + std::to_string(nx) + ", ny=" + std::to_string(ny) + 
-                                   ", nz=" + std::to_string(nz) + ", degree=" + std::to_string(rule.degree) + ")");
-        }
-        
         full_to_reduced_map.resize(total_dofs);
         for (int i = 0; i < total_dofs; ++i) {
-            if (i < dofs_to_keep) {
-                full_to_reduced_map[i] = i;
-            } else {
-                full_to_reduced_map[i] = -1; // Not kept
-            }
+            full_to_reduced_map[i] = (i < static_cast<int>(dofs_to_keep)) ? i : -1;
         }
     }
     
@@ -508,108 +412,67 @@ void RegularGridInterpolant3D<Array>::set_interpolant_data(const std::map<std::s
         const std::vector<double>& skip_double = skip_it->second;
         skip_cell.assign(skip_double.begin(), skip_double.end());
     } else {
-        // Fallback: assume no cells are skipped
         skip_cell.resize(nx * ny * nz, false);
     }
     
-    // CRITICAL: Do NOT reconstruct xdoftensor_reduced, ydoftensor_reduced, zdoftensor_reduced!
-    // These arrays are ONLY used during interpolate_batch() to evaluate the function at DOF points.
-    // After interpolate_batch() completes, they are NEVER used again!
-    // The actual interpolation uses all_local_vals_map, which we reconstruct below.
-    // 
-    // When loading from JSON:
-    // 1. interpolate_batch() is skipped (load_mode prevents it)
-    // 2. We load vals directly
-    // 3. We reconstruct all_local_vals_map from vals
-    // 
-    // So xdoftensor_reduced is irrelevant for loaded fields!
-    
-    
-    
-    // FAST RECONSTRUCTION: Build all_local_vals_map from vals array
-    // This is much faster than saving/loading 100x more data to/from JSON
-    // The reconstruction is just memory operations - no expensive physics calculations
+    // Reconstruct all_local_vals_map from vals array
+    // This is fast (memory operations only) compared to recomputing the field
     all_local_vals_map.clear();
+    all_local_vals_map.reserve(cells_to_keep);  // Pre-allocate for speed
     int degree = rule.degree;
     
     for (int xidx = 0; xidx < nx; ++xidx) {
         for (int yidx = 0; yidx < ny; ++yidx) {
             for (int zidx = 0; zidx < nz; ++zidx) {
                 int meshidx = idx_cell(xidx, yidx, zidx);
-                if(meshidx < 0 || meshidx >= skip_cell.size()) {
-                    throw std::runtime_error("ERROR: Invalid meshidx: " + std::to_string(meshidx) + 
-                                           " (skip_cell.size()=" + std::to_string(skip_cell.size()) + ")");
-                }
                 if(skip_cell[meshidx])
                     continue;
-                // Zero-initialize including SIMD padding
+                
+                // Vector constructor already zero-initializes
                 AlignedPaddedVec local_vals(local_vals_size, 0.);
-                // Explicitly zero any SIMD padding beyond local_vals_size
-                size_t simdcount = XSIMD_DEFAULT_ALIGNMENT / sizeof(double);
-                size_t allocated_size = (local_vals_size + simdcount) - (local_vals_size % simdcount);
-                for (size_t idx = local_vals_size; idx < allocated_size && idx < local_vals.size(); ++idx) {
-                    local_vals[idx] = 0.0;
-                }
+                
                 for (int i = 0; i < degree+1; ++i) {
                     for (int j = 0; j < degree+1; ++j) {
                         for (int k = 0; k < degree+1; ++k) {
                             int dof_global_idx = idx_dof(xidx*degree+i, yidx*degree+j, zidx*degree+k);
-                            if(dof_global_idx < 0 || dof_global_idx >= full_to_reduced_map.size()) {
-                                throw std::runtime_error("ERROR: Invalid dof_global_idx: " + std::to_string(dof_global_idx) + 
-                                                       " (full_to_reduced_map.size()=" + std::to_string(full_to_reduced_map.size()) + ")");
-                            }
                             int dof_idx = full_to_reduced_map[dof_global_idx];
                             int offset_local = padded_value_size * idx_dof_local(i, j, k);
-                            
-                            // CRITICAL: If dof_idx < 0, this DOF was skipped (likely in a neighboring skipped cell)
-                            // This should NEVER happen for DOFs in a non-skipped cell!
-                            if (dof_idx < 0) {
-                                throw std::runtime_error("ERROR: Cell " + std::to_string(meshidx) + " is not skipped, but DOF " + 
-                                                       std::to_string(dof_global_idx) + " (i=" + std::to_string(i) + 
-                                                       ", j=" + std::to_string(j) + ", k=" + std::to_string(k) + 
-                                                       ") at position (" + std::to_string(xidx*degree+i) + ", " + 
-                                                       std::to_string(yidx*degree+j) + ", " + std::to_string(zidx*degree+k) + 
-                                                       ") was skipped! This indicates inconsistent skip_cell and full_to_reduced_map.");
-                            }
-                            
                             for (int l = 0; l < value_size; ++l) {
-                                if (dof_idx * value_size + l >= vals.size()) {
-                                    throw std::runtime_error("ERROR: Trying to access vals[" + std::to_string(dof_idx * value_size + l) + 
-                                                           "] but vals.size()=" + std::to_string(vals.size()));
-                                }
                                 local_vals[offset_local + l] = vals[dof_idx * value_size + l];
                             }
                         }
                     }
                 }
-                all_local_vals_map.insert({meshidx, local_vals});
+                all_local_vals_map.emplace(meshidx, std::move(local_vals));  // Move instead of copy
             }
         }
     }
-    
-    // Note: The const parameters (nx, ny, nz, xmin, ymin, zmin, xmax, ymax, zmax, value_size, rule)
-    // cannot be modified after construction. They are saved for verification purposes only.
-    // The InterpolationRule is const and cannot be modified after construction.
 }
 
-// Static method implementations for load mode control
-// Use a single static variable that both methods can access
+// ============================================================================
+// LOAD MODE CONTROL
+// 
+// PURPOSE: Prevent expensive computation during JSON loading.
+// 
+// PROBLEM: When InterpolatedBoozerField loads from JSON, _impl methods may be
+//          called, which would trigger interpolate_batch() and recompute data.
+// 
+// SOLUTION: set_load_mode(true) causes interpolate_batch() to return immediately.
+//           This allows loading saved data without triggering recomputation.
+// ============================================================================
+
 template<class Array>
 bool& RegularGridInterpolant3D<Array>::get_load_mode_flag() {
-    // Static variable shared across all instances of RegularGridInterpolant3D
-    // This ensures consistent load mode state across all interpolants
     static bool in_load_mode = false;
     return in_load_mode;
 }
 
 template<class Array>
 void RegularGridInterpolant3D<Array>::set_load_mode(bool load_mode) {
-    // Set the global load mode flag to prevent expensive computation during data loading
     get_load_mode_flag() = load_mode;
 }
 
 template<class Array>
 bool RegularGridInterpolant3D<Array>::get_load_mode() {
-    // Get the current load mode state
     return get_load_mode_flag();
 }

@@ -520,12 +520,20 @@ void init_boozermagneticfields(py::module_ &m){
       .def_readwrite("status_Z_derivs",&InterpolatedBoozerField::status_Z_derivs)
       .def_readwrite("status_nu_derivs",&InterpolatedBoozerField::status_nu_derivs)
       .def_readwrite("status_modB_derivs",&InterpolatedBoozerField::status_modB_derivs)
-      // Save/load methods for field data serialization
-      .def("get_all_interpolant_data", &InterpolatedBoozerField::get_all_interpolant_data, "Get all interpolant data for saving to avoid recomputation.")
-      .def("set_all_interpolant_data", &InterpolatedBoozerField::set_all_interpolant_data, "Set all interpolant data from saved data to restore field state.")
-      .def("get_status_flags", &InterpolatedBoozerField::get_status_flags, "Get status flags indicating which interpolants are computed.")
-      .def("set_status_flags", &InterpolatedBoozerField::set_status_flags, "Set status flags after loading interpolant data.")
-      .def("to_json", &InterpolatedBoozerField::to_json, "Save field data to JSON file.")
+      // ========================================================================
+      // SAVE/LOAD BINDINGS: Enable field serialization to avoid long recomputation
+      // Used by Python's to_json() method and from_json() class method
+      // ========================================================================
+      .def("get_all_interpolant_data", &InterpolatedBoozerField::get_all_interpolant_data,
+           "Get all interpolant data for saving to JSON.")
+      .def("set_all_interpolant_data", &InterpolatedBoozerField::set_all_interpolant_data,
+           "Set all interpolant data from saved JSON data.")
+      .def("get_status_flags", &InterpolatedBoozerField::get_status_flags,
+           "Get status flags indicating which interpolants are computed.")
+      .def("set_status_flags", &InterpolatedBoozerField::set_status_flags,
+           "Set status flags after loading interpolant data.")
+      .def("to_json", &InterpolatedBoozerField::to_json,
+           "Save field data to JSON file for later loading.")
       ;
 
     // ShearAlfvenWave:

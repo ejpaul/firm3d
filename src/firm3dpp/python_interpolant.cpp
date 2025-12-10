@@ -34,12 +34,20 @@ void init_interpolant(py::module_ &m){
         .def("interpolate_batch", &RegularGridInterpolant3D<Array2>::interpolate_batch, "Interpolate a function by evaluating the function on all interpolation nodes simultanuously.")
         .def("evaluate", &RegularGridInterpolant3D<Array2>::evaluate, "Evaluate the interpolant at a point.")
         .def("evaluate_batch", &RegularGridInterpolant3D<Array2>::evaluate_batch, "Evaluate the interpolant at multiple points (faster than `evaluate` as it uses prefetching).")
-        // Save/load methods for interpolant data serialization
-        .def("get_interpolant_data", &RegularGridInterpolant3D<Array2>::get_interpolant_data, "Get interpolant data for saving to avoid recomputation.")
-        .def("set_interpolant_data", &RegularGridInterpolant3D<Array2>::set_interpolant_data, "Set interpolant data from saved data to restore field state.")
-        .def("is_computed", &RegularGridInterpolant3D<Array2>::is_computed, "Check if interpolant has actual data (vals array is not empty).")
-        
-        // Load mode control - static methods to prevent expensive computation during data loading
-        .def_static("set_load_mode", &RegularGridInterpolant3D<Array2>::set_load_mode, "Set load mode to prevent expensive computation during data loading.")
-        .def_static("get_load_mode", &RegularGridInterpolant3D<Array2>::get_load_mode, "Get current load mode status.");
+        // ========================================================================
+        // SAVE/LOAD BINDINGS: Enable interpolant serialization to avoid recomputation
+        // These methods are used internally by InterpolatedBoozerField.to_json()
+        // and the JSON loading constructor
+        // ========================================================================
+        .def("get_interpolant_data", &RegularGridInterpolant3D<Array2>::get_interpolant_data,
+             "Get interpolant data (vals array and grid parameters) for saving.")
+        .def("set_interpolant_data", &RegularGridInterpolant3D<Array2>::set_interpolant_data,
+             "Set interpolant data from saved data, reconstructing all_local_vals_map.")
+        .def("is_computed", &RegularGridInterpolant3D<Array2>::is_computed,
+             "Check if interpolant has computed data (vals array is not empty).")
+        // Load mode control: prevents interpolate_batch() from running during loading
+        .def_static("set_load_mode", &RegularGridInterpolant3D<Array2>::set_load_mode,
+                    "Set load mode (true prevents expensive computation during loading).")
+        .def_static("get_load_mode", &RegularGridInterpolant3D<Array2>::get_load_mode,
+                    "Get current load mode status.");
 }

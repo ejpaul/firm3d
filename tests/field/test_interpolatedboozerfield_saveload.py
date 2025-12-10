@@ -26,7 +26,7 @@ from pathlib import Path
 
 import numpy as np
 
-from simsopt.field.boozermagneticfield import (
+from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
 )
@@ -606,8 +606,8 @@ class TestInterpolatedBoozerFieldSaveLoad(unittest.TestCase):
             field.to_json(json_path)
 
             # Step 4: Load field back from JSON
-            # This tests the JSON deserialization constructor
-            field2 = InterpolatedBoozerField(json_path)
+            # This tests the JSON deserialization class method
+            field2 = InterpolatedBoozerField.from_json(json_path)
 
             # Step 5: Comprehensive verification
             # Verify all attributes match (general attribute comparison)
@@ -796,7 +796,7 @@ class TestInterpolatedBoozerFieldSaveLoad(unittest.TestCase):
 
             # Save and load cycle
             field.to_json(json_path)
-            field2 = InterpolatedBoozerField(json_path)
+            field2 = InterpolatedBoozerField.from_json(json_path)
 
             # Quick verification (skip full attribute comparison for speed)
             # Only verify essential attributes and functional correctness

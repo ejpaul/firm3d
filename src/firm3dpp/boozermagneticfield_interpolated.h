@@ -4,6 +4,7 @@
 #include "xtensor/xlayout.hpp"
 #include "regular_grid_interpolant_3d.h"
 #include <string>
+#include <cstdint>
 #include <nlohmann/json.hpp>
 #include <fstream>
 using std::string;
@@ -39,15 +40,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
           if(!interp_psip)
               interp_psip = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
           
-          // In load mode constructor, skip expensive computation and return zeros
-          // This prevents recomputation during field loading from saved data
+          // Skip computation during JSON loading - data will be loaded directly
           if (is_load_mode_constructor) {
-              // Create new array and fill with zeros
               psip = Array2({static_cast<long>(npoints), 1});
               psip.fill(0.0);
               return;
           }
-          
           if(!status_psip) {
               Array2 old_points = this->field->get_points();
               string which_scalar = "psip";
@@ -68,22 +66,15 @@ class InterpolatedBoozerField : public BoozerMagneticField {
       }
 
         void _G_impl(Array2& G) override {
-            // CRITICAL FIX: Don't recreate interpolant if it already exists (from loading)
-            // This ensures loaded interpolant objects with correct data are used
-            if(!interp_G) {
+            if(!interp_G)
                 interp_G = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
-            }
             
-            
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 G = Array2({static_cast<long>(npoints), 1});
                 G.fill(0.0);
                 return;
             }
-            
             if(!status_G) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "G";
@@ -107,16 +98,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_I)
                 interp_I = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 I = Array2({static_cast<long>(npoints), 1});
                 I.fill(0.0);
                 return;
             }
-            
             if(!status_I) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "I";
@@ -140,15 +127,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_iota)
                 interp_iota = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 iota = Array2({static_cast<long>(npoints), 1});
                 iota.fill(0.0);
                 return;
             }
-            
             if(!status_iota) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "iota";
@@ -172,15 +156,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dGds)
                 interp_dGds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 dGds = Array2({static_cast<long>(npoints), 1});
                 dGds.fill(0.0);
                 return;
             }
-            
             if(!status_dGds) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dGds";
@@ -204,15 +185,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dIds)
                 interp_dIds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 dIds = Array2({static_cast<long>(npoints), 1});
                 dIds.fill(0.0);
                 return;
             }
-            
             if(!status_dIds) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dIds";
@@ -236,15 +214,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_diotads)
                 interp_diotads = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 diotads = Array2({static_cast<long>(npoints), 1});
                 diotads.fill(0.0);
                 return;
             }
-            
             if(!status_diotads) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "diotads";
@@ -268,15 +243,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_K)
                 interp_K = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 K = Array2({static_cast<long>(npoints), 1});
                 K.fill(0.0);
                 return;
             }
-            
             if(!status_K) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "K";
@@ -302,15 +274,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dKdtheta)
                 interp_dKdtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 dKdtheta = Array2({static_cast<long>(npoints), 1});
                 dKdtheta.fill(0.0);
                 return;
             }
-            
             if(!status_dKdtheta) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dKdtheta";
@@ -333,15 +302,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dKdzeta)
                 interp_dKdzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 dKdzeta = Array2({static_cast<long>(npoints), 1});
                 dKdzeta.fill(0.0);
                 return;
             }
-            
             if(!status_dKdzeta) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dKdzeta";
@@ -364,15 +330,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_K_derivs)
                 interp_K_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 2, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 K_derivs = Array2({static_cast<long>(npoints), 2});
                 K_derivs.fill(0.0);
                 return;
             }
-            
             if(!status_K_derivs) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "K_derivs";
@@ -395,15 +358,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_nu)
                 interp_nu = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 nu = Array2({static_cast<long>(npoints), 1});
                 nu.fill(0.0);
                 return;
             }
-            
             if(!status_nu) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "nu";
@@ -429,15 +389,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dnudtheta)
                 interp_dnudtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 dnudtheta = Array2({static_cast<long>(npoints), 1});
                 dnudtheta.fill(0.0);
                 return;
             }
-            
             if(!status_dnudtheta) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dnudtheta";
@@ -460,15 +417,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dnudzeta)
                 interp_dnudzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 dnudzeta = Array2({static_cast<long>(npoints), 1});
                 dnudzeta.fill(0.0);
                 return;
             }
-            
             if(!status_dnudzeta) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dnudzeta";
@@ -490,15 +444,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dnuds)
                 interp_dnuds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 dnuds = Array2({static_cast<long>(npoints), 1});
                 dnuds.fill(0.0);
                 return;
             }
-            
             if(!status_dnuds) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dnuds";
@@ -523,15 +474,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_nu_derivs)
                 interp_nu_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 3, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 nu_derivs = Array2({static_cast<long>(npoints), 3});
                 nu_derivs.fill(0.0);
                 return;
             }
-            
             if(!status_nu_derivs) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "nu_derivs";
@@ -553,21 +501,15 @@ class InterpolatedBoozerField : public BoozerMagneticField {
         }
 
         void _R_impl(Array2& R) override {
-            // Always create the interpolant object if it doesn't exist
-            // This ensures the object exists for both normal operation and load mode
             if(!interp_R)
                 interp_R = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 R = Array2({static_cast<long>(npoints), 1});
                 R.fill(0.0);
                 return;
             }
-            
-            // Normal operation: compute R interpolant if not already computed
             if(!status_R) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "R";
@@ -589,15 +531,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dRdtheta)
                 interp_dRdtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 dRdtheta = Array2({static_cast<long>(npoints), 1});
                 dRdtheta.fill(0.0);
                 return;
             }
-            
             if(!status_dRdtheta) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dRdtheta";
@@ -622,15 +561,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dRdzeta)
                 interp_dRdzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 dRdzeta = Array2({static_cast<long>(npoints), 1});
                 dRdzeta.fill(0.0);
                 return;
             }
-            
             if(!status_dRdzeta) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dRdzeta";
@@ -655,15 +591,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dRds)
                 interp_dRds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 dRds = Array2({static_cast<long>(npoints), 1});
                 dRds.fill(0.0);
                 return;
             }
-            
             if(!status_dRds) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dRds";
@@ -685,15 +618,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_R_derivs)
                 interp_R_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 3, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 R_derivs = Array2({static_cast<long>(npoints), 3});
                 R_derivs.fill(0.0);
                 return;
             }
-            
             if(!status_R_derivs) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "R_derivs";
@@ -715,21 +645,15 @@ class InterpolatedBoozerField : public BoozerMagneticField {
         }
 
         void _Z_impl(Array2& Z) override {
-            // Always create the interpolant object if it doesn't exist
-            // This ensures the object exists for both normal operation and load mode
             if(!interp_Z)
                 interp_Z = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 Z = Array2({static_cast<long>(npoints), 1});
                 Z.fill(0.0);
                 return;
             }
-            
-            // Normal operation: compute Z interpolant if not already computed
             if(!status_Z) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "Z";
@@ -754,15 +678,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dZdtheta)
                 interp_dZdtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 dZdtheta = Array2({static_cast<long>(npoints), 1});
                 dZdtheta.fill(0.0);
                 return;
             }
-            
             if(!status_dZdtheta) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dZdtheta";
@@ -784,15 +705,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dZdzeta)
                 interp_dZdzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 dZdzeta = Array2({static_cast<long>(npoints), 1});
                 dZdzeta.fill(0.0);
                 return;
             }
-            
             if(!status_dZdzeta) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dZdzeta";
@@ -814,15 +732,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dZds)
                 interp_dZds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 dZds = Array2({static_cast<long>(npoints), 1});
                 dZds.fill(0.0);
                 return;
             }
-            
             if(!status_dZds) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dZds";
@@ -847,15 +762,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_Z_derivs)
                 interp_Z_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 3, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 Z_derivs = Array2({static_cast<long>(npoints), 3});
                 Z_derivs.fill(0.0);
                 return;
             }
-            
             if(!status_Z_derivs) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "Z_derivs";
@@ -877,22 +789,15 @@ class InterpolatedBoozerField : public BoozerMagneticField {
         }
 
         void _modB_impl(Array2& modB) override {
-            // Always create the interpolant object if it doesn't exist
-            // This ensures the object exists for both normal operation and load mode
             if(!interp_modB)
                 interp_modB = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 modB = Array2({static_cast<long>(npoints), 1});
                 modB.fill(0.0);
                 return;
             }
-            
-            // Normal operation: compute modB interpolant if not already computed
             if(!status_modB) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "modB";
@@ -906,8 +811,8 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             }
             Array2& stz = this->get_points_ref();
             points_sym.resize({npoints, 3});
-            points_sym.fill(0.0);  // CRITICAL FIX: Initialize to zeros to avoid stale data
-            Array2& stz_sym = this->get_sym_points_ref();               exploit_symmetries_points(stz, stz_sym);
+            Array2& stz_sym = this->get_sym_points_ref();
+            exploit_symmetries_points(stz, stz_sym);
             interp_modB->evaluate_batch(stz_sym, modB);
         }
 
@@ -915,15 +820,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dmodBdtheta)
                 interp_dmodBdtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 dmodBdtheta = Array2({static_cast<long>(npoints), 1});
                 dmodBdtheta.fill(0.0);
                 return;
             }
-            
             if(!status_dmodBdtheta) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dmodBdtheta";
@@ -948,15 +850,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dmodBdzeta)
                 interp_dmodBdzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 dmodBdzeta = Array2({static_cast<long>(npoints), 1});
                 dmodBdzeta.fill(0.0);
                 return;
             }
-            
             if(!status_dmodBdzeta) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dmodBdzeta";
@@ -981,15 +880,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dmodBds)
                 interp_dmodBds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 dmodBds = Array2({static_cast<long>(npoints), 1});
                 dmodBds.fill(0.0);
                 return;
             }
-            
             if(!status_dmodBds) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dmodBds";
@@ -1011,15 +907,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_modB_derivs)
                 interp_modB_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 3, extrapolate);
             
-            // In load mode constructor, skip expensive computation and return zeros
-            // This prevents recomputation during field loading from saved data
+            // Skip computation during JSON loading - data will be loaded directly
             if (is_load_mode_constructor) {
-                // Create new array and fill with zeros
                 modB_derivs = Array2({static_cast<long>(npoints), 3});
                 modB_derivs.fill(0.0);
                 return;
             }
-            
             if(!status_modB_derivs) {
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "modB_derivs";
@@ -1214,18 +1107,17 @@ class InterpolatedBoozerField : public BoozerMagneticField {
         }
 
     private:
-        bool is_load_mode_constructor = false;  // Flag to track if this is a load mode constructor
+        // LOAD MODE FLAG: Prevents expensive computation during JSON loading
+        // When true, all _impl methods return zero arrays instead of computing values.
+        // This is necessary because _impl methods may be triggered during loading,
+        // but we want to load pre-computed data from JSON, not recompute it.
+        bool is_load_mode_constructor = false;
 
     protected:
-        // Override _set_points_cb to prevent computation during load mode construction
-        // This prevents the base class from triggering field evaluation during loading
+        // Override base class callback to skip field evaluation during JSON loading.
+        // Without this, set_points() in the base class could trigger computation.
         void _set_points_cb() override {
-            if (is_load_mode_constructor) {
-                // Do nothing during load mode construction - prevents computation
-                return;
-            }
-            // Normal behavior (base class is empty anyway)
-            return;
+            if (is_load_mode_constructor) return;
         }
 
     public:
@@ -1240,9 +1132,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 bool extrapolate, int nfp, bool stellsym, string field_type) :
             BoozerMagneticField(field->psi0, field->field_type), field(field), rule(rule), s_range(s_range), theta_range(theta_range), zeta_range(zeta_range), extrapolate(extrapolate), nfp(nfp), stellsym(stellsym)
         {
-            // CRITICAL: Ensure normal operation mode for regular field construction
-            // This prevents the static load mode flag from affecting normal field construction
-            // The static flag might be set to true from previous save/load operations
+            // Ensure normal operation mode (not loading from JSON)
             RegularGridInterpolant3D<Array2>::set_load_mode(false);
             is_load_mode_constructor = false;
         }
@@ -1254,8 +1144,20 @@ class InterpolatedBoozerField : public BoozerMagneticField {
         }
 
 
-        // Constructor for loading from saved data (no computation)
-        // This constructor takes only the JSON file path and handles all loading internally
+        // ========================================================================
+        // JSON LOADING CONSTRUCTOR: Restore field from saved data without recomputation
+        // 
+        // PURPOSE: Avoid the 10+ minute computation time for large interpolation grids.
+        //          Instead, load pre-computed interpolant data from a JSON file.
+        // 
+        // MECHANISM:
+        // 1. Initialize with dummy values (will be overwritten from JSON)
+        // 2. Parse JSON file to extract config, grid_info, and interpolant_data
+        // 3. Update const members using placement new (safe in constructor)
+        // 4. Enable load_mode to prevent _impl methods from triggering computation
+        // 5. Call set_all_interpolant_data() to reconstruct interpolant objects
+        // 6. Set status flags based on which quantities were successfully loaded
+        // ========================================================================
         InterpolatedBoozerField(const std::string& json_file_path) : 
             BoozerMagneticField(0.0, ""),  // Will be set from JSON data
             field(std::make_shared<BoozerMagneticField>(0.0, "")),  // Create dummy field for loaded data
@@ -1267,48 +1169,43 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             nfp(1),  // Temporary, will be set from JSON
             stellsym(false)  // Temporary, will be set from JSON
         {
-            // Read and parse JSON file
-            std::ifstream file(json_file_path);
+            // Read and parse MessagePack binary file (3-5x faster than text JSON)
+            std::ifstream file(json_file_path, std::ios::binary);
             if (!file.is_open()) {
-                throw std::runtime_error("Could not open JSON file: " + json_file_path);
+                throw std::runtime_error("Could not open file: " + json_file_path);
             }
             
-            nlohmann::json data;
-            file >> data;
+            // Read entire file into buffer
+            std::vector<std::uint8_t> buffer((std::istreambuf_iterator<char>(file)),
+                                              std::istreambuf_iterator<char>());
             file.close();
             
-            // Extract configuration data
+            // Parse MessagePack binary format
+            nlohmann::json data = nlohmann::json::from_msgpack(buffer);
+            
             auto config = data["config"];
             auto grid_info = data["grid_info"];
             auto json_interpolant_data = data["interpolant_data"];
             auto status_flags = data["status_flags"];
-            
-            // Extract grid parameters
+
+            // Extract grid and configuration parameters
             std::vector<double> s_range_vec = grid_info["s_range"];
             std::vector<double> theta_range_vec = grid_info["theta_range"];
             std::vector<double> zeta_range_vec = grid_info["zeta_range"];
-            
             RangeTriplet s_range_new(s_range_vec[0], s_range_vec[1], s_range_vec[2]);
             RangeTriplet theta_range_new(theta_range_vec[0], theta_range_vec[1], theta_range_vec[2]);
             RangeTriplet zeta_range_new(zeta_range_vec[0], zeta_range_vec[1], zeta_range_vec[2]);
-            
-            // Extract other parameters
             int degree = config["degree"];
             bool extrapolate_val = config["extrapolate"];
             int nfp_val = config["nfp"];
             bool stellsym_val = config["stellsym"];
             std::string field_type = config["field_type"];
             double psi0 = config["psi0"];
-            
-            // Extract rule data
             std::vector<double> rule_nodes = grid_info["rule_nodes"];
             std::vector<double> rule_scalings = grid_info["rule_scalings"];
-            
-            // Note: We cannot reassign const members, so we need to use placement new
-            // This is safe because we're in the constructor and know the values
-            // Create a custom InterpolationRule with the exact same nodes and scalings
+
+            // Update const members using placement new (safe in constructor)
             new (const_cast<InterpolationRule*>(&this->rule)) InterpolationRule(degree);
-            // Now copy the saved nodes and scalings
             const_cast<InterpolationRule*>(&this->rule)->nodes = rule_nodes;
             const_cast<InterpolationRule*>(&this->rule)->scalings = rule_scalings;
             const_cast<RangeTriplet&>(this->s_range) = s_range_new;
@@ -1317,20 +1214,18 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             const_cast<bool&>(this->extrapolate) = extrapolate_val;
             const_cast<int&>(this->nfp) = nfp_val;
             const_cast<bool&>(this->stellsym) = stellsym_val;
-            
-            // Set base class values
-            BoozerMagneticField::psi0 = psi0;  // Load psi0 from JSON
+
+            // Set base class and dummy field values
+            BoozerMagneticField::psi0 = psi0;
             BoozerMagneticField::field_type = field_type;
-            
-            // Update the dummy field with correct values
             field->psi0 = psi0;
             field->field_type = field_type;
-            
-            // ACTIVATE LOAD MODE - prevent computation during construction
+
+            // Activate load mode to prevent computation during loading
             RegularGridInterpolant3D<Array2>::set_load_mode(true);
             is_load_mode_constructor = true;
-            
-            // Set all status flags to FALSE to prevent computation
+
+            // Initialize all status flags to false (will be set based on loaded data)
             status_modB = false;
             status_dmodBdtheta = false;
             status_dmodBdzeta = false;
@@ -1362,8 +1257,8 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             status_Z_derivs = false;
             status_nu_derivs = false;
             status_modB_derivs = false;
-            
-            // Convert JSON interpolant data to C++ format
+
+            // Convert JSON data format and load interpolants
             std::map<std::string, std::map<std::string, std::vector<double>>> interpolant_data;
             for (auto& [quantity, json_data] : json_interpolant_data.items()) {
                 std::map<std::string, std::vector<double>> data_map;
@@ -1382,12 +1277,9 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 }
                 interpolant_data[quantity] = data_map;
             }
-            
-            // Load interpolant data (this will create interpolant objects and load data)
             set_all_interpolant_data(interpolant_data);
-            
-            // CRITICAL: Set status flags based on what was actually loaded, not what was saved
-            // This ensures that only the interpolants that were successfully loaded are marked as ready
+
+            // Set status flags based on what was loaded
             status_modB = (interpolant_data.find("modB") != interpolant_data.end());
             status_dmodBdtheta = (interpolant_data.find("dmodBdtheta") != interpolant_data.end());
             status_dmodBdzeta = (interpolant_data.find("dmodBdzeta") != interpolant_data.end());
@@ -1419,9 +1311,6 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             status_R_derivs = (interpolant_data.find("R_derivs") != interpolant_data.end());
             status_Z_derivs = (interpolant_data.find("Z_derivs") != interpolant_data.end());
             status_modB_derivs = (interpolant_data.find("modB_derivs") != interpolant_data.end());
-            
-            // Load mode is automatically cleared by set_all_interpolant_data()
-            // Field is now ready for normal operation
         }
 
                 std::pair<double, double> estimate_error_modB(int samples) {
@@ -1560,18 +1449,24 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                     return interp_iota->estimate_error(fbatch, samples);
                 }
                 
-                // Save/load methods for all interpolant data
+                // ====================================================================
+                // SAVE/LOAD API: Enable field serialization to avoid recomputation
+                // ====================================================================
+                
+                // Get/set all interpolant data (31 quantities) for JSON serialization
                 std::map<std::string, std::map<std::string, std::vector<double>>> get_all_interpolant_data() const;
                 void set_all_interpolant_data(const std::map<std::string, std::map<std::string, std::vector<double>>>& data);
+                
+                // Get/set status flags indicating which quantities are computed
                 std::map<std::string, bool> get_status_flags() const;
                 void set_status_flags(const std::map<std::string, bool>& flags);
                 
-                // Getter methods for const members
+                // Getter methods for const members (needed by Python from_json())
                 int get_nfp() const { return nfp; }
                 bool get_stellsym() const { return stellsym; }
                 bool get_extrapolate() const { return extrapolate; }
                 
-                // Save field data to JSON file
+                // Save field data to JSON file for later loading
                 void to_json(const std::string& json_file_path) const;
 };
 

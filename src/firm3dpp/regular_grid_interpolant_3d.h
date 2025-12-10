@@ -307,19 +307,29 @@ class RegularGridInterpolant3D {
 
         std::pair<double, double> estimate_error(std::function<Vec(Vec, Vec, Vec)> &f, int samples);
         
-        // Save/load methods for interpolant data
-        // These methods enable serialization of interpolant data to avoid recomputation
+        // ========================================================================
+        // SAVE/LOAD CAPABILITY: Serialize interpolant data to avoid recomputation
+        // 
+        // PROBLEM: InterpolatedBoozerField computation takes 10+ minutes for large grids.
+        // SOLUTION: Save interpolant data to JSON, reload instantly on subsequent runs.
+        // 
+        // get_interpolant_data(): Extracts vals array and grid parameters for saving
+        // set_interpolant_data(): Reconstructs all_local_vals_map from saved vals array
+        // ========================================================================
         std::map<std::string, std::vector<double>> get_interpolant_data() const;
         void set_interpolant_data(const std::map<std::string, std::vector<double>>& data);
-        bool is_computed() const { return !vals.empty(); }  // Check if interpolant has actual data
+        bool is_computed() const { return !vals.empty(); }
         
-        // Load mode control - static methods to prevent expensive computation during data loading
-        // These methods control a global flag that prevents interpolate_batch() from running
+        // LOAD MODE CONTROL: Prevent expensive computation during data loading
+        // 
+        // PROBLEM: When loading from JSON, interpolate_batch() would be called by
+        //          _impl methods, causing expensive recomputation of already-saved data.
+        // SOLUTION: set_load_mode(true) causes interpolate_batch() to return immediately.
+        //          After loading, set_load_mode(false) restores normal operation.
         static void set_load_mode(bool load_mode);
         static bool get_load_mode();
     private:
-        static bool& get_load_mode_flag(); // Helper method to access shared static variable
-        // This ensures both set_load_mode() and get_load_mode() use the same static variable
+        static bool& get_load_mode_flag();
 };
 
 class UniformInterpolationRule : public InterpolationRule {
