@@ -1078,7 +1078,11 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
                 dt_save=dt_save,
             )
             for i in range(nparticles):
-                if len(gc_zeta_hits[i]) and gc_zeta_hits[i][-1][1] >= 0 and len(gc_tys[i]) > 1:
+                if (
+                    len(gc_zeta_hits[i])
+                    and gc_zeta_hits[i][-1][1] >= 0
+                    and len(gc_tys[i]) > 1
+                ):
                     idx = int(gc_zeta_hits[i][-1][1])
                     if idx >= 0:
                         assert np.isclose(

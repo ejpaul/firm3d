@@ -203,6 +203,9 @@ def trace_particles_boozer_perturbed(
         reltol = tol
     if abstol is None:
         abstol = tol
+    if dt_save <= 0:
+        raise ValueError("dt_save must be positive.")
+
     nparticles = stz_inits.shape[0]
     assert stz_inits.shape[0] == len(parallel_speeds)
     assert len(mus) == len(parallel_speeds)
@@ -483,6 +486,9 @@ def trace_particles_boozer(
         dt = 1e-7
     if predictor_step is None:
         predictor_step = True
+
+    if dt_save <= 0:
+        raise ValueError("dt_save must be positive.")
 
     nparticles = stz_inits.shape[0]
     assert stz_inits.shape[0] == len(parallel_speeds)
