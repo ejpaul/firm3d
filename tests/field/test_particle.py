@@ -1078,7 +1078,7 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
                 dt_save=dt_save,
             )
             for i in range(nparticles):
-                if len(gc_zeta_hits[i]) and gc_zeta_hits[i][-1][1] >= 0:
+                if len(gc_zeta_hits[i]) and gc_zeta_hits[i][-1][1] >= 0 and len(gc_tys[i]) > 1:
                     idx = int(gc_zeta_hits[i][-1][1])
                     if idx >= 0:
                         assert np.isclose(
@@ -1171,8 +1171,8 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
 
         solver_options = {
             "ODE_solver": "symplectic",
-            "dt": 1e-7,
-            "roottol": 1e-8,
+            "dt": 1e-8,
+            "roottol": 1e-14,
             "predictor_step": True,
             "axis": 0,
         }
@@ -1180,7 +1180,7 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
             bsh,
             stz_inits,
             vpar_inits,
-            tmax=tmax + 5e-8,
+            tmax=tmax,
             mass=m,
             charge=q,
             Ekin=Ekin,
@@ -1189,15 +1189,14 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
                 MinToroidalFluxStoppingCriterion(0.01),
                 MaxToroidalFluxStoppingCriterion(0.99),
             ],
-            tol=1e-8,
-            dt_save=1e-8,
+            dt_save=1e-9,
             **solver_options,
         )
         diffs = np.array([])
         test_options = {
             "ODE_solver": "symplectic",
-            "dt": 1e-7,
-            "roottol": 1e-8,
+            "dt": 1e-8,
+            "roottol": 1e-14,
             "predictor_step": True,
             "axis": 0,
         }
@@ -1218,8 +1217,7 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
                     MinToroidalFluxStoppingCriterion(0.01),
                     MaxToroidalFluxStoppingCriterion(0.99),
                 ],
-                tol=1e-7,
-                dt_save=1e-7,
+                dt_save=1e-9,
                 **test_options,
             )
 
