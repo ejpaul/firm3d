@@ -473,7 +473,7 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
     }
     double t_max = tau_max * f.tnorm;
     if (t_max - res.back()[0] > 1e-15) {
-        dense.calc_state(tau, y);
+        dense.calc_state(tau_max, y);
         vector<double> stzvt(4);
         y_to_stzvt(y, stzvt, 0, f.vnorm, f.tnorm);
         vector<double> final_state = {t_max};
