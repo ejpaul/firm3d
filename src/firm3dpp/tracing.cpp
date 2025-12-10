@@ -540,14 +540,10 @@ solve(
         );
 
         // Save path if forget_exact_path = False
-        if (forget_exact_path == 0) {
-            // If we have hit a stopping criterion, we still want to save the trajectory up to that point
-            if (stop) {
-                tau_current = res_hits.back()[0] / tnorm;
-            }
+        if (forget_exact_path == 0 && !stop) {
             // This will give the first save point after tau_last
-            double tau_save_last = std::ceil(tau_last/dtau_save) * dtau_save;
-            for (double tau_save = tau_save_last; tau_save <= tau_current; tau_save += dtau_save) {
+            double tau_save_last = (std::floor(tau_last/dtau_save) + 1) * dtau_save;
+            for (double tau_save = tau_save_last; tau_save <= std::min(tau_current, tau_max); tau_save += dtau_save) {
                 if (tau_save != 0) {  // tau = 0 is already saved.
                     solver->calc_state(tau_save, temp);
                     double t_save = tau_save * tnorm;
@@ -560,12 +556,12 @@ solve(
         }
     } while(tau < tau_max && !stop);
 
-    // Save t = tmax if we not already saved it 
+    // Save t = tmax or time when StoppingCriterion is hit if we not already saved it 
     if (stop) {
-        tau_max = res_hits.back()[0] / tnorm;
+        tau_max = tau_last;
     }
     double t_max = tau_max * tnorm;
-    if (std::abs(t_max - res.back()[0]) > 1e-15) {
+    if (t_max - res.back()[0] > 1e-15) {
         solver->calc_state(tau_max, y);
         y_to_stzvt(y, stzvt, axis, vnorm, tnorm);
         vector<double> final_state = {t_max};

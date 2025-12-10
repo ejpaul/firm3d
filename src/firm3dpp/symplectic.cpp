@@ -448,23 +448,16 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
         );
 
         // Save path if forget_exact_path = False
-        if (forget_exact_path == 0) {
-            double tau_last_save;
-            // If we have hit a stopping criterion, we still want to save the trajectory up to that point
-            if (stop) {
-                tau_last_save = res_hits.back()[0] / f.tnorm;
-            } else {
-                tau_last_save = tau_current;
-            }
+        if (forget_exact_path == 0 && !stop) {
             // This will give the first save point after tau_last
-            double tau_save_last = dtau_save * std::ceil(tau_last/dtau_save);
-            for (double tau_save = tau_save_last; tau_save <= tau_last_save; tau_save += dtau_save) {
+            double tau_save_last =  (std::floor(tau_last/dtau_save) + 1) * dtau_save;
+            for (double tau_save = tau_save_last; tau_save <= std::min(tau_current, tau_max); tau_save += dtau_save) {
                 if (tau_save != 0) { // tau = 0 is already saved.
                     dense.calc_state(tau_save, temp);
-                    double t_save_physical = tau_save * f.tnorm;
+                    double t_save = tau_save * f.tnorm;
                     vector<double> stzvt(4);
                     y_to_stzvt(temp, stzvt, 0, f.vnorm, f.tnorm);
-                    vector<double> save_point = {t_save_physical};
+                    vector<double> save_point = {t_save};
                     save_point.insert(save_point.end(), stzvt.begin(), stzvt.end());
                     res.push_back(save_point);
                 }
@@ -476,17 +469,16 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
 
     // Save tau = tau_max if we have not already saved it 
     if (stop) {
-        tau_max = res_hits.back()[0] / f.tnorm;
+        tau_max = tau_last;
     }
-    tau = tau_max; 
-    double t_final_physical = tau * f.tnorm;
-    if (std::abs(t_final_physical - res.back()[0]) > 1e-15) {
-        dense.calc_state(tau, y);
+    double t_max = tau_max * f.tnorm;
+    if (t_max - res.back()[0] > 1e-15) {
+        dense.calc_state(tau_max, y);
         vector<double> stzvt(4);
         y_to_stzvt(y, stzvt, 0, f.vnorm, f.tnorm);
-        vector<double> final_point = {t_final_physical};
-        final_point.insert(final_point.end(), stzvt.begin(), stzvt.end());
-        res.push_back(final_point);
+        vector<double> final_state = {t_max};
+        final_state.insert(final_state.end(), stzvt.begin(), stzvt.end());
+        res.push_back(final_state);
     }
 
     gsl_multiroot_fsolver_free(s_euler);
