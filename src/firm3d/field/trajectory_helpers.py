@@ -2,6 +2,7 @@ from warnings import warn
 
 import numpy as np
 from scipy import integrate
+from os.path import exists
 
 from .._core.util import parallel_loop_bounds
 from ..field.boozermagneticfield import (
@@ -14,6 +15,11 @@ from ..field.tracing import (
     MinToroidalFluxStoppingCriterion,
     trace_particles_boozer,
     trace_particles_boozer_perturbed,
+)
+from ..field.tracing_helpers import (
+    initialize_position_uniform_surf, 
+    initialize_position_uniform_vol, 
+    initialize_velocity_uniform,
 )
 
 __all__ = [
@@ -159,8 +165,8 @@ class PassingPoincare:
         self.charge = charge
         self.Ekin = Ekin
         if s_init is not None and thetas_init is not None:
-            self.s_init = s_init
-            self.thetas_init = thetas_init
+            s = s_init
+            thetas = thetas_init
         else:
             if ns_poinc is None:
                 ns_poinc = 120
@@ -168,15 +174,14 @@ class PassingPoincare:
                 ntheta_poinc = 2
             s = np.linspace(0, 1, ns_poinc + 1, endpoint=False)[1::]
             thetas = np.linspace(0, 2 * np.pi, ntheta_poinc)
-            s, thetas = np.meshgrid(s, thetas)
-            self.s_init = s.flatten()
-            self.thetas_init = thetas.flatten()
+        s, thetas = np.meshgrid(s, thetas)
+        s_flat = s.flatten()
+        thetas_flat = thetas.flatten()
         self.Nmaps = Nmaps
         self.comm = comm
         self.tmax = tmax
         self.solver_options = solver_options
-        self.vpars_init = self.initialize_passing_map()
-
+        self.vpars_init, self.s_init, self.thetas_init = self.initialize_passing_map(s_flat,thetas_flat)
         (
             self.s_all,
             self.thetas_all,
@@ -184,7 +189,7 @@ class PassingPoincare:
             self.t_all,
         ) = self.compute_passing_map()
 
-    def initialize_passing_map(self):
+    def initialize_passing_map(self,s_flat,thetas_flat):
         r"""
         Given a :class:`BoozerMagneticField` instance, this function generates
         initial positions for the passing Poincare return map. Particles are
@@ -213,18 +218,24 @@ class PassingPoincare:
             else:
                 return self.sign_vpar * vtotal * np.sqrt(1 - self.lam * modB)
 
-        first, last = parallel_loop_bounds(self.comm, len(self.s_init))
+        first, last = parallel_loop_bounds(self.comm, len(s_flat))
         # For each point, find value of vpar such that lambda = vperp^2/(v^2 B)
         vpars_init = []
+        s_init = []
+        thetas_init = []
         for i in range(first, last):
-            vpar = vpar_func(self.s_init[i], self.thetas_init[i])
+            vpar = vpar_func(s_flat[i], thetas_flat[i])
             if vpar is not None:
                 vpars_init.append(vpar)
+                s_init.append(s_flat[i])
+                thetas_init.append(thetas_flat[i])
 
         if self.comm is not None:
             vpars_init = [i for o in self.comm.allgather(vpars_init) for i in o]
+            s_init = [i for o in self.comm.allgather(s_init) for i in o]
+            thetas_init = [i for o in self.comm.allgather(thetas_init) for i in o]
 
-        return vpars_init
+        return vpars_init, s_init, thetas_init
 
     def passing_map(self, point):
         r"""
@@ -296,7 +307,11 @@ class PassingPoincare:
         thetas_all = []
         vpars_all = []
         t_all = []
-        first, last = parallel_loop_bounds(self.comm, Ntrj)
+        if Ntrj == 1:
+            first = 0
+            last = 1
+        else: 
+            first, last = parallel_loop_bounds(self.comm, Ntrj)
         for itrj in range(first, last):
             tr = [self.s_init[itrj], self.thetas_init[itrj], self.vpars_init[itrj]]
             s_traj = [tr[0]]
@@ -364,17 +379,61 @@ class PassingPoincare:
                 len(s_traj) < 2
             ):  # Need at least one full Poincare return maps to compute frequency
                 continue
-            delta_theta = np.array(theta_traj[1::]) - np.array(theta_traj[0:-1])
+            delta_theta = np.array(theta_traj[1:]) - np.array(theta_traj[0:-1])
+            delta_s = np.array(s_traj[1:]) - np.array(s_traj[0:-1])
             delta_t = t_traj[1::]
             delta_zeta = 2 * np.pi * self.sign_vpar * sign_G
 
             # Average over wells along one field line
             freq_theta = np.mean(delta_theta) / np.mean(delta_t)
             freq_zeta = delta_zeta / np.mean(delta_t)
+            freq_s = delta_s / np.mean(delta_t)
 
             omega_theta.append(freq_theta)
             omega_zeta.append(freq_zeta)
             init_s.append(np.mean(s_traj))
+
+        omega_theta = np.array(omega_theta)
+        omega_zeta = np.array(omega_zeta)
+        init_s = np.array(init_s)
+
+        s_prof = np.unique(init_s)
+        omega_theta_prof = np.zeros((len(s_prof),))
+        omega_zeta_prof = np.zeros((len(s_prof),))
+
+        # Average over field-line label
+        for i, s in enumerate(s_prof):
+            omega_theta_prof[i] = np.mean(omega_theta[np.where(init_s == s)])
+            omega_zeta_prof[i] = np.mean(omega_zeta[np.where(init_s == s)])
+
+        return omega_theta_prof, omega_zeta_prof, s_prof
+
+    def compute_ds_dangle(self, helicity_M, helicity_N):
+        if "axis" in self.solver_options and self.solver_options["axis"] != 0:
+            raise ValueError(
+                'ODE solver must integrate with solver_options["axis"]=0 to '
+                "compute passing frequencies."
+            )
+
+        self.field.set_points(np.array([[1], [0], [0]]).T)
+        sign_G = np.sign(self.field.G()[0])
+
+        omega_theta = []
+        omega_zeta = []
+        init_s = []
+        for s_traj, theta_traj, _vpar_traj, t_traj in zip(
+            self.s_all, self.thetas_all, self.vpars_all, self.t_all
+        ):
+            if (
+                len(s_traj) < 2
+            ):  # Need at least one full Poincare return maps to compute frequency
+                continue
+            delta_theta = np.array(theta_traj[1:]) - np.array(theta_traj[0:-1])
+            delta_s = np.array(s_traj[1:]) - np.array(s_traj[0:-1])
+            delta_t = t_traj[1::]
+            delta_zeta = 2 * np.pi * self.sign_vpar * sign_G
+            delta_chi = helicity_M * delta_theta + helicity_N * delta_zeta
+
 
         omega_theta = np.array(omega_theta)
         omega_zeta = np.array(omega_zeta)
@@ -1360,8 +1419,8 @@ class PassingPerturbedPoincare:
             Compute unperturbed values of mu, p_eta, and Eprime from the given
             parameters.
             """
-            v0 = np.sqrt(2 * Ekin / mass)  # Total velocity from kinetic energy
-            self.mu = 0.5 * lam * v0**2  # mu = vperp^2/(2 B)
+            self.v0 = np.sqrt(2 * Ekin / mass)  # Total velocity from kinetic energy
+            self.mu = 0.5 * lam * self.v0**2  # mu = vperp^2/(2 B)
             self.Ekin = Ekin  # Total kinetic energy
             saw.B0.set_points(p0)
             modB = saw.B0.modB()[0, 0]
@@ -1369,7 +1428,7 @@ class PassingPerturbedPoincare:
                 raise ValueError(
                     "Invalid parameter p0: 1 - lambda * modB must be non-negative."
                 )
-            vpar = sign_vpar * v0 * np.sqrt(1 - lam * modB)  # Parallel velocity
+            vpar = sign_vpar * self.v0 * np.sqrt(1 - lam * modB)  # Parallel velocity
             Peta0 = compute_peta(
                 saw.B0,
                 p0,
@@ -1402,6 +1461,870 @@ class PassingPerturbedPoincare:
             self.DA_all,
             self.DA_times,
         ) = self.compute_passing_map()
+
+    def _set_helicity_Np_Mp(self, helicity_Np, helicity_Mp):
+        """
+        Sets helicity of the phase variable eta based on user inputs.
+        """
+        if not ((helicity_Np is None) or (helicity_Mp is None)):
+            # User specified both helicities
+            self.helicity_Mp = helicity_Mp
+            self.helicity_Np = helicity_Np
+            return
+
+        if (helicity_Np is None) and (helicity_Mp is None):
+            # User did not specify helicity, choose default
+            if self.helicity_M == 0:
+                # modB contours close poloidally,
+                # so can use theta as mapping coordinate
+                self.helicity_Mp = 1
+                self.helicity_Np = 0
+            else:
+                # use zeta as mapping coordinate
+                self.helicity_Mp = 0
+                self.helicity_Np = -1
+            return
+
+        raise ValueError(
+            f"User must either specify both helicity_Np and helicity_Mp or leave both "
+            f"of them None. Currently {helicity_Np=} while {helicity_Mp=}."
+        )
+    def vpar_func_perturbed(self, s, chi):
+            # Choose initial conditions on the eta = 0 plane
+            theta, zeta = self.chi_eta_to_theta_zeta(chi, 0)
+            point = np.zeros((1, 4))  # initialize with t = 0
+            point[0, 0] = s
+            point[0, 1] = theta
+            point[0, 2] = zeta
+            self.saw.set_points(point)
+            modB = self.B0.modB()[0, 0]
+            G = self.B0.G()[0, 0]
+            I = self.B0.I()[0, 0]
+            psi = self.B0.psi0 * s
+            psip = self.B0.psip()[0, 0]
+            Phi = self.saw.Phi()[0, 0]
+            alpha = self.saw.alpha()[0, 0]
+            denom = (
+                self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
+            )  # - 1 in QA
+            d_peta_d_vpar = (
+                -((self.helicity_M * G + self.helicity_N * I) * (self.mass / modB))
+                / denom
+            )  # G m/ modB in QA
+            d_E_d_vpar2 = 0.5 * self.mass
+            a = self.nprime * d_E_d_vpar2  # Coefficient of vpar^2
+            b = -self.omega * d_peta_d_vpar  # Coefficient of vpar
+            # Constant term
+            c = (
+                self.nprime * (self.mass * self.mu * modB + self.charge * Phi)
+                + self.omega
+                * (
+                    (self.helicity_M * G + self.helicity_N * I) * self.charge * alpha
+                    + self.charge * (self.helicity_N * psi - self.helicity_M * psip)
+                )
+                / denom
+                - self.Eprime
+            )
+            if (b**2 - 4 * a * c) < 0:
+                raise RuntimeError(
+                    "No solution for vpar found! Check the parameters and "
+                    "initial conditions."
+                )
+            elif a != 0:
+                return (-b + self.sign_vpar * np.sqrt(b**2 - 4 * a * c)) / (2 * a)
+            else:
+                return (-c / b) * self.sign_vpar
+
+    def initialize_passing_map(self):
+        """
+        Compute vpar given (s,chi) such that Eprime = Eprime0
+        """
+
+        def vpar_func_perturbed(s, chi):
+            # Choose initial conditions on the eta = 0 plane
+            theta, zeta = self.chi_eta_to_theta_zeta(chi, 0)
+            point = np.zeros((1, 4))  # initialize with t = 0
+            point[0, 0] = s
+            point[0, 1] = theta
+            point[0, 2] = zeta
+            self.saw.set_points(point)
+            modB = self.B0.modB()[0, 0]
+            G = self.B0.G()[0, 0]
+            I = self.B0.I()[0, 0]
+            psi = self.B0.psi0 * s
+            psip = self.B0.psip()[0, 0]
+            Phi = self.saw.Phi()[0, 0]
+            alpha = self.saw.alpha()[0, 0]
+            denom = (
+                self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
+            )  # - 1 in QA
+            d_peta_d_vpar = (
+                -((self.helicity_M * G + self.helicity_N * I) * (self.mass / modB))
+                / denom
+            )  # G m/ modB in QA
+            d_E_d_vpar2 = 0.5 * self.mass
+            a = self.nprime * d_E_d_vpar2  # Coefficient of vpar^2
+            b = -self.omega * d_peta_d_vpar  # Coefficient of vpar
+            # Constant term
+            c = (
+                self.nprime * (self.mass * self.mu * modB + self.charge * Phi)
+                + self.omega
+                * (
+                    (self.helicity_M * G + self.helicity_N * I) * self.charge * alpha
+                    + self.charge * (self.helicity_N * psi - self.helicity_M * psip)
+                )
+                / denom
+                - self.Eprime
+            )
+            if (b**2 - 4 * a * c) < 0:
+                raise RuntimeError(
+                    "No solution for vpar found! Check the parameters and "
+                    "initial conditions."
+                )
+            elif a != 0:
+                return (-b + self.sign_vpar * np.sqrt(b**2 - 4 * a * c)) / (2 * a)
+            else:
+                return (-c / b) * self.sign_vpar
+
+        # Create mesh grid if not provided directly
+        if not hasattr(self, "s_init") or not hasattr(self, "chis_init"):
+            s = np.linspace(0, 1, self.ns_poinc + 1, endpoint=False)[1::]
+            chis = np.linspace(0, 2 * np.pi, self.nchi_poinc)
+            s, chis = np.meshgrid(s, chis)
+            s = s.flatten()
+            chis = chis.flatten()
+        else:
+            s = self.s_init
+            chis = self.chis_init
+
+        first, last = parallel_loop_bounds(self.comm, len(s))
+        # For each point, find value of vpar such that lambda = vperp^2/(v^2 B)
+        s_init = []
+        chis_init = []
+        vpars_init = []
+        for i in range(first, last):
+            try:
+                vpar = vpar_func_perturbed(s[i], chis[i])
+                s_init.append(s[i])
+                chis_init.append(chis[i])
+                vpars_init.append(vpar)
+            except RuntimeError:
+                continue
+
+        if self.comm is not None:
+            s_init = [i for o in self.comm.allgather(s_init) for i in o]
+            chis_init = [i for o in self.comm.allgather(chis_init) for i in o]
+            vpars_init = [i for o in self.comm.allgather(vpars_init) for i in o]
+
+        return s_init, chis_init, vpars_init
+
+    def chi(self, theta, zeta):
+        r"""
+        Compute the helical angle chi = M*theta - N*zeta.
+
+        Args:
+            theta : Poloidal angle.
+            zeta : Toroidal angle.
+        Returns:
+            chi : The helical angle.
+        """
+        return self.helicity_M * theta - self.helicity_N * zeta
+
+    def eta(self, theta, zeta):
+        r"""
+        Compute the mapping angle eta = Mp*theta - Np*zeta.
+
+        Args:
+            theta : Poloidal angle.
+            zeta : Toroidal angle.
+        Returns:
+            eta : The mapping angle.
+        """
+        return self.helicity_Mp * theta - self.helicity_Np * zeta
+
+    def chi_eta_to_theta_zeta(self, chi, eta):
+        r"""
+        Convert helical angles (chi, eta) to (theta, zeta).
+
+        Args:
+            chi : Helical angle chi.
+            eta : Mapping angle eta.
+        Returns:
+            theta : Poloidal angle.
+            zeta : Toroidal angle.
+        """
+        denom = self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
+        theta = (self.helicity_Np * chi - self.helicity_N * eta) / denom
+        zeta = (self.helicity_Mp * chi - self.helicity_M * eta) / denom
+
+        return theta, zeta
+
+    def passing_map(self, point, t, eta):
+        r"""
+        Integrates the GC equations from the provided point on the eta -
+        omega/n' * t plane to the next intersection with this plane. An
+        assumption is made that the particle is passing, so a RuntimeError
+        is raised if the particle mirrors.
+
+        Since the phase of the ShearAlfvenWave depends on time, the initial
+        time, t, is passed as an argument.
+
+        Args:
+            point : A numpy array of shape (3,) containing the initial
+                coordinates (s,chi,eta).
+            t : Initial time at which the map is evaluated
+        Returns:
+            point : A numpy array of shape (3,) containing the coordinates
+                (s,chi,eta).
+            time : The time at which the trajectory returns to the eta -
+                omega/n' * t plane.
+            peta : Timeseries of the canonical momentum p_eta along the trajectory.
+        """
+        phase = self.omega * t
+        self.saw.phase = phase
+        theta, zeta = self.chi_eta_to_theta_zeta(point[1], eta)
+        points = np.zeros((1, 3))
+        points[:, 0] = point[0]
+        points[:, 1] = theta
+        points[:, 2] = zeta
+
+        if self.helicity_M != 0:
+            phases = [zeta * self.nprime]
+            n_zetas = [self.nprime]
+            m_thetas = [0]
+            omegas = [self.omega]
+        else:
+            phases = [theta * self.nprime]
+            n_zetas = [0]
+            m_thetas = [self.nprime]
+            omegas = [self.omega]
+        try:
+            res_tys, res_hits = trace_particles_boozer_perturbed(
+                perturbed_field=self.saw,
+                stz_inits=points,
+                parallel_speeds=[point[2]],
+                mus=[self.mu],
+                tmax=self.tmax,
+                mass=self.mass,
+                charge=self.charge,
+                phases=phases,
+                n_zetas=n_zetas,
+                m_thetas=m_thetas,
+                omegas=omegas,
+                vpars=[0],
+                axis=0,
+                stopping_criteria=[
+                    MinToroidalFluxStoppingCriterion(0.001),
+                    MaxToroidalFluxStoppingCriterion(1.0),
+                ],
+                forget_exact_path=True,
+                vpars_stop=True,
+                phases_stop=True,
+                **self.solver_options,
+                )
+        except: 
+            print(f"Error integrating guiding center equations at {point=}, {t=}, {eta=}")
+            raise RuntimeError()
+        if len(res_hits[0]) == 0:
+            raise RuntimeError("No stopping criterion reached in passing_map.")
+
+        res_hit = res_hits[0][0, :]  # Only check the first hit or stopping criterion
+
+        # Check that the phases plane was hit (index 0 for first phase)
+        if res_hit[1] == 0:
+            point[0] = res_hit[2]
+            point[1] = self.chi(res_hit[3], res_hit[4])
+            point[2] = res_hit[5]
+        else:
+            raise RuntimeError("Alternative stopping criterion reached in passing_map.")
+
+        if not self.DA_poinc:
+            return point, res_hit[0] + t, self.eta(res_hit[3], res_hit[4])
+        else:
+            # define trajectories
+            time_momentum = res_tys[0][:, 0]
+            s_path = res_tys[0][:, 1]
+            theta_path = res_tys[0][:, 2]
+            zeta_path = res_tys[0][:, 3]
+            vpar_path = res_tys[0][:, 4]
+
+            # set points for trajectories:
+            points_traj = np.zeros((len(time_momentum), 4))
+            points_traj[:, 0] = s_path
+            points_traj[:, 1] = theta_path
+            points_traj[:, 2] = zeta_path
+            points_traj[:, 3] = time_momentum
+
+            Peta = compute_peta(
+                self.saw,
+                points_traj,
+                vpar_path,
+                self.mass,
+                self.charge,
+                self.helicity_M,
+                self.helicity_N,
+                helicity_Mp=self.helicity_Mp,
+                helicity_Np=self.helicity_Np,
+            )
+            Peta = np.column_stack((time_momentum, Peta))
+            return point, res_hit[0] + t, self.eta(res_hit[3], res_hit[4]), Peta
+
+    def compute_passing_map(self):
+        r"""
+        Evaluates the passing Poincare return map for the initialized particle
+        positions.
+        """
+        Ntrj = len(self.s_init)
+
+        s_all = []
+        chis_all = []
+        etas_all = []
+        vpars_all = []
+        t_all = []
+        DA_all = []
+        DA_times = []
+        first, last = parallel_loop_bounds(self.comm, Ntrj)
+        for itrj in range(first, last):
+            tr = [self.s_init[itrj], self.chis_init[itrj], self.vpars_init[itrj]]
+            s_traj = [tr[0]]
+            chis_traj = [tr[1]]
+            eta_traj = [0]
+            vpars_traj = [tr[2]]
+            t_traj = [0]
+            particle_DAs = []
+            particle_DA_times = []
+            for jj in range(self.Nmaps):
+                try:
+                    if self.DA_poinc:
+                        if jj == 0:
+                            tr, time, eta, Peta = self.passing_map(
+                                tr, t_traj[-1], eta_traj[-1]
+                            )
+                        else:
+                            tr, time, eta, Peta_iter = self.passing_map(
+                                tr, t_traj[-1], eta_traj[-1]
+                            )
+                            Peta_iter[:, 0] += Peta[-1, 0]
+                            Peta = np.vstack((Peta, Peta_iter[1:, :]))
+                    else:
+                        tr, time, eta = self.passing_map(tr, t_traj[-1], eta_traj[-1])
+                    s_traj.append(tr[0])
+                    chis_traj.append(tr[1])
+                    vpars_traj.append(tr[2])
+                    t_traj.append(time)
+                    eta_traj.append(eta)
+                    if self.DA_poinc and jj in self.WBA_transit_steps:
+                        time_at_evaluation, DA_at_evaluation = return_DA(Peta)
+                        particle_DAs.append(DA_at_evaluation)
+                        particle_DA_times.append(jj)
+                except RuntimeError:
+                    if self.DA_poinc:
+                        particle_DAs.append(np.nan)
+                        particle_DA_times.append(np.nan)
+                    break
+            DA_all.append(particle_DAs)
+            DA_times.append(particle_DA_times)
+            s_all.append(s_traj)
+            chis_all.append(chis_traj)
+            etas_all.append(eta_traj)
+            vpars_all.append(vpars_traj)
+            t_all.append(t_traj)
+
+        if self.comm is not None:
+            s_all = [i for o in self.comm.allgather(s_all) for i in o]
+            chis_all = [i for o in self.comm.allgather(chis_all) for i in o]
+            etas_all = [i for o in self.comm.allgather(etas_all) for i in o]
+            vpars_all = [i for o in self.comm.allgather(vpars_all) for i in o]
+            t_all = [i for o in self.comm.allgather(t_all) for i in o]
+            DA_all = [i for o in self.comm.allgather(DA_all) for i in o]
+            DA_times = [i for o in self.comm.allgather(DA_times) for i in o]
+
+        return s_all, chis_all, etas_all, vpars_all, t_all, DA_all, DA_times
+
+
+    def plot_poincare(
+        self,
+        ax=None,
+        filename="passing_poincare.pdf",
+        convergence_test_indicies=None,
+        DA_max=7,
+        lines=None,
+        ylims=(0, 1),
+        s_axis_label = True
+    ):
+        r"""
+        Plot the passing Poincare map and save to a file. It is recommended to only
+        call this function on MPI rank 0.
+        Args:
+            ax : Matplotlib axis to plot on. If None, a new figure and axis are
+                 created.
+            filename : Name of the file to save the plot
+                       (default: 'passing_poincare.pdf').
+            convergence_test_indicies : Indices of initial conditions to show
+            in convergence plot.
+            DA_max : Maximum value of Digit Accuracy to show on colorbar
+            ylims : Tuple specifying y-axis limits for the Poincare plot.
+        Returns:
+            ax : The Matplotlib axis containing the plot.
+        """
+
+        import matplotlib as mpl
+        import matplotlib.pyplot as plt
+        from matplotlib.cm import ScalarMappable
+
+        mpl.use("Agg")  # Don't use interactive backend
+
+        try:
+            import cmcrameri.cm as cmc  # noqa: F401
+
+            cmap = "cmc.managua"
+        except ImportError:
+            cmap = "viridis"
+
+        star_ICs = False
+
+        if convergence_test_indicies is None:
+            convergence_test_indicies = list(range(len(self.s_all)))
+        else:
+            star_ICs = True
+
+        if ax is None:
+            fig, ax = plt.subplots()
+        else:
+            fig = ax.get_figure()
+
+        if self.DA_poinc and self.nconvergence_points > 1:
+            s_itrj_map = {}
+            for itrj in convergence_test_indicies:
+                s_itrj_map[itrj] = self.s_all[itrj][0]
+
+            min_s = min(list(s_itrj_map.values()))
+            max_s = max(list(s_itrj_map.values()))
+            s_lst_true = list(s_itrj_map.values())
+            cmap_s = mpl.colormaps["copper"].resampled(len(s_lst_true) ** 2)
+
+        print(f'comm.rank= {self.comm.rank}', flush=True)
+
+        def normalize(numbers):
+            if not numbers:
+                return []
+            min_val, max_val = 0, DA_max
+            normalized_numbers = [(x - min_val) / (max_val - min_val) for x in numbers]
+            return normalized_numbers
+
+        if self.DA_poinc:
+            final_DAs = []
+            # retrieve final DA for each trajectory if the particle is not lost
+            # put it into a list
+            for elem in self.DA_all:
+                if len(elem) == self.nconvergence_points:
+                    final_DAs.append(elem[self.nconvergence_points - 1])
+                else:
+                    final_DAs.append(np.nan)
+            # normalized DA values for colormap
+            DA_norm_all = normalize(final_DAs)
+            cmap_object = mpl.colormaps[cmap].resampled(len(self.DA_all) ** 2)
+
+        ax.set_xlabel(r"$\chi$")
+        if s_axis_label:
+            ax.set_ylabel(r"$s$")
+        ax.set_xlim([0, 2 * np.pi])
+        ax.set_ylim([ylims[0], ylims[1]])
+
+        for i in range(len(self.chis_all)):
+            #if len(self.chis_all[i]) < Nmaps
+            if self.DA_poinc:
+                ax.scatter(
+                    np.mod(self.chis_all[i], 2 * np.pi),
+                    self.s_all[i],
+                    marker="o",
+                    s=1,
+                    c=cmap_object(DA_norm_all[i]),
+                    edgecolors="none",
+                )
+            else:
+                ax.scatter(
+                    np.mod(self.chis_all[i], 2 * np.pi),
+                    self.s_all[i],
+                    marker="o",
+                    s=1,
+                    edgecolors="none",
+                )
+
+        if star_ICs:
+            # scatter initial conditions observed in convergence plot onto poincare plot
+            for i in s_itrj_map:
+                s_norm = (s_itrj_map[i] - min_s) / (max_s - min_s)
+                ax.scatter(
+                    np.mod(self.chis_all[i][0], 2 * np.pi),
+                    self.s_all[i][0],
+                    marker="*",
+                    s=25,
+                    color=cmap_s(s_norm),
+                    edgecolors="magenta",
+                )
+
+        if self.DA_poinc:
+            # make colorbar for DA values
+            max_val = DA_max
+            norm = plt.Normalize(0, max_val)
+            fig.colorbar(
+                ScalarMappable(norm=norm, cmap=mpl.colormaps[cmap]),
+                ax=ax,
+                orientation="vertical",
+                label="Digit Accuracy",
+            )
+        print('Lines to plot:', lines, flush=True)
+        lines_2 = []
+        if lines is not None:
+            cmap = plt.get_cmap('Wistia')
+            n_lines = len(lines)
+            for i,line in enumerate(lines):
+                print(f'i={i}, {line}',flush=True)
+                ell,arr = line[0], line[1]
+                color = cmap(i / max(n_lines - 1, 1))
+                lines_2.append((line[0], line[1], color))
+                vp = self.vpar_func_perturbed(arr, self.chi(np.pi/2,0))
+                self.B0.set_points(np.array([[arr, np.pi/2, 0]]).T)
+                unperturbed_path_map = PassingPoincare(
+                    field=self.B0,
+                    lam=(self.v0**2 - vp**2)/(self.v0**2* self.B0.modB()[0,0]),
+                    sign_vpar=self.sign_vpar,
+                    mass=self.mass,
+                    charge=self.charge,
+                    Ekin=self.Ekin,
+                    s_init=[arr],
+                    comm=None,
+                    Nmaps=250,
+                    thetas_init=[np.pi/2],
+                    solver_options={'axis':0},
+                )
+
+                s_upt, theta_upt, vpar_upt, t_upt = unperturbed_path_map.get_poincare_data()
+                chis = self.chi(np.array(theta_upt[0]), np.array([2 * np.pi * i for i in range(len(theta_upt[0]))]))
+                s_upt = np.array(s_upt[0])
+                pa_data = np.column_stack((chis,s_upt))
+                #pa_data = pa_data[pa_data[:, 0].argsort()]
+                pa_data[:,0] = np.mod(pa_data[:,0], (2 * np.pi))
+                pa_data = pa_data[pa_data[:, 0].argsort()]
+                if i>0:
+                    if lines[i][0] == lines[i-1][0]:
+                        print('second zero activated', flush=True)
+                        ax.plot(pa_data[:,0], pa_data[:,1], lw=5,color=color)
+                        continue
+                ax.plot(pa_data[:,0], pa_data[:,1], label=r'$\ell$='+f'{ell}',lw=5, color=color)
+            ax.legend()
+        fig.tight_layout()
+        fig.savefig(filename + ".png", dpi = 400)
+
+        # convergence plot - change in DA with number of transit evaluations
+        # histogram of final DA values
+        if self.DA_poinc and self.nconvergence_points > 1:
+            fig, ax2 = plt.subplots(1, 1)
+            ax2.set_ylabel(r"Digit Accuracy")
+            ax2.set_xlabel(r"Toroidal Periods")
+
+            for itrj in s_itrj_map:
+                ax2.plot(
+                    self.DA_times[itrj],
+                    self.DA_all[itrj],
+                    color=cmap_s((s_itrj_map[itrj] - min_s) / (max_s - min_s)),
+                    alpha=0.75,
+                    label=f"{s_itrj_map[itrj]}",
+                )
+            norm = plt.Normalize(min(s_lst_true), max(s_lst_true))
+            fig.colorbar(
+                ScalarMappable(norm=norm, cmap=cmap_s),
+                ax=ax2,
+                orientation="vertical",
+                label="$s$",
+            )
+
+            fig.tight_layout()
+            plt.savefig(filename+"_convergence.png", dpi=300)
+            plt.clf()
+            for elem in final_DAs:
+                if not np.isnan(elem):
+                    final_DAs.remove(elem)
+            plt.hist(final_DAs)
+            plt.xlabel("Digit Accuracy")
+            plt.title("Distribution of Digit Accuracy")
+            plt.tight_layout()
+            plt.savefig(filename + "_DA_histogram.png")
+        return ax, lines_2
+    def get_poincare_data(self):
+        """
+        Return the Poincare map data.
+
+        Returns:
+            s_all, chis_all, etas_all, vpars_all, t_all : Lists of trajectory data.
+        """
+        return (
+            self.s_all,
+            self.chis_all,
+            self.etas_all,
+            self.vpars_all,
+            self.t_all,
+            self.DA_all,
+            self.DA_times,
+        )
+    
+
+class PassingPerturbedPetaPoincare:
+    def __init__(
+        self,
+        saw,
+        sign_vpar,
+        mass,
+        charge,
+        helicity_M,
+        helicity_N,
+        helicity_Mp=None,
+        helicity_Np=None,
+        Eprime=None,
+        mu=None,
+        Ekin=None,
+        p0=None,
+        lam=None,
+        ns_poinc=None,
+        nchi_poinc=None,
+        DA_poinc=False,
+        nconvergence_points=None,
+        s_init=None,
+        chis_init=None,
+        Nmaps=500,
+        comm=None,
+        tmax=1e-2,
+        solver_options=None,
+    ):
+        """
+        Initialize the PassingPerturbedPoincare class, which computes the
+        Poincare return map for passing particles in a ShearAlfvenHarmonic
+        magnetic field.
+
+        The field strength contours are assumed to have helicity (M,N) in
+        Boozer coordinates such that the field strength can be expressed as
+        B(s,chi), where chi = M*theta - N*zeta is the helical angle.
+        The mapping coordinate, eta, is chosen based on the helicity of the
+        field strength contours: if M = 0 (e.g., QP or OP), then eta=theta is
+        used, if N = 0 (e.g., QA/OA, QH/OA), then eta = zeta is used.
+
+        The ShearAlfvenHarmonic can then be expressed in terms of the mapping
+        coordinates with phase, m'*chi - n'*eta + omega * t.
+
+        The map is evaluated by integrating the guiding center equations from
+        the eta - omega/n' * t = 0 plane until the trajectory returns to the
+        same plane.
+
+        The map is well-defined (i.e., trajectories don't cross in the
+        (s,chi=M*theta - N*zeta) plane) if the unperturbed field is
+        quasisymmetric with helicity (M,N). However, the map can still be
+        computed for a non-quasisymmetric field, but the trajectories may
+        cross in the (s,chi) plane.
+
+        The constants of motion are the magnetic moment, mu = vperp^2/(2 B),
+        and the shifted energy, Eprime = n' * E - omega * p_eta, E is the
+        total energy, and p_eta is the canonical momentum.
+
+        These constants of motion can be prescribed directly with the Eprime
+        and mu parameters. Alternatively, they can be computed from the
+        prescribed pitch-angle variable, lam = vperp^2/(v^2 B), total
+        unperturbed kinetic energy, Ekin, and a given point p0 in Boozer
+        coordinates.
+
+        Args:
+            saw : An instance of ShearAlfvenHarmonic or ShearAlfvenWavesSuperposition.
+            sign_vpar : Sign of the parallel velocity, either -1 or +1.
+            mass : Mass of the particle.
+            charge : Charge of the particle.
+            helicity_M : Poloidal helicity of the magnetic field.
+            helicity_N : Toroidal helicity of the magnetic field.
+            helicity_Mp : Poloidal helicity of the phase variable eta.
+            Defaults to None. If no value is given, Mp and Np are determined
+            by field helicity.
+            helicity_Np : Toroidal helicity of the phase variable eta.
+            Defaults to None. If no value is given, Mp and Np are determined by field
+            helicity.
+            Eprime: Shifted energy, Eprime = n' * E - omega * p_eta.
+            mu: Magnetic moment, mu = vperp^2/(2 B).
+            Ekin: Total unperturbed kinetic energy of the particle, used to
+                compute Eprime if not provided.
+            p0: Initial point in Boozer coordinates for evaluation of Eprime.
+            lam: Pitch angle variable, lambda = vperp^2/(v^2 B), used to
+                compute mu if not provided.
+            s_init : List of initial s coordinates for the Poincare map.
+                (default: None, ns_poinc is used instead)
+            chis_init : List of initial chi coordinates for the Poincare map.
+                (default: None, nchi_poinc is used instead)
+            ns_poinc : Number of initial conditions in s for Poincare plot
+                (default: 120).
+            nchi_poinc : Number of initial conditions in chi for Poincare plot
+                (default: 2).
+            Nmaps : Number of Poincare return maps to compute for each initial
+                condition (default: 500).
+            DA_poinc : Boolean value indicating whether chaos detection is desired
+                (default: False)
+            nconvergence_points : Integer value indicating the number of Weighted
+                Birkhoff Average evaluations to assess convergence.
+            comm : MPI communicator for parallel execution (default: None).
+            tmax : Maximum integration time for each segment of the Poincare
+                map (default: 1e-2 s).
+            solver_options : Dictionary of options to pass to the ODE solver
+                (default: {}).
+        """
+        if solver_options is None:
+            solver_options = {}
+        if not isinstance(saw, ShearAlfvenHarmonic) and not isinstance(
+            saw, ShearAlfvenWavesSuperposition
+        ):
+            raise TypeError(
+                "Expected saw to be an instance of ShearAlfvenHarmonic "
+                "or ShearAlfvenWavesSuperposition"
+            )
+        if not isinstance(saw, ShearAlfvenHarmonic):
+            dominant_saw = saw[0]
+            raise Warning(
+                "Expected saw to be an instance of ShearAlfvenHarmonic - "
+                "Perturbed Energy Invariant may not be valid."
+            )
+        else:
+            dominant_saw = None
+        if sign_vpar not in [-1, 1]:
+            raise ValueError("sign_vpar should be either -1 or +1")
+
+        self.saw = saw
+        self.B0 = saw.B0
+        self.helicity_M = helicity_M
+        self.helicity_N = helicity_N
+        self._set_helicity_Np_Mp(helicity_Np, helicity_Mp)
+        self.mass = mass
+        self.charge = charge
+        self.sign_vpar = sign_vpar
+
+        self.DA_poinc = DA_poinc
+        if DA_poinc:
+            if nconvergence_points is None:
+                self.nconvergence_points = 1
+                self.WBA_transit_steps = [Nmaps - 1]
+            else:
+                self.nconvergence_points = nconvergence_points
+                # set list of transits for each WBA evaluation
+                transits_per_average = int(Nmaps / (nconvergence_points))
+                self.WBA_transit_steps = np.linspace(
+                    transits_per_average, Nmaps - 1, num=nconvergence_points, dtype=int
+                ).tolist()
+        else:
+            self.nconvergence_points = 1
+            self.WBA_transit_steps = 0
+
+        if s_init is not None and chis_init is not None:
+            self.s_init = s_init
+            self.chis_init = chis_init
+        else:
+            if ns_poinc is None:
+                ns_poinc = 120
+            if nchi_poinc is None:
+                nchi_poinc = 2
+            self.ns_poinc = ns_poinc
+            self.nchi_poinc = nchi_poinc
+        self.Nmaps = Nmaps
+        self.comm = comm
+        self.tmax = tmax
+        self.solver_options = solver_options
+
+        # if using a ShearAlfvenWavesSuperposition, use the test_saw for
+        # computing Eprime, Phin, Phim, and omega as the largest mode
+        # this does not produce a poincare plot in the strict sense,
+        # but you will be unable to visualize surfaces
+        if dominant_saw is None:
+            self.Phin = saw.Phin
+            self.Phim = saw.Phim
+            self.omega = saw.omega
+        else:
+            self.Phin = dominant_saw.Phin
+            self.Phim = dominant_saw.Phim
+            self.omega = dominant_saw.omega
+
+        self.nprime = (self.Phim * self.helicity_N - self.Phin * self.helicity_M) / (
+            self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
+        )
+
+        if Eprime is not None and mu is not None:
+            self.Eprime = Eprime
+            self.mu = mu
+            self.Ekin = None
+        elif Ekin is not None and lam is not None and p0 is not None:
+            """
+            Compute unperturbed values of mu, p_eta, and Eprime from the given
+            parameters.
+            """
+            v0 = np.sqrt(2 * Ekin / mass)  # Total velocity from kinetic energy
+            self.mu = 0.5 * lam * v0**2  # mu = vperp^2/(2 B)
+            self.Ekin = Ekin  # Total kinetic energy
+            saw.B0.set_points(p0)
+            modB = saw.B0.modB()[0, 0]
+            if 1 - lam * modB < 0:
+                raise ValueError(
+                    "Invalid parameter p0: 1 - lambda * modB must be non-negative."
+                )
+            vpar = sign_vpar * v0 * np.sqrt(1 - lam * modB)  # Parallel velocity
+            Peta0 = compute_peta(
+                saw.B0,
+                p0,
+                vpar,
+                mass,
+                charge,
+                helicity_M,
+                helicity_N,
+            )
+            self.Eprime = self.nprime * Ekin - self.omega * Peta0
+        else:
+            raise ValueError(
+                "Either Eprime and mu must be provided, or Ekin, lam, and p0 "
+                "must be provided."
+            )
+
+        # Initialize the passing map
+        self.s_init, self.chis_init, self.vpars_init = self.initialize_passing_map()
+        np_chis = np.array(self.chis_init)
+        np_etas = np.zeros_like(np_chis)
+
+        theta, zeta = self.chi_eta_to_theta_zeta(np_chis, np_etas)
+        point = np.zeros((len(self.s_init), 4))
+        point[:, 0] = self.s_init
+        point[:, 1] = theta
+        point[:, 2] = zeta
+        vp = np.array(self.vpars_init)
+        vp = vp.reshape(-1)
+        self.Petas_init = compute_peta(
+                saw,
+                point,
+                vp,
+                mass,
+                charge,
+                helicity_M,
+                helicity_N,
+            )
+
+
+        # If Ekin is not provided, compute it from the initial parallel velocity
+        # this is only used for computing maximum time step in the ODE solver
+        if self.Ekin is None:
+            self.Ekin = 0.5 * self.mass * self.vpars_init[0] ** 2
+
+        (
+            self.s_all,
+            self.chis_all,
+            self.etas_all,
+            self.vpars_all,
+            self.t_all,
+            self.Peta_all,
+            self.DA_all,
+            self.DA_times,
+            self.thetas_all,
+            self.zetas_all
+        ) = self.compute_passing_map()
+        self.final_Petas = [self.Peta_all[i][-1]for i in range(len(self.Peta_all)) if len(self.Peta_all[i])>self.Nmaps-3]
 
     def _set_helicity_Np_Mp(self, helicity_Np, helicity_Mp):
         """
@@ -1594,30 +2517,33 @@ class PassingPerturbedPoincare:
             n_zetas = [0]
             m_thetas = [self.nprime]
             omegas = [self.omega]
-
-        res_tys, res_hits = trace_particles_boozer_perturbed(
-            perturbed_field=self.saw,
-            stz_inits=points,
-            parallel_speeds=[point[2]],
-            mus=[self.mu],
-            tmax=self.tmax,
-            mass=self.mass,
-            charge=self.charge,
-            phases=phases,
-            n_zetas=n_zetas,
-            m_thetas=m_thetas,
-            omegas=omegas,
-            vpars=[0],
-            axis=0,
-            stopping_criteria=[
-                MinToroidalFluxStoppingCriterion(0.01),
-                MaxToroidalFluxStoppingCriterion(1.0),
-            ],
-            forget_exact_path=True,
-            vpars_stop=True,
-            phases_stop=True,
-            **self.solver_options,
-        )
+        try:
+            res_tys, res_hits = trace_particles_boozer_perturbed(
+                perturbed_field=self.saw,
+                stz_inits=points,
+                parallel_speeds=[point[2]],
+                mus=[self.mu],
+                tmax=self.tmax,
+                mass=self.mass,
+                charge=self.charge,
+                phases=phases,
+                n_zetas=n_zetas,
+                m_thetas=m_thetas,
+                omegas=omegas,
+                vpars=[0],
+                axis = 0,
+                stopping_criteria=[
+                    MinToroidalFluxStoppingCriterion(0.001),
+                    MaxToroidalFluxStoppingCriterion(1.0),
+                ],
+                forget_exact_path=True,
+                vpars_stop=True,
+                phases_stop=True,
+                **self.solver_options,
+            )
+        except: 
+            print(f"Error integrating guiding center equations at {point=}, {t=}")
+            raise RuntimeError(f"Error integrating guiding center equations at {point=}, {t=}, {eta=}")
         if len(res_hits[0]) == 0:
             raise RuntimeError("No stopping criterion reached in passing_map.")
 
@@ -1660,7 +2586,7 @@ class PassingPerturbedPoincare:
                 helicity_Np=self.helicity_Np,
             )
             Peta = np.column_stack((time_momentum, Peta))
-            return point, res_hit[0] + t, self.eta(res_hit[3], res_hit[4]), Peta
+            return point, res_hit[0] + t, self.eta(res_hit[3], res_hit[4]), Peta, (res_hit[3], res_hit[4])
 
     def compute_passing_map(self):
         r"""
@@ -1673,28 +2599,36 @@ class PassingPerturbedPoincare:
         chis_all = []
         etas_all = []
         vpars_all = []
+        Peta_all = []
         t_all = []
         DA_all = []
         DA_times = []
+        thetas_all = []
+        zetas_all = []
         first, last = parallel_loop_bounds(self.comm, Ntrj)
         for itrj in range(first, last):
             tr = [self.s_init[itrj], self.chis_init[itrj], self.vpars_init[itrj]]
             s_traj = [tr[0]]
             chis_traj = [tr[1]]
+            t, z = self.chi_eta_to_theta_zeta(self.chis_init[itrj],0)
+            thetas_traj = [t]
+            zetas_traj = [z]
             eta_traj = [0]
-            vpars_traj = [tr[2]]
+            vpars_traj = [tr[2][0]]
+            Peta_traj = [self.Petas_init[itrj]]
             t_traj = [0]
+
             particle_DAs = []
             particle_DA_times = []
             for jj in range(self.Nmaps):
                 try:
                     if self.DA_poinc:
                         if jj == 0:
-                            tr, time, eta, Peta = self.passing_map(
+                            tr, time, eta, Peta, angles = self.passing_map(
                                 tr, t_traj[-1], eta_traj[-1]
                             )
                         else:
-                            tr, time, eta, Peta_iter = self.passing_map(
+                            tr, time, eta, Peta_iter, angles = self.passing_map(
                                 tr, t_traj[-1], eta_traj[-1]
                             )
                             Peta_iter[:, 0] += Peta[-1, 0]
@@ -1704,8 +2638,12 @@ class PassingPerturbedPoincare:
                     s_traj.append(tr[0])
                     chis_traj.append(tr[1])
                     vpars_traj.append(tr[2])
+                    Peta_traj.append(Peta[-1, 1])
                     t_traj.append(time)
                     eta_traj.append(eta)
+                    t, z = angles[0], angles[1]
+                    thetas_traj.append(t)
+                    zetas_traj.append(z)
                     if self.DA_poinc and jj in self.WBA_transit_steps:
                         time_at_evaluation, DA_at_evaluation = return_DA(Peta)
                         particle_DAs.append(DA_at_evaluation)
@@ -1718,8 +2656,11 @@ class PassingPerturbedPoincare:
             DA_all.append(particle_DAs)
             DA_times.append(particle_DA_times)
             s_all.append(s_traj)
+            Peta_all.append(Peta_traj)
             chis_all.append(chis_traj)
             etas_all.append(eta_traj)
+            thetas_all.append(thetas_traj)
+            zetas_all.append(zetas_traj)
             vpars_all.append(vpars_traj)
             t_all.append(t_traj)
 
@@ -1729,10 +2670,106 @@ class PassingPerturbedPoincare:
             etas_all = [i for o in self.comm.allgather(etas_all) for i in o]
             vpars_all = [i for o in self.comm.allgather(vpars_all) for i in o]
             t_all = [i for o in self.comm.allgather(t_all) for i in o]
+            Peta_all = [i for o in self.comm.allgather(Peta_all) for i in o]
             DA_all = [i for o in self.comm.allgather(DA_all) for i in o]
+            thetas_all = [i for o in self.comm.allgather(thetas_all) for i in o]
+            zetas_all = [i for o in self.comm.allgather(zetas_all) for i in o]
             DA_times = [i for o in self.comm.allgather(DA_times) for i in o]
 
-        return s_all, chis_all, etas_all, vpars_all, t_all, DA_all, DA_times
+        return s_all, chis_all, etas_all, vpars_all, t_all, Peta_all, DA_all, DA_times, thetas_all, zetas_all
+    
+    def compute_frequencies(self):
+
+        if "axis" in self.solver_options and self.solver_options["axis"] != 0:
+            raise ValueError(
+                'ODE solver must integrate with solver_options["axis"]=0 to '
+                "compute passing frequencies."
+            )
+
+        self.saw.set_points(np.array([[1], [0], [0], [0]]).T)
+        sign_G = np.sign(self.saw.B0.G()[0])
+
+        omega_theta = []
+        omega_zeta = []
+        init_s = []
+        omega_zeta_exp = []
+        diff_eprime = []
+        std_eprime = []
+        Peta_prof = []
+        ds_all = []
+
+        for s_traj, chis_traj, etas_traj, _vpar_traj, Peta_traj, t_traj, thetas_traj, zetas_traj in zip(
+            self.s_all, self.chis_all, self.etas_all, self.vpars_all, self.Peta_all, self.t_all, self.thetas_all, self.zetas_all
+        ):
+            if (
+                len(s_traj) < 2
+            ):  # Need at least one full Poincare return maps to compute frequency
+                continue
+
+            theta, zeta = self.chi_eta_to_theta_zeta(np.array(chis_traj), np.array(etas_traj))
+
+            delta_theta = np.array(thetas_traj[1:]) - np.array(thetas_traj[0:-1])
+            delta_s = np.array(s_traj[1:]) - np.array(s_traj[0:-1])
+            delta_t = t_traj[1::]
+            delta_zeta = 2 * np.pi * self.sign_vpar * sign_G
+            delta_zeta_exp = np.array(zetas_traj[1:]) - np.array(zetas_traj[0:-1])
+
+            points = np.zeros((len(s_traj), 4))
+            points[:, 0] = s_traj
+            points[:, 1] = theta
+            points[:, 2] = zeta
+
+            trajectory_eprime = compute_Eprime(self.saw, points, _vpar_traj, self.mu, self.mass, self.charge, self.helicity_M, self.helicity_N)
+            eprime_std = np.std(trajectory_eprime)
+
+            eprime_pert = (np.mean(trajectory_eprime) - self.Eprime)/eprime_std
+
+            # Average over wells along one field line
+            freq_theta = np.mean(delta_theta) / np.mean(delta_t)
+            freq_zeta = delta_zeta / np.mean(delta_t)
+            freq_zeta_exp = np.mean(np.mod(delta_zeta_exp, 2 * np.pi)) / np.mean(delta_t)
+
+            diff_eprime.append(eprime_pert)
+            std_eprime.append(eprime_std/np.abs(np.mean(trajectory_eprime)))
+
+            omega_theta.append(freq_theta)
+            omega_zeta.append(freq_zeta)
+            omega_zeta_exp.append(freq_zeta_exp)
+            init_s.append(np.mean(s_traj))
+            ds_all.append(np.mean(delta_s))
+            Peta_prof.append(Peta_traj[-1])
+
+        omega_theta = np.array(omega_theta)
+        omega_zeta = np.array(omega_zeta)
+        omega_zeta_exp = np.array(omega_zeta_exp)
+        std_eprime = np.array(std_eprime)
+        ds_all = np.array(ds_all)
+        diff_eprime = np.array(diff_eprime)
+        Peta_prof = np.array(Peta_prof)
+
+        init_s = np.array(init_s)
+
+        s_prof = np.unique(init_s)
+        omega_theta_prof = np.zeros((len(s_prof),))
+        omega_zeta_prof = np.zeros((len(s_prof),))
+        omega_zeta_exp_prof = np.zeros((len(s_prof),))
+        ds_all_prof = np.zeros((len(s_prof),))
+        diff_eprime_prof = np.zeros((len(s_prof),))
+        std_eprime_prof = np.zeros((len(s_prof),))
+        Peta_s_prof = np.zeros((len(s_prof),))
+
+        # Average over field-line label
+        for i, s in enumerate(s_prof):
+            indicies = omega_theta[np.where(init_s == s)]
+            omega_theta_prof[i] = np.mean(omega_theta[np.where(init_s == s)])
+            omega_zeta_prof[i] = np.mean(omega_zeta[np.where(init_s == s)])
+            omega_zeta_exp_prof[i] = np.mean(omega_zeta_exp[np.where(init_s == s)])
+            ds_all_prof[i] = np.mean(ds_all[np.where(init_s == s)])
+            diff_eprime_prof[i] = np.mean(diff_eprime[np.where(init_s == s)])
+            std_eprime_prof[i] = np.mean(std_eprime[np.where(init_s == s)])
+            Peta_s_prof[i] = np.mean(Peta_prof[np.where(init_s == s)])
+
+        return omega_theta_prof, omega_zeta_prof, s_prof, omega_zeta_exp_prof, ds_all_prof, diff_eprime_prof, std_eprime_prof, Peta_s_prof
 
     def plot_poincare(
         self,
@@ -1740,7 +2777,8 @@ class PassingPerturbedPoincare:
         filename="passing_poincare.pdf",
         convergence_test_indicies=None,
         DA_max=7,
-        ylims=(0, 1),
+        lines = None,
+        ylims=(-0.5e-18, 0.5e-18),
     ):
         r"""
         Plot the passing Poincare map and save to a file. It is recommended to only
@@ -1774,19 +2812,15 @@ class PassingPerturbedPoincare:
         star_ICs = False
 
         if convergence_test_indicies is None:
-            convergence_test_indicies = list(range(len(self.s_all)))
+            convergence_test_indicies = list(range(len(self.Peta_all)))
         else:
             star_ICs = True
 
         if self.DA_poinc and self.nconvergence_points > 1:
-            s_itrj_map = {}
-            for itrj in convergence_test_indicies:
-                s_itrj_map[itrj] = self.s_all[itrj][0]
-
-            min_s = min(list(s_itrj_map.values()))
-            max_s = max(list(s_itrj_map.values()))
-            s_lst_true = list(s_itrj_map.values())
-            cmap_s = mpl.colormaps["copper"].resampled(len(s_lst_true) ** 2)
+    
+            min_Peta = min(self.Petas_init)
+            max_Peta = max(self.Petas_init)
+            cmap_s = mpl.colormaps["copper"].resampled(len(self.Petas_init) ** 2)
 
         if ax is None:
             fig, ax = plt.subplots()
@@ -1810,17 +2844,18 @@ class PassingPerturbedPoincare:
             # normalized DA values for colormap
             DA_norm_all = normalize(final_DAs)
             cmap_object = mpl.colormaps[cmap].resampled(len(self.DA_all) ** 2)
+        print(f"final_DAs: {final_DAs}")
 
-        ax.set_xlabel(r"$\chi$")
-        ax.set_ylabel(r"$s$")
-        ax.set_xlim([0, 2 * np.pi])
-        ax.set_ylim([ylims[0], ylims[1]])
+        ax.set_ylabel(r"$\chi$")
+        ax.set_xlabel(r"$P_\eta$")
+        ax.set_ylim([0, 2 * np.pi])
+        ax.set_xlim(min(self.final_Petas), max(self.final_Petas))
 
         for i in range(len(self.chis_all)):
             if self.DA_poinc:
                 ax.scatter(
+                    self.Peta_all[i],
                     np.mod(self.chis_all[i], 2 * np.pi),
-                    self.s_all[i],
                     marker="o",
                     s=0.75,
                     c=cmap_object(DA_norm_all[i]),
@@ -1828,8 +2863,8 @@ class PassingPerturbedPoincare:
                 )
             else:
                 ax.scatter(
+                    self.Peta_all[i],
                     np.mod(self.chis_all[i], 2 * np.pi),
-                    self.s_all[i],
                     marker="o",
                     s=0.75,
                     edgecolors="none",
@@ -1837,11 +2872,11 @@ class PassingPerturbedPoincare:
 
         if star_ICs:
             # scatter initial conditions observed in convergence plot onto poincare plot
-            for i in s_itrj_map:
-                s_norm = (s_itrj_map[i] - min_s) / (max_s - min_s)
+            for i in range(len(self.Petas_init)):
+                s_norm = (self.Petas_init[i] - min_Peta) / (max_Peta - min_Peta)
                 ax.scatter(
+                    self.Peta_all[i][0],
                     np.mod(self.chis_all[i][0], 2 * np.pi),
-                    self.s_all[i][0],
                     marker="*",
                     s=25,
                     color=cmap_s(s_norm),
@@ -1858,8 +2893,9 @@ class PassingPerturbedPoincare:
                 orientation="vertical",
                 label="Digit Accuracy",
             )
+        
         plt.tight_layout()
-        plt.savefig(filename)
+        plt.savefig(filename + ".png", dpi = 400)
 
         # convergence plot - change in DA with number of transit evaluations
         # histogram of final DA values
@@ -1868,15 +2904,15 @@ class PassingPerturbedPoincare:
             ax2.set_ylabel(r"Digit Accuracy")
             ax2.set_xlabel(r"Toroidal Periods")
 
-            for itrj in s_itrj_map:
+            for itrj in range(len(self.Petas_init)):
                 ax2.plot(
                     self.DA_times[itrj],
                     self.DA_all[itrj],
-                    color=cmap_s((s_itrj_map[itrj] - min_s) / (max_s - min_s)),
+                    color=cmap_s((self.Petas_init[itrj] - min_Peta) / (max_Peta - min_Peta)),
                     alpha=0.75,
-                    label=f"{s_itrj_map[itrj]}",
+                    label=f"{self.Petas_init[itrj]}",
                 )
-            norm = plt.Normalize(min(s_lst_true), max(s_lst_true))
+            norm = plt.Normalize(min(self.Petas_init), max(self.Petas_init))
             fig.colorbar(
                 ScalarMappable(norm=norm, cmap=cmap_s),
                 ax=ax,
@@ -1885,16 +2921,22 @@ class PassingPerturbedPoincare:
             )
 
             fig.tight_layout()
-            plt.savefig("convergence_" + filename)
+            plt.savefig(filename+"_convergence.png", dpi=300)
 
-            plt.clf()
-            plt.hist(final_DAs)
-            plt.xlabel("Digit Accuracy")
-            plt.title("Distribution of Digit Accuracy")
-            plt.tight_layout()
-            plt.savefig("DA_histogram_" + filename)
+        plt.clf()
+        final_Petas = [self.Peta_all[i][-1]for i in range(len(self.Peta_all)) if len(self.Peta_all[i])>self.Nmaps-3]
+        print(f'{(final_Petas)=}')
+        plt.hist(self.Petas_init, alpha=0.5,density=True,bins=30, label='init')
+        plt.hist(final_Petas, alpha=0.5, density=True,bins=30, label='final')
+        plt.xlabel(r"$P_\eta$")
+        plt.ylabel("Distribution")
+        plt.legend()
+        fig.tight_layout()
+        plt.savefig(filename+"_Peta_hist.png", dpi=300)
         return ax
-
+    """
+    
+    """
     def get_poincare_data(self):
         """
         Return the Poincare map data.
@@ -1912,6 +2954,543 @@ class PassingPerturbedPoincare:
             self.DA_times,
         )
 
+class MapPhaseSpace:
+    def __init__(
+        self,
+        saw,
+        Phin_max,
+        Phim_max,
+        omega,
+        sign_vpar,
+        mass,
+        charge,
+        Ekin,
+        helicity_N,
+        helicity_M,
+        helicity_Mp,
+        helicity_Np,
+        ns_points=12,
+        particles_per_surface = 6,
+        nlambda_points=12,
+        randomize_particles = False,
+        number_of_particles = 10000,
+        Eprime = None,
+        Eprime_slice = False,
+        min_timestep=1e-6,
+        s_lims=[0.01,0.95],
+        mean=True,
+        comm=None,
+        tmax=1e-2,
+        tol=1e-10,
+        solver_options={},
+        savedata=[True, 'DATA/'],
+        nconvergence_points = 1
+    ):
+        # @TODO: add user checks for saw
+        # @TODO: add user checks for helicity
+        # @TODO: add option to feed in ICs directly
+
+        # set field parameters
+        self.saw = saw
+        self.B0 = saw.B0
+        self.helicity_M = helicity_M
+        self.helicity_N = helicity_N
+        self.helicity_Mp = helicity_Mp
+        self.helicity_Np = helicity_Np
+        #self.Phihat = max(saw.Phihat_value_or_tuple)
+
+        self.Phim = Phim_max
+        self.Phin = Phin_max
+        self.Phimp = (self.Phim * self.helicity_Np - self.Phin * self.helicity_Mp)/( self.helicity_M * self.helicity_Np - self.helicity_Mp * self.helicity_N)
+        self.Phinp = (self.Phim * self.helicity_Np - self.Phin * self.helicity_Mp)/( self.helicity_M * self.helicity_Np - self.helicity_Mp * self.helicity_N)
+        
+        self.nprime = (self.Phim * self.helicity_N - self.Phin * self.helicity_M) / (
+            self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
+        )
+        self.omega = omega
+        self.omegan = self.omega / self.nprime
+
+        self.tol = tol
+
+        # set timing parameters
+        self.tmax = tmax
+        self.min_timestep = min_timestep
+
+        # @TODO: add Eprime calculation
+        # @TODO: ADD RANDOM CONST EPRIME? ONLY EXISTS FOR GRID
+        self.Ekin = Ekin
+        self.vtotal = np.sqrt(2*self.Ekin/mass)
+        self.mass = mass
+        self.charge = charge
+        self.vpar_sign = sign_vpar
+        self.Eprime_slice = Eprime_slice
+        self.Eprime = Eprime
+
+        # set communicator parameters
+        self.comm = comm
+        self.verbose=False
+        if self.comm==None:
+            self.verbose = True
+        elif self.comm.rank==0:
+            self.verbose = True
+
+        self.solver_options = solver_options
+
+        def min_volumemodB():
+            resolution = 100 
+            points = np.zeros((resolution * resolution,3))
+
+            for surface in np.linspace(0,0.99,resolution):
+                if surface == 0:
+                    points = initialize_position_uniform_surf(self.B0,resolution ,surface)
+                else:
+                    sampled_surface = initialize_position_uniform_surf(self.B0, resolution ,surface)
+                    points = np.concatenate((points,sampled_surface), axis=0)
+                    
+            self.B0.set_points(points)
+            modB = self.B0.modB()[:,0]
+            return np.min(modB)
+        
+        self.min_volmodB=min_volumemodB()
+
+        # plotting settings
+        self.mean = mean
+        self.savedata = savedata[0]
+        self.savepath = savedata[1]
+        self.convergence_points = nconvergence_points
+
+        self.s_min = s_lims[0]
+        self.s_max = s_lims[1]
+
+        self.randomize_particles = randomize_particles
+        # instantiate ICs 
+        if randomize_particles:
+            self.nParticles = number_of_particles
+            self.s, self.thetas, self.zetas, self.vpar, self.mu = self.instantiate_uniform_particles(self.nParticles)
+        else:
+            self.ns_points = ns_points
+            self.particles_per_surface = particles_per_surface
+            self.nlambda_points = nlambda_points
+            self.s, self.thetas, self.zetas, self.vpar, self.mu = self.instantiate_gridded_particles()
+
+        # set parameters for convergence plot
+        expected_length = int(self.tmax/self.min_timestep)
+        expected_step = int(expected_length/self.convergence_points)
+        self.WBA_transit_steps = np.linspace(expected_step, expected_length - 1, num=nconvergence_points, dtype=int).tolist()
+        self.convergence_plot = True if nconvergence_points>1 else False
+        self.da_values, self.wall_lost, self.surfaces, self.pitch_angles = self.map_uniform_surfaces()
+
+    def chi(self, theta, zeta):
+        r"""
+        Compute the helical angle chi = M*theta - N*zeta.
+
+        Args:
+            theta : Poloidal angle.
+            zeta : Toroidal angle.
+        Returns:
+            chi : The helical angle.
+        """
+        return self.helicity_M * theta - self.helicity_N * zeta
+    
+    def instantiate_uniform_particles(self, nParticles):
+        tracing_points = initialize_position_uniform_vol(
+            self.B0,
+            nParticles,
+            comm=self.comm,
+            seed=None,
+        )
+        vpars_init = initialize_velocity_uniform(
+            self.vtotal,
+            nParticles,
+            comm=self.comm,
+            seed=None,
+        )
+        
+        self.B0.set_points(tracing_points)
+        modB = self.B0.modB()[:,0]
+        mus_per_mass = (1/(2 * modB)) * (self.vtotal**2 - vpars_init**2)
+        return tracing_points[:,0],tracing_points[:,1],tracing_points[:,2], vpars_init, mus_per_mass
+
+    def chi_eta_to_theta_zeta(self, chi, eta):
+        r"""
+        Convert helical angles (chi, eta) to (theta, zeta).
+
+        Args:
+            chi : Helical angle chi.
+            eta : Mapping angle eta.
+        Returns:
+            theta : Poloidal angle.
+            zeta : Toroidal angle.
+        """
+        denom = self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
+        theta = (self.helicity_Np * chi - self.helicity_N * eta) / denom
+        zeta = (self.helicity_Mp * chi - self.helicity_M * eta) / denom
+
+        return theta, zeta
+
+    def vpar_func(self, s, theta, zeta, p_a, sgn):
+        point = np.zeros((1, 3))
+        point[:, 0] = s
+        point[:, 1] = theta
+        point[:, 2] = zeta
+        self.B0.set_points(point)
+        modB = self.B0.modB()[0, 0]
+        if 1 - p_a * modB < 0:
+            return np.nan
+        else:
+            return sgn * self.vtotal * np.sqrt(1 - p_a * modB)
+    
+    def vpar_func_perturbed(self, s, theta, zeta, mu, sgn):
+        # Choose initial conditions on the eta = 0 plane
+        point = np.zeros((len(s), 4))  # initialize with t = 0
+        point[:, 0] = s
+        point[:, 1] = theta
+        point[:, 2] = zeta
+        self.saw.set_points(point)
+        modB = self.B0.modB()[:, 0]
+        G = self.B0.G()[:, 0]
+        I = self.B0.I()[:, 0]
+        psi = self.B0.psi0 * s
+        psip = self.B0.psip()[:, 0]
+        Phi = self.saw.Phi()[:, 0]
+        alpha = self.saw.alpha()[:, 0]
+        denom = (
+            self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
+        )  # - 1 in QA
+        d_peta_d_vpar = (
+            -((self.helicity_M * G + self.helicity_N * I) * (self.mass / modB))
+            / denom
+        )  # G m/ modB in QA
+        d_E_d_vpar2 = 0.5 * self.mass
+        a = self.nprime * d_E_d_vpar2  # Coefficient of vpar^2
+        b = -self.omega * d_peta_d_vpar  # Coefficient of vpar
+        # Constant term
+        c = (
+            self.nprime * (self.mass * mu * modB + self.charge * Phi)
+            + self.omega
+            * (
+                (self.helicity_M * G + self.helicity_N * I) * self.charge * alpha
+                + self.charge * (self.helicity_N * psi - self.helicity_M * psip)
+            )
+            / denom
+            - self.Eprime
+        )
+        if (b**2 - 4 * a * c) < 0:
+            print(
+                "No solution for vpar found! Check the parameters and "
+                "initial conditions."
+            )
+            return np.nan
+        elif a != 0:
+            return (-b + sgn * np.sqrt(b**2 - 4 * a * c)) / (2 * a)
+        else:
+            return (-c / b) * sgn
+    
+    def instantiate_gridded_particles(self):
+        surfaces = np.linspace(self.s_min,self.s_max,self.ns_points)
+        pitch_angle = np.linspace(-1,1,self.nlambda_points)
+
+        surfaces,pitch_angle = np.meshgrid(surfaces,pitch_angle)
+        
+        surfaces_flat = surfaces.flatten()
+        pitch_angle_flat = pitch_angle.flatten()
+
+        vpars = []
+        mus = []
+        for particle_index in range(len(surfaces_flat)):
+            points_temp = initialize_position_uniform_surf(
+                    self.B0, 
+                    self.particles_per_surface,
+                    surfaces_flat[particle_index],
+                    comm=self.comm)
+            if self.Eprime_slice:
+                sgn = np.sign(pitch_angle_flat[particle_index])
+                mu = (np.abs(pitch_angle_flat[particle_index]) * self.Ekin)
+                vpars_temp = self.vpar_func_perturbed(
+                    points_temp[:,0],
+                    points_temp[:,1],
+                    points_temp[:,2],
+                    mu,
+                    sgn
+                )
+            else:
+                sgn = np.sign(pitch_angle_flat[particle_index])
+                mu = (np.abs(pitch_angle_flat[particle_index]) * self.Ekin)
+                vpars_temp = self.vpar_func(
+                    points_temp[:,0],
+                    points_temp[:,1], 
+                    points_temp[:,2], 
+                    np.abs(pitch_angle_flat[particle_index]), 
+                    sgn)
+            
+            # remove unphysical particles
+            mask = ~np.isnan(vpars_temp)
+            vpars_temp = vpars_temp[mask]
+            points_temp = points_temp[mask]
+
+            vpars_temp = vpars_temp.tolist()
+            vpars += vpars_temp
+            mus += [mu]*len(vpars_temp)
+            if particle_index == 0:
+                points = points_temp
+            else: 
+                points = np.stack((points, points_temp))
+        return points[:,0].tolist(), points[:,1].tolist(), points[:,2].tolist(), vpars, mus
+
+    def chi(self, theta, zeta):
+        r"""
+        Compute the helical angle chi = M*theta - N*zeta.
+
+        Args:
+            theta : Poloidal angle.
+            zeta : Toroidal angle.
+        Returns:
+            chi : The helical angle.
+        """
+        return self.helicity_M * theta - self.helicity_N * zeta
+
+    def eta(self, theta, zeta):
+        r"""
+        Compute the mapping angle eta = Mp*theta - Np*zeta.
+
+        Args:
+            theta : Poloidal angle.
+            zeta : Toroidal angle.
+        Returns:
+            eta : The mapping angle.
+        """
+        return self.helicity_Mp * theta - self.helicity_Np * zeta
+
+    def chi_eta_to_theta_zeta(self, chi, eta):
+        r"""
+        Convert helical angles (chi, eta) to (theta, zeta).
+
+        Args:
+            chi : Helical angle chi.
+            eta : Mapping angle eta.
+        Returns:
+            theta : Poloidal angle.
+            zeta : Toroidal angle.
+        """
+        denom = self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
+        theta = (self.helicity_Np * chi - self.helicity_N * eta) / denom
+        zeta = (self.helicity_Mp * chi - self.helicity_M * eta) / denom 
+        return theta, zeta
+    
+    def remove_equilibrium_lost_particles(self, points, vpars_init, mus):
+
+        # trace particles in equilibrium field to see if any are lost
+        gc_tys, gc_zeta_hits = trace_particles_boozer(
+            field = self.B0, 
+            stz_inits = points, 
+            parallel_speeds = vpars_init,
+            tmax=2e-3,
+            mass=self.mass, 
+            charge=self.charge,
+            Ekin=self.Ekin,
+            comm = self.comm,
+            dt_save=self.min_timestep,
+            tol=self.tol,
+            stopping_criteria=[
+                MaxToroidalFluxStoppingCriterion(1.0)
+            ],
+            mode='gc_noK',
+            **self.solver_options
+            )
+
+        # check if any particles were lost to the wall 
+        lost_total = []
+        for i in range(len(gc_zeta_hits)):
+            if gc_zeta_hits[i].size>0:
+                if int(gc_zeta_hits[i][0][1]) ==-1:
+                    lost_total.append(i)
+        
+        # remove wall lost particles from the list of evaluated particles
+        lost_total.sort(reverse=True)
+        for elem in lost_total:
+            points=np.delete(points, elem, axis=0)
+            del vpars_init[elem]
+            del mus[elem]
+
+        return points[:, 0].tolist(), points[:, 1].tolist(), points[:, 2].tolist(), vpars_init, mus, lost_total
+
+    def trace_particles(self):
+        initial_point = np.zeros((len(self.s), 3))  # initialize with t = 0
+        initial_point[:, 0] = self.s
+        initial_point[:, 1] = self.thetas
+        initial_point[:, 2] = self.zetas
+
+        self.s, self.thetas, self.zetas, self.vpar, self.mus = self.remove_equilibrium_lost_particles(initial_point, self.vpar, self.mu)
+
+        first, last = parallel_loop_bounds(self.comm, len(self.s))
+        res_tys = []  # what need out: trajectory
+        res_hits = []
+        s_final = []
+        theta_final = []
+        zeta_final = []
+        pitch_final = []
+        DAs = []
+
+        # what need out: 
+
+        for itrj in range(first, last):
+            # @TODO: remove equilibrium lost particles
+            point = np.zeros((1, 4))  # initialize with t = 0
+            point[:, 0] = self.s[itrj]
+            point[:, 1] = self.thetas[itrj]
+            point[:, 2] = self.zetas[itrj]
+            point[:, 3] = 0.0
+
+            vpar = [self.vpar[itrj]]
+            mu = [self.mus[itrj]/self.mass]
+            gc_tys, gc_zeta_hits = trace_particles_boozer_perturbed(
+                    perturbed_field = self.saw, 
+                    stz_inits = point, 
+                    parallel_speeds = vpar,
+                    mus = mu, 
+                    tmax=self.tmax, 
+                    mass=self.mass, 
+                    charge=self.charge,
+                    Ekin=self.Ekin,
+                    tol=self.tol,
+                    comm=self.comm,
+                    stopping_criteria=[
+                        MaxToroidalFluxStoppingCriterion(1.0)
+                    ],
+                    mode='gc_noK',
+                    **self.solver_options,
+                    )
+            points_trajectory = gc_tys[0]
+            time_momentum, s_path, theta_path, zeta_path, vpar_path = points_trajectory[:, 0], points_trajectory[:, 1], points_trajectory[:, 2], points_trajectory[:, 3], points_trajectory[:, 4]
+            points_trajectory = np.column_stack(
+                (s_path, theta_path, zeta_path, time_momentum)
+            )
+            idx_wall = np.argmax(s_path >= 1) if np.any(s_path >= 1) else None
+            if idx_wall is not None and s_path[idx_wall] >= 1:
+                print(f"Particle {itrj} hit the wall at time {time_momentum[idx_wall]}, s = {s_path[idx_wall]}",flush=True)
+                idx_wall -= 1
+                points_trajectory = points_trajectory[:idx_wall, :]
+                vpar_path = vpar_path[:idx_wall]
+
+            if points_trajectory.shape[0] < 10:
+                print(f"Particle {itrj} has no valid trajectory points \t {point[0, :]}", flush=True)
+                start_state = [0, point[0, 0], point[0, 1], point[0, 2], None, None, None]
+                particle_out = [start_state, start_state]
+                res_tys.append(particle_out)
+                res_hits.append(np.asarray(gc_zeta_hits))
+                continue
+
+            self.saw.set_points(points_trajectory)
+            modB = self.saw.B0.modB()[:, 0]
+            E = 0.5 * self.mass * vpar_path**2 + self.mass * mu[0] * modB + self.charge * self.saw.Phi()[:, 0]
+            Peta_values  = compute_peta(
+                self.saw,
+                points_trajectory,
+                vpar_path,
+                self.mass,
+                self.charge,
+                self.helicity_M,
+                self.helicity_N,
+                self.helicity_Mp,
+                self.helicity_Np
+            )
+
+            trunc_Peta = Peta_values[::3]
+            trunc_s = s_path[::3]
+            trunc_t = time_momentum[::3]
+
+            if len(trunc_Peta) != len(trunc_t):
+                trunc_t = trunc_t[:len(trunc_Peta)]
+                trunc_s = trunc_s[:len(trunc_Peta)]
+
+            trunc_path_t = np.column_stack((trunc_t,trunc_Peta, trunc_s))
+            #np.savetxt(f'{self.folder}particle_{itrj}_path.txt', trunc_path_t)
+
+            s_mean = np.mean(s_path)
+
+            dt = np.diff(trunc_t)
+            ds = np.diff(trunc_s)  
+            dt_diff = trunc_t[1:] - trunc_t[:-1]
+
+            d_eff_0 = 0.5 * np.mean((trunc_Peta[1:] - trunc_Peta[0])**2  / dt_diff)
+
+
+            d_eff_path =  0.5 * (np.mean(ds)**2) / np.mean(dt_diff)
+
+            d_s_path = 0.5 * (np.mean(ds)**2) / np.mean(dt_diff)
+
+            average_peta = np.mean(Peta_values)
+            time_eval, DA_eval = return_DA(np.column_stack((points_trajectory[:, 3], Peta_values)))
+
+            end_points = points_trajectory[-1,:-1] 
+            start_points = points_trajectory[0,:-1]
+
+            diffusion_data = [d_eff_0, d_eff_path, d_s_path]
+            mean_data = [s_mean,d_eff_0,  average_peta, np.mean(E)]
+
+            start_phasespace = [vpar_path[0],Peta_values[0], E[0]]
+            end_phasespace = [vpar_path[-1],Peta_values[-1], E[-1]]
+            end_state = [points_trajectory[-1,-1].tolist()] + end_points.tolist() + end_phasespace
+            start_state = [points_trajectory[0,-1].tolist()] + start_points.tolist() + start_phasespace
+            particle_out = [start_state, end_state, diffusion_data, mean_data, DA_eval]
+            res_tys.append(particle_out)
+            res_hits.append(gc_zeta_hits[0])
+            DAs.append(DA_eval)
+            s_final.append(points_trajectory[-1, 0])
+            theta_final.append(points_trajectory[-1, 1])
+            zeta_final.append(points_trajectory[-1, 2])
+            pitch_final.append(self.mus[itrj]/self.Ekin)
+
+        if self.comm is not None:
+            res_tys = [i for o in self.comm.allgather(res_tys) for i in o]
+            res_hits = [i for o in self.comm.allgather(res_hits) for i in o]
+            DAs = [i for o in self.comm.allgather(DAs) for i in o]
+            s_final = [i for o in self.comm.allgather(s_final) for i in o]
+            theta_final = [i for o in self.comm.allgather(theta_final) for i in o]
+            zeta_final = [i for o in self.comm.allgather(zeta_final) for i in o]
+            pitch_final = [i for o in self.comm.allgather(pitch_final) for i in o]
+
+        self.s_final = s_final
+        self.theta_final = theta_final
+        self.zeta_final = zeta_final
+        self.pitch_final = pitch_final
+        self.DA_final = DAs
+        return res_tys, res_hits, DAs
+
+    def plot_surfaces(self, nx=20, ny=20, savepath = 'heatmap_digit_accuracy.png',  ax=None, DA_max=7):
+        import matplotlib as mpl
+        from matplotlib.cm import ScalarMappable
+        import matplotlib.pyplot as plt
+        from scipy.stats import binned_statistic_2d
+        import cmcrameri.cm as cmc 
+
+        if ax is None:
+            fig, ax = plt.subplots()
+        else:
+            fig = ax.get_figure()
+
+        if not self.randomize_particles:
+            ny = self.ns_points
+            nx = self.nlambda_points
+        
+        norm = mpl.colors.Normalize(vmin=0, vmax=DA_max)
+
+        stat, x_edges, y_edges, binnumber = binned_statistic_2d(
+            self.pitch_final, self.s_final, self.DA_final,
+            statistic='mean',
+            bins=[nx, ny]
+        )
+
+        # Meshgrid
+        X2, Y2 = np.meshgrid(x_edges, y_edges)
+
+        im2 = ax.pcolormesh(X2, Y2, stat.T, shading='auto', cmap="cmc.managua", norm=norm)
+        ax.set_title(r'Heatmap of Digit Accuracy')
+        ax.set_xlabel(r'$\lambda = \frac{\mu}{E}$')
+        ax.set_ylabel(r'$s_0$')
+
+        fig.colorbar(im2, ax=ax, label='Digit Accuracy')
+        plt.savefig(savepath, dpi=400)
 
 def trajectory_to_vtk(res_ty, field, filename="trajectory"):
     r"""
