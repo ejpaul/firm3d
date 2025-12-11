@@ -56,7 +56,10 @@ jobs:
         sudo apt-get install -y cmake ninja-build libboost-all-dev libopenmpi-dev libnetcdf-dev libhdf5-dev libnetcdf-c++4-dev libgsl-dev pkg-config
 
     - name: Configure CUDA
-      uses: Jimver/cuda-toolkit@master
+      uses: Jimver/cuda-toolkit@master  
+      id: cuda-toolkit
+      with:
+        cuda: '12.5.0'
 
     - name: Install dependencies
       run: |
