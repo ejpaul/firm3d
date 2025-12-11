@@ -1050,6 +1050,10 @@ extern "C" vector<double> boozer_saw_gpu_tracing(py::array_t<double> quad_pts, p
     std::vector<double> results =  gpu_tracing<RHS::GC_BoozerVacuumSAW>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles,
                                                                         saw_omega, saw_m_d, saw_n_d, saw_phihats_d, saw_nharmonics);
 
+    gpuErrchk( cudaFree(saw_m_d) );
+    gpuErrchk( cudaFree(saw_n_d) );
+    gpuErrchk( cudaFree(saw_phihats_d) );
+
     for(int i=0; i<nparticles; ++i){
         double x1 = results[5*i+1];
         double x2 = results[5*i+2];
@@ -1111,6 +1115,10 @@ extern "C" vector<double> boozer_saw_nok_gpu_tracing(py::array_t<double> quad_pt
 
     std::vector<double> results =  gpu_tracing<RHS::GC_BoozerNoKSAW>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles,
                                                                         saw_omega, saw_m_d, saw_n_d, saw_phihats_d, saw_nharmonics);
+
+    gpuErrchk( cudaFree(saw_m_d) );
+    gpuErrchk( cudaFree(saw_n_d) );
+    gpuErrchk( cudaFree(saw_phihats_d) );
 
     for(int i=0; i<nparticles; ++i){
         double x1 = results[5*i+1];

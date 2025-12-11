@@ -79,7 +79,7 @@ last_time = np.reshape(last_time, (nparticles, 5))
 
 
 particle_data = pd.DataFrame({'s_start': stz_inits[:,0], 't_start': stz_inits[:,1], 'z_start':stz_inits[:,2], 'vpar_start':vpar_inits,
-							  's_end': last_time[:,1], 't_end':last_time[:,2], 'z_end':last_time[:,3], 'vpar_end':last_time[:,3], 'last_time':last_time[:,0]})
+							  's_end': last_time[:,1], 't_end':last_time[:,2], 'z_end':last_time[:,3], 'vpar_end':last_time[:,4], 'last_time':last_time[:,0]})
 particle_data.to_csv('./examples/gpu_boozer_tracing/particle_data.csv')
 
 
