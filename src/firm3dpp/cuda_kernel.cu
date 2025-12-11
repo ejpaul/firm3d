@@ -77,6 +77,7 @@ __constant__ double psi0_d; // used for Boozer RHS only
 __constant__ double saw_srange_d[4]; // used for SAW RHS only
 
 __constant__ bool rescale_abstol_var_d = true;
+__constant__ bool is_test_d = false;
 
 /* shape computes shape functions for cubic interpolation on a a regular grid
  * we assume the point x has been rescaled to be on the grid 0, 1, 2, 3
@@ -220,8 +221,10 @@ __device__ void calc_derivs<RHS::GC_BoozerVacuum>(double* derivs, int deriv_id, 
    __shared__ double block_interpolants[6*PARTICLES_PER_BLOCK];
     __syncthreads();
     interpolate<6>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
-    __syncthreads();
 
+
+    __syncthreads();   
+    
     if(threadIdx.x < nparticles_blk){
         double x1 = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
         double x2 = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
@@ -658,6 +661,7 @@ __device__ void calc_max_timestep_size<CoordSys::Boozer>(double* dtmax, double* 
 // set up particles for tracing
 // use the derivatives function to calculate mu, max step size
 // store these values for the remainder of tracing
+
 template<RHS id, typename... Args>
 __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax, double* x_temp, bool* symmetry_exploited, int* index_i, int* index_j, int* index_k,
                             double* quad_pts, double* x1_shape, double* x2_shape, double* x3_shape, double* state, double* derivs,
@@ -948,6 +952,8 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     gpuErrchk(cudaMemcpy(out, out_d, 5 * nparticles * sizeof(double), cudaMemcpyDeviceToHost) );
 
     gpuErrchk( cudaFree(quadpts_d) );
+    gpuErrchk( cudaFree(init_pos_d) );
+    gpuErrchk( cudaFree(out_d) );
     vector<double> particle_output(5*nparticles);
     for(int i=0; i<5*nparticles; ++i){
         particle_output[i] = out[i];
@@ -1251,7 +1257,7 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
         n = 6;
 
     } else if(rhs == "boozer_saw_vacuum"){
-        n=10;
+        n = 10;
     }
 
     // allocate and copy to device memory
@@ -1305,6 +1311,11 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
     gpuErrchk( cudaMemcpy(&out, out_d, n*n_points * sizeof(double), cudaMemcpyDeviceToHost) );
 
     auto result = py::array_t<double>(n*n_points, out);
+
+    gpuErrchk( cudaFree(quadpts_d) );
+    gpuErrchk( cudaFree(loc_d) );
+    gpuErrchk( cudaFree(out_d) );
+
     return result;
 
 }
@@ -1360,7 +1371,6 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* loc, double* vp
         build_state<id>(x_temp, 0, symmetry_exploited, index_i, index_j, index_k,
                     r_shape, phi_shape, z_shape, state, derivs, t, dt);
     }
-
     calc_derivs<id>(derivs, 0, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, nparticles_blk, args...);
     __syncthreads();
 
@@ -1447,6 +1457,9 @@ py::array_t<double> test_gpu_derivatives(py::array_t<double> quad_pts, py::array
     gpuErrchk(cudaMemcpyToSymbol(n_x3_d, &n_x3, sizeof(int)) );
     gpuErrchk(cudaMemcpyToSymbol(n_x23_d, &n_x23, sizeof(int)) );
 
+    bool is_test = true;
+    gpuErrchk(cudaMemcpyToSymbol(is_test_d, &is_test, sizeof(bool)) ); 
+
     int nthreads = THREADS_PER_BLOCK;
     int nblks = n_points / PARTICLES_PER_BLOCK + 1;
 
@@ -1466,6 +1479,13 @@ py::array_t<double> test_gpu_derivatives(py::array_t<double> quad_pts, py::array
     double out[4*n_points];
     gpuErrchk( cudaMemcpy(&out, out_d, 4*n_points * sizeof(double), cudaMemcpyDeviceToHost) );
     auto result = py::array_t<double>(4*n_points, out);
+    
+    gpuErrchk( cudaFree(quadpts_d) );
+    gpuErrchk( cudaFree(loc_d) );
+    gpuErrchk( cudaFree(vpar_d) );
+    gpuErrchk( cudaFree(time_d) );
+    gpuErrchk( cudaFree(out_d) );
+
     return result;
 }
 
@@ -1520,9 +1540,14 @@ extern "C" py::array_t<double> test_derivatives_saw(py::array_t<double> quad_pts
 
     gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(saw_srange_d, saw_srange_ext, 4*sizeof(double)) );
-        
-    return test_gpu_derivatives<RHS::GC_BoozerVacuumSAW>(quad_pts, x1_range, x2_range, x3_range, loc, vpar, time, v_total, m, q, n_points,
+    
+    py::array_t<double> out = test_gpu_derivatives<RHS::GC_BoozerVacuumSAW>(quad_pts, x1_range, x2_range, x3_range, loc, vpar, time, v_total, m, q, n_points,
                                                                         saw_omega, saw_m_d, saw_n_d, saw_phihats_d, saw_nharmonics);
+
+    gpuErrchk( cudaFree(saw_m_d) );
+    gpuErrchk( cudaFree(saw_n_d) );
+    gpuErrchk( cudaFree(saw_phihats_d) );
+    return out;
 }
 
 extern "C" py::array_t<double> test_derivatives_saw_nok(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, 
@@ -1563,8 +1588,13 @@ extern "C" py::array_t<double> test_derivatives_saw_nok(py::array_t<double> quad
     gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(saw_srange_d, saw_srange_ext, 4*sizeof(double)) );
         
-    return test_gpu_derivatives<RHS::GC_BoozerNoKSAW>(quad_pts, x1_range, x2_range, x3_range, loc, vpar, time, v_total, m, q, n_points,
+    py::array_t<double> out = test_gpu_derivatives<RHS::GC_BoozerNoKSAW>(quad_pts, x1_range, x2_range, x3_range, loc, vpar, time, v_total, m, q, n_points,
                                                                         saw_omega, saw_m_d, saw_n_d, saw_phihats_d, saw_nharmonics);
+    gpuErrchk( cudaFree(saw_m_d) );
+    gpuErrchk( cudaFree(saw_n_d) );
+    gpuErrchk( cudaFree(saw_phihats_d) );
+
+    return out;
 }
 
 template<RHS id, typename... Args>
@@ -1749,6 +1779,10 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
         particle_output[i] = out[i];
     }
 
+    gpuErrchk( cudaFree(init_pos_d) );
+    gpuErrchk( cudaFree(quadpts_d) );
+    gpuErrchk( cudaFree(out_d) );
+
     return particle_output;
 }
 
@@ -1839,6 +1873,11 @@ extern "C" vector<double> test_timestep_saw(py::array_t<double> quad_pts, py::ar
         particle_output[5*i+3] = particle_output[5*i+3];
         particle_output[5*i+4] = particle_output[5*i+4];
     }
+    gpuErrchk( cudaFree(saw_m_d) );
+    gpuErrchk( cudaFree(saw_n_d) );
+    gpuErrchk( cudaFree(saw_phihats_d) );
+    gpuErrchk( cudaFree(out_d) );
+ 
     return particle_output;
 
 };
@@ -1898,6 +1937,10 @@ extern "C" vector<double> test_timestep_saw_nok(py::array_t<double> quad_pts, py
         particle_output[5*i+3] = particle_output[5*i+3];
         particle_output[5*i+4] = particle_output[5*i+4];
     }
+    gpuErrchk( cudaFree(saw_m_d) );
+    gpuErrchk( cudaFree(saw_n_d) );
+    gpuErrchk( cudaFree(saw_phihats_d) );
+    gpuErrchk( cudaFree(out_d) );
 
     return particle_output;
 
