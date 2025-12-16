@@ -1,14 +1,15 @@
 import numpy as np
 
+import firm3dpp
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
 )
+from firm3d.util.gpu_utils import boozer_saw_interpolant
 
 np.random.seed(1865)
 
-import firm3dpp
-from firm3d.util.gpu_utils import boozer_saw_interpolant
+
 
 
 def test_interpolant_bfield(field, nfp, n_metagrid_pts, n_test_pts):

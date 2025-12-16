@@ -49,7 +49,6 @@ def test_interpolant_bfield(field, sc_particle, nfp, n_metagrid_pts, n_test_pts)
     )
     new_interpolation = np.reshape(new_interpolation, (rphiz.shape[0], 7))
 
-    # print(np.abs(simsopt_interpolation - new_interpolation) / simsopt_interpolation)
     rel_err = np.abs(
         (simsopt_interpolation - new_interpolation) / simsopt_interpolation
     )
@@ -57,7 +56,7 @@ def test_interpolant_bfield(field, sc_particle, nfp, n_metagrid_pts, n_test_pts)
     rel_err = rel_err[dist_fn > 0, :-1]  # don't test boundary distance for now
     diff = np.max(rel_err)
     print(
-        f"Maximum relative error in interpolation values on {rel_err.shape[0]} points: {diff}"
+        f"Max. relative error in interpolation values on {rel_err.shape[0]} pts: {diff}"
     )
     if diff > 1e-8:
         print("INTERPOLANT TEST FAILED")
@@ -78,8 +77,6 @@ if __name__ == "__main__":
     coils = coils_via_symmetries(curves, currents, nfp, True)
     curves = [c.curve for c in coils]
     bs = BiotSavart(coils)
-    # proc0_print("Mean(|B|) on axis =", np.mean(np.linalg.norm(bs.set_points(ma.gamma()).B(), axis=1)))
-    # proc0_print("Mean(Axis radius) =", np.mean(np.linalg.norm(ma.gamma(), axis=1)))
 
     mpol = 5
     ntor = 5

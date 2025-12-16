@@ -106,7 +106,7 @@ def test_derivs(field, sc_particle, nfp, n_metagrid_pts, n_test_pts, verify=True
         # print(np.abs(old_derivs - new_derivs) / old_derivs)
 
         print(
-            f"Maximum relative error in derivative values on {rel_err.shape[0]} points: {diff}"
+            f"Max. relative error in deriv. values on {rel_err.shape[0]} points: {diff}"
         )
         if diff > 1e-7:
             print("CARTESIAN DERIVS TEST FAILED")
@@ -177,18 +177,10 @@ def test_timestep(field, sc_particle, nfp, n_metagrid_pts, n_test_pts, verify=Tr
         nparticles=n_test_pts,
     )
 
-    # print("last_time", last_time)
 
     last_time = np.reshape(last_time, (n_test_pts, 5))
 
-    # print("last_time", last_time)
-    # print(last_time[:, 4])
     new_final_positions = last_time
-    # new_final_positions = np.array([[x[4], x[0], x[1], x[2], x[3]] for x in last_time])
-
-    # print("new final positions", new_final_positions)
-
-    # print("computing simsopt timestep")
 
     if verify:
         r = rphiz[:, 0].reshape(-1, 1)
@@ -245,8 +237,6 @@ if __name__ == "__main__":
     coils = coils_via_symmetries(curves, currents, nfp, True)
     curves = [c.curve for c in coils]
     bs = BiotSavart(coils)
-    # proc0_print("Mean(|B|) on axis =", np.mean(np.linalg.norm(bs.set_points(ma.gamma()).B(), axis=1)))
-    # proc0_print("Mean(Axis radius) =", np.mean(np.linalg.norm(ma.gamma(), axis=1)))
 
     mpol = 5
     ntor = 5

@@ -76,23 +76,7 @@ def test_derivs(field, saw_filename, nfp, n_metagrid_pts, n_test_pts):
             ]
         )
     )
-    # print("saw_phihats", saw_phihats[40:, :])
-    # print(saw_phihats.shape)
 
-    # print(saw_data['harmonics'][0])
-    # saw_m = np.ascontiguousarray([x[0] for x in saw_data['harmonics']])
-    # saw_n = np.ascontiguousarray([x[1] for x in saw_data['harmonics']])
-    # scale_factor = 21333.26539440892
-    # saw_phihats = np.ascontiguousarray(np.column_stack([x[2].T for x in saw_data['harmonics']])) * scale_factor
-    # saw_nharmonics = len(saw_m)
-
-    # print("saw phihats shape: ", saw_phihats.shape)
-    # print("stz: ", stz)
-    # print("saw_srange: ", saw_srange)
-    # print("saw_m", saw_m)
-    # print("saw_n", saw_n)
-    # print("saw_phihats", saw_phihats)
-    # print("calculating new derivatives")
     new_derivs = firm3dpp.test_derivatives_saw(
         quad_info,
         srange,

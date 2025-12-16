@@ -196,11 +196,6 @@ def cartesian_interpolant(field, sc_particle, nfp, n_metagrid_pts):
                         for k in range(4):
                             row_idx = row_start + 16 * i + 4 * j + k
 
-                            # if cell_r == 24 and cell_phi == 22 and cell_z == 20:
-                            #     print(row_idx)
-                            # print(3*cell_r+i, 3*cell_phi+j, 3*cell_z+k)
-                            # print(field.r_range[2], field.phi_range[2], field.z_range[2])
-                            # print(row_idx, phi_range[2]*z_range[2]*(3*cell_r + i) + z_range[2]*(3*cell_phi+j) + 3*cell_z + k)
                             cell_quad_pts[row_idx, :] = quad_info[
                                 phi_range[2] * z_range[2] * (3 * cell_r + i)
                                 + z_range[2] * (3 * cell_phi + j)
