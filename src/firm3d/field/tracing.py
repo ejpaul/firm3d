@@ -1,8 +1,6 @@
 from math import sqrt
 from warnings import warn
 
-from ..field.WBA_functions import compute_peta, return_DA, g
-
 import numpy as np
 
 import firm3dpp as sopp
