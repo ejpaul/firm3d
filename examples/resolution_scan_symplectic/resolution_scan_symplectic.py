@@ -1,0 +1,168 @@
+import time
+
+import numpy as np
+
+from firm3d._core.util import parallel_loop_bounds
+from firm3d.field.boozermagneticfield import (
+    BoozerRadialInterpolant,
+    InterpolatedBoozerField,
+)
+from firm3d.field.tracing import (
+    MaxToroidalFluxStoppingCriterion,
+    MinToroidalFluxStoppingCriterion,
+    trace_particles_boozer,
+)
+from firm3d.field.tracing_helpers import (
+    initialize_position_uniform_vol,
+    initialize_velocity_uniform,
+)
+from firm3d.field.trajectory_helpers import compute_peta
+from firm3d.util.constants import (
+    ALPHA_PARTICLE_CHARGE,
+    ALPHA_PARTICLE_MASS,
+    FUSION_ALPHA_PARTICLE_ENERGY,
+)
+from firm3d.util.functions import proc0_print, setup_logging
+from firm3d.util.mpi import comm_size, comm_world, verbose
+
+time1 = time.time()
+
+order = 3  # Order for radial interpolation
+degree = 3  # Degree for 3d interpolation
+boozmn_filename = "boozmn_beta2.5_QH.nc"
+tmax = 1e-4  # Time for integration
+nParticles = 10
+helicity_M = 1  # Enforce quasihelical symmetry in radial interpolation
+helicity_N = -4
+
+# Setup logging to redirect output to file
+setup_logging(f"stdout_resolution_scan_{comm_size}.txt")
+
+Ekin = FUSION_ALPHA_PARTICLE_ENERGY
+mass = ALPHA_PARTICLE_MASS
+charge = ALPHA_PARTICLE_CHARGE
+# Initialize uniformly distributed parallel velocities
+vpar0 = np.sqrt(2 * Ekin / mass)
+vpar_init = initialize_velocity_uniform(
+    vpar0,
+    nParticles,
+)
+
+## Setup radial interpolation with quasisymmetry explicitly enforced
+bri = BoozerRadialInterpolant(
+    boozmn_filename,
+    order,
+    no_K=True,
+    comm=comm_world,
+    helicity_M=helicity_M,
+    helicity_N=helicity_N,
+)
+
+resolutions = np.array([16, 32, 48, 64, 80, 96])
+dts = np.array([1e-7, 1e-8, 1e-9, 1e-10])
+
+resolutions_grid, dts_grid = np.meshgrid(resolutions, dts)
+resolutions_grid = resolutions_grid.flatten()
+dts_grid = dts_grid.flatten()
+
+errors_grid = np.zeros((len(resolutions), len(dts)))
+
+proc0_print(
+    "Starting resolution and tolerance scan with ",
+    nParticles,
+    " particles and ",
+    comm_size,
+    " MPI ranks",
+)
+for i in range(len(resolutions)):
+    proc0_print("Resolution = ", resolutions[i])
+    resolution = resolutions[i]
+
+    ns_interp = resolution
+    ntheta_interp = resolution
+    nzeta_interp = resolution
+
+    ## Setup 3d interpolation
+    field = InterpolatedBoozerField(
+        bri,
+        degree,
+        ns_interp=ns_interp,
+        ntheta_interp=ntheta_interp,
+        nzeta_interp=nzeta_interp,
+    )
+
+    points_init = initialize_position_uniform_vol(
+        field, nParticles, comm=comm_world, seed=0
+    )
+
+    for j in range(len(dts)):  # DT for ODE solver
+        proc0_print("  DT = ", dts[j])
+
+        first, last = parallel_loop_bounds(comm_world, nParticles)
+        errors = []
+        for k in range(first, last):
+            point = np.zeros((1, 3))
+            point[0, :] = points_init[k, :]
+            ## Trace alpha particle in Boozer coordinates until it hits the
+            ## s = 1 surface
+            res_tys, res_zeta_hits = trace_particles_boozer(
+                field,
+                point,
+                [vpar_init[k]],
+                tmax=tmax,
+                mass=mass,
+                charge=charge,
+                Ekin=Ekin,
+                stopping_criteria=[
+                    MinToroidalFluxStoppingCriterion(0.01),
+                    MaxToroidalFluxStoppingCriterion(1.0),
+                ],
+                forget_exact_path=False,
+                ODE_solver="symplectic",
+                roottol=1e-14,
+                predictor_step=True,
+                dt=dts[j],
+                dt_save=dts[j],
+                axis=0,
+            )
+
+            # Compute p_eta along trajectory and compare to initial value
+            res_ty = res_tys[0]
+            nsteps = len(res_ty[:, 0])
+            points = np.zeros((nsteps, 3))
+            points[:, 0] = res_ty[:, 1]
+            points[:, 1] = res_ty[:, 2]
+            points[:, 2] = res_ty[:, 3]
+            vpars = res_ty[:, 4]
+
+            peta = compute_peta(
+                field, points, vpars, mass, charge, helicity_M, helicity_N
+            )
+            peta_error = (peta - peta[0]) / peta[0]
+            errors.append(np.max(np.abs(peta_error)))
+
+        errors = [i for o in comm_world.allgather(errors) for i in o]
+        proc0_print("  Max error in p_eta = ", np.max(errors))
+        errors_grid[i, j] = np.max(errors)
+
+time2 = time.time()
+proc0_print("Elapsed time for tracing = ", time2 - time1)
+
+## Post-process results to obtain error in p_eta as a function of resolution
+## and tolerance
+if verbose:
+    import matplotlib
+
+    matplotlib.use("Agg")  # Don't use interactive backend
+    import matplotlib.pyplot as plt
+
+    plt.figure()
+    plt.contourf(
+        resolutions, dts, errors_grid.T, levels=20, norm=matplotlib.colors.LogNorm()
+    )
+    plt.yscale("log")
+    plt.xscale("log")
+    plt.xlabel("Resolution")
+    plt.ylabel("DT")
+    plt.colorbar(label="Max Error in $p_\\eta$")
+    plt.savefig("error_grid.png")
