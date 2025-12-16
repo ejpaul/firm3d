@@ -3028,19 +3028,24 @@ class MapPhaseSpace:
         # instantiate ICs 
         if randomize_particles:
             self.nParticles = number_of_particles
-            self.s, self.thetas, self.zetas, self.vpar, self.mu = self.instantiate_uniform_particles(self.nParticles)
+            s, thetas, zetas, vpar, mu = self.instantiate_uniform_particles(self.nParticles)
         else:
             self.ns_points = ns_points
             self.particles_per_surface = particles_per_surface
             self.nlambda_points = nlambda_points
-            self.s, self.thetas, self.zetas, self.vpar, self.mu = self.instantiate_gridded_particles()
+            s, thetas, zetas, vpar, mu = self.instantiate_gridded_particles()
 
         # set parameters for convergence plot
         expected_length = int(self.tmax/self.min_timestep)
         expected_step = int(expected_length/self.convergence_points)
         self.WBA_transit_steps = np.linspace(expected_step, expected_length - 1, num=nconvergence_points, dtype=int).tolist()
         self.convergence_plot = True if nconvergence_points>1 else False
-        self.da_values, self.wall_lost, self.surfaces, self.pitch_angles = self.map_uniform_surfaces()
+        initial_point = np.zeros((len(s), 3))  # initialize with t = 0
+        initial_point[:, 0] = s
+        initial_point[:, 1] = thetas
+        initial_point[:, 2] = zetas
+        self.s, self.thetas, self.zetas, self.vpar, self.mus, self.equilibrium_lost = self.remove_equilibrium_lost_particles(initial_point, vpar, mu)
+        self.da_values, self.wall_lost, self.surfaces, self.pitch_angles = self.trace_particles()
 
     def chi(self, theta, zeta):
         r"""
@@ -3061,6 +3066,7 @@ class MapPhaseSpace:
             comm=self.comm,
             seed=None,
         )
+
         vpars_init = initialize_velocity_uniform(
             self.vtotal,
             nParticles,
@@ -3271,27 +3277,16 @@ class MapPhaseSpace:
         lost_total.sort(reverse=True)
         for elem in lost_total:
             points=np.delete(points, elem, axis=0)
-            del vpars_init[elem]
-            del mus[elem]
+            vpars_init = np.delete(vpars_init, elem)
+            mus = np.delete(mus, elem)
 
         return points[:, 0].tolist(), points[:, 1].tolist(), points[:, 2].tolist(), vpars_init, mus, lost_total
 
     def trace_particles(self):
-        initial_point = np.zeros((len(self.s), 3))  # initialize with t = 0
-        initial_point[:, 0] = self.s
-        initial_point[:, 1] = self.thetas
-        initial_point[:, 2] = self.zetas
-
-        self.s, self.thetas, self.zetas, self.vpar, self.mus = self.remove_equilibrium_lost_particles(initial_point, self.vpar, self.mu)
 
         first, last = parallel_loop_bounds(self.comm, len(self.s))
         res_tys = []  # what need out: trajectory
         res_hits = []
-        s_final = []
-        theta_final = []
-        zeta_final = []
-        pitch_final = []
-        DAs = []
 
         # what need out: 
 
@@ -3305,6 +3300,7 @@ class MapPhaseSpace:
 
             vpar = [self.vpar[itrj]]
             mu = [self.mus[itrj]/self.mass]
+            self.saw.set_points(point)
             gc_tys, gc_zeta_hits = trace_particles_boozer_perturbed(
                     perturbed_field = self.saw, 
                     stz_inits = point, 
@@ -3375,11 +3371,7 @@ class MapPhaseSpace:
             dt_diff = trunc_t[1:] - trunc_t[:-1]
 
             d_eff_0 = 0.5 * np.mean((trunc_Peta[1:] - trunc_Peta[0])**2  / dt_diff)
-
-
             d_eff_path =  0.5 * (np.mean(ds)**2) / np.mean(dt_diff)
-
-            d_s_path = 0.5 * (np.mean(ds)**2) / np.mean(dt_diff)
 
             average_peta = np.mean(Peta_values)
             time_eval, DA_eval = return_DA(np.column_stack((points_trajectory[:, 3], Peta_values)))
@@ -3387,37 +3379,57 @@ class MapPhaseSpace:
             end_points = points_trajectory[-1,:-1] 
             start_points = points_trajectory[0,:-1]
 
-            diffusion_data = [d_eff_0, d_eff_path, d_s_path]
+            diffusion_data = [d_eff_0, d_eff_path]
             mean_data = [s_mean,d_eff_0,  average_peta, np.mean(E)]
 
-            start_phasespace = [vpar_path[0],Peta_values[0], E[0]]
+            v_par_signs = np.sign(vpar_path)
+            bounces = np.sum(v_par_signs[1:] * v_par_signs[:-1] < 0)
+
+            start_phasespace = [vpar_path[0],Peta_values[0], E[0], self.mus[itrj]]
             end_phasespace = [vpar_path[-1],Peta_values[-1], E[-1]]
+            # puts time back in front 
+            # t, s, theta, zeta, vpar, peta, E
             end_state = [points_trajectory[-1,-1].tolist()] + end_points.tolist() + end_phasespace
             start_state = [points_trajectory[0,-1].tolist()] + start_points.tolist() + start_phasespace
-            particle_out = [start_state, end_state, diffusion_data, mean_data, DA_eval]
+            particle_out = [start_state, end_state, diffusion_data, mean_data, DA_eval, bounces, self.mus[itrj]]
             res_tys.append(particle_out)
             res_hits.append(gc_zeta_hits[0])
-            DAs.append(DA_eval)
-            s_final.append(points_trajectory[-1, 0])
-            theta_final.append(points_trajectory[-1, 1])
-            zeta_final.append(points_trajectory[-1, 2])
-            pitch_final.append(self.mus[itrj]/self.Ekin)
 
         if self.comm is not None:
             res_tys = [i for o in self.comm.allgather(res_tys) for i in o]
             res_hits = [i for o in self.comm.allgather(res_hits) for i in o]
             DAs = [i for o in self.comm.allgather(DAs) for i in o]
-            s_final = [i for o in self.comm.allgather(s_final) for i in o]
-            theta_final = [i for o in self.comm.allgather(theta_final) for i in o]
-            zeta_final = [i for o in self.comm.allgather(zeta_final) for i in o]
-            pitch_final = [i for o in self.comm.allgather(pitch_final) for i in o]
 
-        self.s_final = s_final
-        self.theta_final = theta_final
-        self.zeta_final = zeta_final
-        self.pitch_final = pitch_final
+        lost_total = []
+        for i in range(len(res_hits)):
+            if res_hits[i].size>0:
+                if int(res_hits[i][0][1]) ==-1:
+                    lost_total.append(i)
+
+        DAs = []
+        Peta_start = []
+        pitch_initial = []
+
+        for elem in res_tys:
+            # index 0: start state: 
+            # index 1: end state
+            # index 2: diffusion data
+            # index 3: mean data
+            # index 4: DA value
+            # index 5: number of bounces
+            # start state vector:  [t, s, theta, zeta, vpar, peta, E, mu]
+            start = elem[0]
+            end = elem[1]
+            
+            DAs.append(elem[4])
+            Peta_start.append(start[4])
+            pitch_initial.append(start[7]/start[6])  # peta / E
+
+        
         self.DA_final = DAs
-        return res_tys, res_hits, DAs
+        self.res_tys = res_tys
+        #self.da_values, self.wall_lost, self.surfaces, self.pitch_angles =
+        return DAs, lost_total, Peta_start, pitch_initial
 
     def plot_surfaces(self, nx=20, ny=20, savepath = 'heatmap_digit_accuracy.png',  ax=None, DA_max=7):
         import matplotlib as mpl

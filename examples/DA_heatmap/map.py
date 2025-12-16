@@ -29,7 +29,7 @@ except ImportError:
 
 
 boozmn_filename = "boozmn_betaQH.nc"
-AE_filename = "QH_10harmonics_scale0_00464159.npy"
+AE_filename = "QH_10harmonics_scale0_001.npy"
 folder = 'figs'
 harmonic = 7
 
@@ -87,23 +87,6 @@ Nmaps = 1500
 p0 = np.zeros((1, 3))
 p0[0, 0] = p0_int # s
 
-map = PassingPerturbedPoincare(
-    saw,
-    sign_vpar,
-    mass,
-    charge,
-    helicity_M,
-    helicity_N,
-    Ekin=Ekin,
-    p0=p0,
-    lam=lam,
-    ns_poinc=ns_poinc,
-    nchi_poinc=nchi_poinc,
-    Nmaps=Nmaps,
-    DA_poinc=True,
-    nconvergence_points=5,
-    comm=comm
-)
 
 
 heat_map = MapPhaseSpace(
@@ -160,39 +143,4 @@ def calculate_QS_resonance(Phim,Phin,M,N,omega,drift_omega_zeta, ell):
 profile = compute_rotational_profile(field, lam, sign_vpar, mass, charge, Ekin, comm)
 drift_omega_zeta = np.mean(profile[:,2])
 if verbose: 
-    lines = []
-    for ell in range(-5, 6):
-        h_res = calculate_QS_resonance(Phim, Phin, helicity_M, helicity_N,
-                                       omega, drift_omega_zeta, ell)
-        r_res = calculate_crossings(profile[:,3], h_res, profile[:,0])
-        for elem in r_res:
-            lines.append((ell, elem))
-
-    fig, (ax_left,ax_center, ax_right) = plt.subplots(1, 3,
-    sharey=True,
-    gridspec_kw={"width_ratios": [1, 4, 3]},
-    figsize=(25,12)) 
-    ax_left.set_xlabel(r"$\hat{\phi}$")
-    ax_left.set_ylabel(r"$s$") 
-
-    
-    if isinstance(Phihat, tuple):
-        filename = f"{folder}/{harmonic}_{lam}_0.004"
-        ax_left.plot(Phihat[1][:-1], Phihat[0])
-        a, lines_colors = map.plot_poincare(ax = ax_center, filename=filename, lines=lines,s_axis_label=False)
-        for elem in lines_colors:
-            ell, arr, color = elem
-            ax_left.plot([min(Phihat[1]), max(Phihat[1])], [arr, arr], lw=10, color=color)
-        heat_map.plot_surfaces(ax = ax_right)
-        a.get_figure()
-        fig.savefig(filename + ".png", dpi = 400)
-    else:
-        filename = f"{folder}/flat_{harmonic}_{lam}_{round(Phihat,0)}"
-        ax_left.plot([Phihat, Phihat],[0,1])
-        a, lines_colors = map.plot_poincare(ax = ax_center, filename=filename, lines=lines,s_axis_label=False)
-        a.get_figure()
-        for elem in lines_colors:
-            ell, arr, color = elem
-            ax_left.axhline(y=arr, color=color,  linewidth=10)
-        heat_map.plot_surfaces(ax = ax_right)
-        fig.savefig(filename + ".png", dpi = 400)
+    heat_map.plot_surfaces()
