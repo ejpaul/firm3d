@@ -29,7 +29,7 @@ except ImportError:
 
 
 boozmn_filename = "boozmn_betaQH.nc"
-AE_filename = "QH_10harmonics_scale0_001.npy"
+AE_filename = "QH_10harmonics_scale0_00464159.npy"
 folder = 'figs'
 harmonic = 7
 
