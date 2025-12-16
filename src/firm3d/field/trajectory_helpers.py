@@ -3067,10 +3067,12 @@ class MapPhaseSpace:
         if randomize_particles:
             self.nParticles = number_of_particles
             s, thetas, zetas, vpar, mu = self.instantiate_uniform_particles(self.nParticles)
+
         else:
             self.ns_points = ns_points
             self.particles_per_surface = particles_per_surface
             self.nlambda_points = nlambda_points
+            self.nParticles = ns_points * particles_per_surface * nlambda_points
             s, thetas, zetas, vpar, mu = self.instantiate_gridded_particles()
 
         # set parameters for convergence plot
@@ -3135,7 +3137,7 @@ class MapPhaseSpace:
         return theta, zeta
 
     def vpar_func(self, s, theta, zeta, p_a, sgn):
-        point = np.zeros((1, 3))
+        point = np.zeros((len(s), 3))
         point[:, 0] = s
         point[:, 1] = theta
         point[:, 2] = zeta
@@ -3209,6 +3211,7 @@ class MapPhaseSpace:
                     self.particles_per_surface,
                     surfaces_flat[particle_index],
                     comm=self.comm)
+            print(f'{points_temp.shape=}')
             if self.Eprime_slice:
                 sgn = np.sign(pitch_angle_flat[particle_index])
                 mu = (np.abs(pitch_angle_flat[particle_index]) * self.Ekin)
@@ -3219,16 +3222,18 @@ class MapPhaseSpace:
                     mu,
                     sgn
                 )
+                mus_temp = mu/self.mass * np.ones_like(vpars_temp)
             else:
                 sgn = np.sign(pitch_angle_flat[particle_index])
-                mu = (np.abs(pitch_angle_flat[particle_index]) * self.Ekin)
-                vpars_temp = self.vpar_func(
-                    points_temp[:,0],
-                    points_temp[:,1], 
-                    points_temp[:,2], 
-                    np.abs(pitch_angle_flat[particle_index]), 
-                    sgn)
-            
+                vpars_temp = initialize_velocity_uniform(
+                    self.vtotal,
+                    points_temp.shape[1],
+                    comm=self.comm,
+                    seed=None,
+                )
+                self.B0.set_points(points_temp)
+                modB = self.B0.modB()[:,0]
+                mus_temp = (1/(2 * modB)) * (self.vtotal**2 - vpars_temp**2)
             # remove unphysical particles
             mask = ~np.isnan(vpars_temp)
             vpars_temp = vpars_temp[mask]
@@ -3236,11 +3241,12 @@ class MapPhaseSpace:
 
             vpars_temp = vpars_temp.tolist()
             vpars += vpars_temp
-            mus += [mu]*len(vpars_temp)
+            mus += mus_temp
             if particle_index == 0:
                 points = points_temp
             else: 
                 points = np.stack((points, points_temp))
+        print(f'{points.shape=}')
         return points[:,0].tolist(), points[:,1].tolist(), points[:,2].tolist(), vpars, mus
 
     def chi(self, theta, zeta):
@@ -3312,15 +3318,14 @@ class MapPhaseSpace:
                     lost_total.append(i)
         
         # remove wall lost particles from the list of evaluated particles
-        lost_total.sort(reverse=True)
-        for elem in lost_total:
-            points=np.delete(points, elem, axis=0)
-            vpars_init = np.delete(vpars_init, elem)
-            mus = np.delete(mus, elem)
+        points=np.delete(points, lost_total, axis=0)
+        vpars_init = np.delete(vpars_init, lost_total, axis=0)
+        mus = np.delete(mus, lost_total, axis=0)
 
-        return points[:, 0].tolist(), points[:, 1].tolist(), points[:, 2].tolist(), vpars_init, mus, lost_total
+        return points[:, 0], points[:, 1], points[:, 2], vpars_init, mus, lost_total
 
     def trace_particles(self):
+        print("Tracing particles in perturbed field...", flush=True)
 
         first, last = parallel_loop_bounds(self.comm, len(self.s))
         res_tys = []  # what need out: trajectory
@@ -3329,7 +3334,7 @@ class MapPhaseSpace:
         # what need out: 
 
         for itrj in range(first, last):
-            # @TODO: remove equilibrium lost particles
+            print(f'tracing particle {itrj}/{len(self.s)}', flush=True)
             point = np.zeros((1, 4))  # initialize with t = 0
             point[:, 0] = self.s[itrj]
             point[:, 1] = self.thetas[itrj]
@@ -3337,7 +3342,7 @@ class MapPhaseSpace:
             point[:, 3] = 0.0
 
             vpar = [self.vpar[itrj]]
-            mu = [self.mus[itrj]/self.mass]
+            mu = [self.mus[itrj]]
             self.saw.set_points(point)
             gc_tys, gc_zeta_hits = trace_particles_boozer_perturbed(
                     perturbed_field = self.saw, 
@@ -3348,14 +3353,16 @@ class MapPhaseSpace:
                     mass=self.mass, 
                     charge=self.charge,
                     Ekin=self.Ekin,
-                    tol=self.tol,
-                    comm=self.comm,
+                    abstol=1e-9,
+                    reltol=1e-9,
                     stopping_criteria=[
                         MaxToroidalFluxStoppingCriterion(1.0)
                     ],
                     mode='gc_noK',
+                    ODE_solver="dormand_prince",
                     **self.solver_options,
                     )
+            print(f'traced particle {itrj}/{len(self.s)}', flush=True)
             points_trajectory = gc_tys[0]
             time_momentum, s_path, theta_path, zeta_path, vpar_path = points_trajectory[:, 0], points_trajectory[:, 1], points_trajectory[:, 2], points_trajectory[:, 3], points_trajectory[:, 4]
             points_trajectory = np.column_stack(
@@ -3436,7 +3443,6 @@ class MapPhaseSpace:
         if self.comm is not None:
             res_tys = [i for o in self.comm.allgather(res_tys) for i in o]
             res_hits = [i for o in self.comm.allgather(res_hits) for i in o]
-            DAs = [i for o in self.comm.allgather(DAs) for i in o]
 
         lost_total = []
         for i in range(len(res_hits)):
@@ -3456,12 +3462,13 @@ class MapPhaseSpace:
             # index 4: DA value
             # index 5: number of bounces
             # start state vector:  [t, s, theta, zeta, vpar, peta, E, mu]
-            start = elem[0]
-            end = elem[1]
-            
-            DAs.append(elem[4])
-            Peta_start.append(start[4])
-            pitch_initial.append(start[7]/start[6])  # peta / E
+            if len(elem)>2:
+                start = elem[0]
+                end = elem[1]
+                
+                DAs.append(elem[4])
+                Peta_start.append(start[4])
+                pitch_initial.append(start[7]/start[6])  # peta / E
 
         
         self.DA_final = DAs
@@ -3487,8 +3494,10 @@ class MapPhaseSpace:
         
         norm = mpl.colors.Normalize(vmin=0, vmax=DA_max)
 
+        print(f"{(self.pitch_angles)=} {(self.surfaces)=} {(self.DA_final)=}")
+
         stat, x_edges, y_edges, binnumber = binned_statistic_2d(
-            self.pitch_final, self.s_final, self.DA_final,
+            np.array(self.pitch_angles), np.array(self.surfaces), np.array(self.DA_final),
             statistic='mean',
             bins=[nx, ny]
         )
