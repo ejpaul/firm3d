@@ -1,31 +1,27 @@
 import numpy as np
-import unittest
-import firm3dpp as sopp
-from numpy.testing import assert_raises
-import numpy as np
-import os
-
-from simsopt._core import load
-from simsopt.geo import SurfaceRZFourier
 from simsopt.configs import get_ncsx_data
-from simsopt.field import (BiotSavart, InterpolatedField, coils_via_symmetries, trace_particles_starting_on_curve,
-                           SurfaceClassifier, LevelsetStoppingCriterion, plot_poincare_data)
+from simsopt.field import (
+    BiotSavart,
+    InterpolatedField,
+    SurfaceClassifier,
+    coils_via_symmetries,
+)
+from simsopt.geo import SurfaceRZFourier
 
-
+import firm3dpp as sopp
 from firm3d.util.gpu_utils import cartesian_interpolant
 
 
 def test_interpolant_bfield(field, sc_particle, nfp, n_metagrid_pts, n_test_pts):
-
     r_range = field.r_range
     phi_range = field.phi_range
     z_range = field.z_range
 
     # generate test points
-    r = np.random.uniform(low=r_range[0], high=r_range[1], size=(n_test_pts,1))
-    phi = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
-    z = np.random.uniform(low=-z_range[1], high=z_range[1], size=(n_test_pts,1))
-    rphiz = np.hstack((r,phi,z))
+    r = np.random.uniform(low=r_range[0], high=r_range[1], size=(n_test_pts, 1))
+    phi = np.random.uniform(low=0, high=2 * np.pi, size=(n_test_pts, 1))
+    z = np.random.uniform(low=-z_range[1], high=z_range[1], size=(n_test_pts, 1))
+    rphiz = np.hstack((r, phi, z))
     # rphiz = np.array([[ 1.16373528,  0.04877549, -0.13471403]])
     rphiz = np.ascontiguousarray(rphiz)
 
@@ -37,19 +33,33 @@ def test_interpolant_bfield(field, sc_particle, nfp, n_metagrid_pts, n_test_pts)
     simsopt_interpolation = np.hstack((B, GradAbsB, signed_dist_vals))
 
     ## NEW INTERPOLANT
-    r_range, phi_range, z_range, quad_info = cartesian_interpolant(field, sc_particle, nfp, n_metagrid_pts)
+    r_range, phi_range, z_range, quad_info = cartesian_interpolant(
+        field, sc_particle, nfp, n_metagrid_pts
+    )
 
     # Calculate interpolation
-    new_interpolation = sopp.test_gpu_interpolation(quad_info, r_range, phi_range, z_range, rphiz, "cartesian_vacuum", rphiz.shape[0])
+    new_interpolation = sopp.test_gpu_interpolation(
+        quad_info,
+        r_range,
+        phi_range,
+        z_range,
+        rphiz,
+        "cartesian_vacuum",
+        rphiz.shape[0],
+    )
     new_interpolation = np.reshape(new_interpolation, (rphiz.shape[0], 7))
 
     # print(np.abs(simsopt_interpolation - new_interpolation) / simsopt_interpolation)
-    rel_err = np.abs((simsopt_interpolation - new_interpolation) / simsopt_interpolation)
+    rel_err = np.abs(
+        (simsopt_interpolation - new_interpolation) / simsopt_interpolation
+    )
     dist_fn = simsopt_interpolation[:, 6]
-    rel_err = rel_err[dist_fn > 0, :-1] # don't test boundary distance for now
+    rel_err = rel_err[dist_fn > 0, :-1]  # don't test boundary distance for now
     diff = np.max(rel_err)
-    print("Maximum relative error in interpolation values on {} points: {}".format(rel_err.shape[0], diff))
-    if(diff > 1e-8):
+    print(
+        f"Maximum relative error in interpolation values on {rel_err.shape[0]} points: {diff}"
+    )
+    if diff > 1e-8:
         print("INTERPOLANT TEST FAILED")
         print("culprit particle:")
         row_index = np.argmax(rel_err) // rel_err.shape[1]
@@ -74,8 +84,15 @@ if __name__ == "__main__":
     mpol = 5
     ntor = 5
     stellsym = True
-    s = SurfaceRZFourier.from_nphi_ntheta(mpol=mpol, ntor=ntor, stellsym=stellsym, nfp=nfp,
-                                        range="full torus", nphi=64, ntheta=24)
+    s = SurfaceRZFourier.from_nphi_ntheta(
+        mpol=mpol,
+        ntor=ntor,
+        stellsym=stellsym,
+        nfp=nfp,
+        range="full torus",
+        nphi=64,
+        ntheta=24,
+    )
     s.fit_to_curve(ma, 0.20, flip_theta=False)
 
     n_metagrid_pts = 30
@@ -84,9 +101,8 @@ if __name__ == "__main__":
     zs = s.gamma()[:, :, 2]
     sc_particle = SurfaceClassifier(s, h=0.1, p=2)
 
-
     rrange = (np.min(rs), np.max(rs), n_metagrid_pts)
-    phirange = (0, 2*np.pi/nfp, n_metagrid_pts)
+    phirange = (0, 2 * np.pi / nfp, n_metagrid_pts)
     # exploit stellarator symmetry and only consider positive z values:
     zrange = (0, np.max(zs), n_metagrid_pts)
     # print(rrange, phirange, zrange)
