@@ -177,7 +177,6 @@ def test_timestep(field, sc_particle, nfp, n_metagrid_pts, n_test_pts, verify=Tr
         nparticles=n_test_pts,
     )
 
-
     last_time = np.reshape(last_time, (n_test_pts, 5))
 
     new_final_positions = last_time

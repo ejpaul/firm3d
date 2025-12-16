@@ -10,7 +10,6 @@ from firm3d.util.gpu_utils import boozer_interpolant
 np.random.seed(1865)
 
 
-
 def test_interpolant_bfield(field, nfp, n_metagrid_pts, n_test_pts):
     # generate test points
     s = np.random.uniform(low=0, high=1, size=(n_test_pts, 1))
