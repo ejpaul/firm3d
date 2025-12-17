@@ -9,4 +9,4 @@ p_eta should be exactly conserved.
 
 With resolution = 64 and tolerance = 1e-10, we see the relative error converge to ~1e-8. 
 
-On perlmutter (07.09.25), the wallclock time is about 14 minutes using the attached slurm script. 
+On perlmutter (12.04.25), the wallclock time is about 9 minutes using the attached slurm script. 

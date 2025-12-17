@@ -1,9 +1,14 @@
 from warnings import warn
 
 import numpy as np
+from scipy import integrate
 
 from .._core.util import parallel_loop_bounds
-from ..field.boozermagneticfield import ShearAlfvenHarmonic, ShearAlfvenWave
+from ..field.boozermagneticfield import (
+    ShearAlfvenHarmonic,
+    ShearAlfvenWave,
+    ShearAlfvenWavesSuperposition,
+)
 from ..field.tracing import (
     MaxToroidalFluxStoppingCriterion,
     MinToroidalFluxStoppingCriterion,
@@ -759,8 +764,8 @@ class TrappedPoincare:
             for _jj in range(self.Nmaps):
                 try:
                     # Apply trapped map twice to return to same vpar = 0 plane
-                    tr, time = self.trapped_map(tr)
-                    tr, time = self.trapped_map(tr)
+                    tr, time1 = self.trapped_map(tr)
+                    tr, time2 = self.trapped_map(tr)
                     if np.abs(tr[1] - chis_traj[-1]) > 2 * np.pi:
                         warn(
                             "Barely trapped particle detected in trapped_map.",
@@ -771,7 +776,7 @@ class TrappedPoincare:
                     s_traj.append(tr[0])
                     chis_traj.append(tr[1])
                     etas_traj.append(tr[2])
-                    t_traj.append(time)
+                    t_traj.append(time1 + time2)
                 except RuntimeError:
                     broken = True
                     break
@@ -895,7 +900,17 @@ class TrappedPoincare:
         return omega_eta_prof, omega_b_prof, s_prof
 
 
-def compute_peta(field_or_saw, points, vpar, mass, charge, helicity_M, helicity_N):
+def compute_peta(
+    field_or_saw,
+    points,
+    vpar,
+    mass,
+    charge,
+    helicity_M,
+    helicity_N,
+    helicity_Mp=None,
+    helicity_Np=None,
+):
     r"""
     Given a ShearAlfvenWave or BoozerMagneticField instance, a point in
     Boozer coordinates, and particle properties, compute the value of the
@@ -920,6 +935,10 @@ def compute_peta(field_or_saw, points, vpar, mass, charge, helicity_M, helicity_
         charge : Charge of the particle.
         helicity_M : Poloidal helicity of the magnetic field.
         helicity_N : Toroidal helicity of the magnetic field.
+        helicity_Mp : Poloidal helicity of the mapping coordinate eta.
+            If None, then eta is chosen based on the helicity of the field strength.
+        helicity_Np : Toroidal helicity of the mapping coordinate eta.
+            If None, then eta is chosen based on the helicity of the field strength.
 
     Returns:
         peta : A numpy array of shape (npoints,) containing the value of the canonical
@@ -941,7 +960,7 @@ def compute_peta(field_or_saw, points, vpar, mass, charge, helicity_M, helicity_
     if isinstance(field_or_saw, ShearAlfvenWave):
         field = field_or_saw.B0
         field_or_saw.set_points(points)
-        alpha = field_or_saw.alpha()
+        alpha = field_or_saw.alpha()[:, 0]
     else:
         field = field_or_saw
         alpha = 0.0
@@ -955,14 +974,21 @@ def compute_peta(field_or_saw, points, vpar, mass, charge, helicity_M, helicity_
     psi = field.psi0 * points[:, 0]
     psip = field.psip()[:, 0]
 
-    # If modB contours close poloidally, then use theta as mapping coordinate
-    if helicity_M == 0:
-        helicity_Mp = 1
-        helicity_Np = 0
-    # Otherwise, use zeta as mapping coordinate
+    if helicity_Mp is None and helicity_Np is None:
+        # If modB contours close poloidally, then use theta as mapping coordinate
+        if helicity_M == 0:
+            helicity_Mp = 1
+            helicity_Np = 0
+        # Otherwise, use zeta as mapping coordinate
+        else:
+            helicity_Mp = 0
+            helicity_Np = -1
     else:
-        helicity_Mp = 0
-        helicity_Np = -1
+        if (helicity_Mp * helicity_N) == (helicity_Np * helicity_M):
+            raise ValueError(
+                "Chosen helicities (N, M, N', M') do not create a well "
+                "defined Jacobian."
+            )
     denom = helicity_Np * helicity_M - helicity_N * helicity_Mp
     peta = (
         -(
@@ -1032,6 +1058,82 @@ def compute_Eprime(saw, points, vpar, mu, mass, charge, helicity_M, helicity_N):
     return Eprime
 
 
+def g(t, T):
+    """
+    Smooth bump weight on (0, T) with g=0 at t<=0 or t>=T.
+    """
+    t = np.asarray(t, dtype=float)
+    T = float(T)
+
+    s = t / T
+
+    # denom = s*(1-s); positive only for s in (0,1)
+    denom = s * (1.0 - s)
+    w = np.zeros_like(s)
+
+    interior = (s > 0.0) & (s < 1.0)
+    denom = s[interior] * (1.0 - s[interior])
+    w[interior] = np.exp(-1.0 / denom)
+
+    return w
+
+
+def return_DA(array):
+    """
+    Compute the DA metric for a given momentum 2D array.
+    Computes the normalized digit difference between the
+    WBA at the first half of the trajectory and the final
+    given point.
+    Args:
+        array : A numpy array of shape (npoints, 2) containing the time and
+                momentum values.
+    Returns:
+        T : Final computed time of the trajectory.
+        da_c : The computed DA metric value.
+    """
+    time_m = array[:, 0]
+    momentum = array[:, 1]
+
+    if len(time_m) < 4:
+        return 0, np.nan
+
+    # full trajectory
+    T_idx = len(time_m)
+    T_time = time_m
+    T_mom = momentum
+    T = float(T_time[-1])
+
+    t_idx = int(T_idx / 2)
+    t_time = T_time[:t_idx]
+    t_mom = T_mom[:t_idx]
+    t = float(t_time[-1])
+
+    # weight arrays
+    g_t = g(t_time, t)
+    g_T = g(T_time, T)
+
+    g_t_int = integrate.trapezoid(g_t, t_time)
+    g_T_int = integrate.trapezoid(g_T, T_time)
+
+    if np.isclose(g_t_int, 0.0) and np.isclose(g_T_int, 0.0):
+        return T, np.nan
+
+    t_wavg = integrate.trapezoid(g_t * t_mom, t_time) / g_t_int
+    T_wavg = integrate.trapezoid(g_T * T_mom, T_time) / g_T_int
+
+    # DA metric
+    diff = np.abs(t_wavg - T_wavg)
+    denom = 0.5 * (np.abs(t_wavg) + np.abs(T_wavg))
+
+    if diff == 0.0:
+        return T, 16
+
+    ratio = diff / denom
+    da_c = -np.log10(ratio)
+
+    return T, da_c
+
+
 class PassingPerturbedPoincare:
     def __init__(
         self,
@@ -1050,6 +1152,8 @@ class PassingPerturbedPoincare:
         lam=None,
         ns_poinc=None,
         nchi_poinc=None,
+        DA_poinc=False,
+        nconvergence_points=None,
         s_init=None,
         chis_init=None,
         Nmaps=500,
@@ -1093,7 +1197,7 @@ class PassingPerturbedPoincare:
         coordinates.
 
         Args:
-            saw : An instance of ShearAlfvenHarmonic representing the magnetic field.
+            saw : An instance of ShearAlfvenHarmonic or ShearAlfvenWavesSuperposition.
             sign_vpar : Sign of the parallel velocity, either -1 or +1.
             mass : Mass of the particle.
             charge : Charge of the particle.
@@ -1122,6 +1226,10 @@ class PassingPerturbedPoincare:
                 (default: 2).
             Nmaps : Number of Poincare return maps to compute for each initial
                 condition (default: 500).
+            DA_poinc : Boolean value indicating whether chaos detection is desired
+                (default: False)
+            nconvergence_points : Integer value indicating the number of Weighted
+                Birkhoff Average evaluations to assess convergence.
             comm : MPI communicator for parallel execution (default: None).
             tmax : Maximum integration time for each segment of the Poincare
                 map (default: 1e-2 s).
@@ -1130,8 +1238,21 @@ class PassingPerturbedPoincare:
         """
         if solver_options is None:
             solver_options = {}
+        if not isinstance(saw, ShearAlfvenHarmonic) and not isinstance(
+            saw, ShearAlfvenWavesSuperposition
+        ):
+            raise TypeError(
+                "Expected saw to be an instance of ShearAlfvenHarmonic "
+                "or ShearAlfvenWavesSuperposition"
+            )
         if not isinstance(saw, ShearAlfvenHarmonic):
-            raise TypeError("Expected saw to be an instance of ShearAlfvenHarmonic")
+            dominant_saw = saw[0]
+            raise Warning(
+                "Expected saw to be an instance of ShearAlfvenHarmonic - "
+                "Perturbed Energy Invariant may not be valid."
+            )
+        else:
+            dominant_saw = None
         if sign_vpar not in [-1, 1]:
             raise ValueError("sign_vpar should be either -1 or +1")
 
@@ -1143,6 +1264,23 @@ class PassingPerturbedPoincare:
         self.mass = mass
         self.charge = charge
         self.sign_vpar = sign_vpar
+
+        self.DA_poinc = DA_poinc
+        if DA_poinc:
+            if nconvergence_points is None:
+                self.nconvergence_points = 1
+                self.WBA_transit_steps = [Nmaps - 1]
+            else:
+                self.nconvergence_points = nconvergence_points
+                # set list of transits for each WBA evaluation
+                transits_per_average = int(Nmaps / (nconvergence_points))
+                self.WBA_transit_steps = np.linspace(
+                    transits_per_average, Nmaps - 1, num=nconvergence_points, dtype=int
+                ).tolist()
+        else:
+            self.nconvergence_points = 1
+            self.WBA_transit_steps = 0
+
         if s_init is not None and chis_init is not None:
             self.s_init = s_init
             self.chis_init = chis_init
@@ -1158,9 +1296,18 @@ class PassingPerturbedPoincare:
         self.tmax = tmax
         self.solver_options = solver_options
 
-        self.Phin = saw.Phin
-        self.Phim = saw.Phim
-        self.omega = saw.omega
+        # if using a ShearAlfvenWavesSuperposition, use the test_saw for
+        # computing Eprime, Phin, Phim, and omega as the largest mode
+        # this does not produce a poincare plot in the strict sense,
+        # but you will be unable to visualize surfaces
+        if dominant_saw is None:
+            self.Phin = saw.Phin
+            self.Phim = saw.Phim
+            self.omega = saw.omega
+        else:
+            self.Phin = dominant_saw.Phin
+            self.Phim = dominant_saw.Phim
+            self.omega = dominant_saw.omega
 
         self.nprime = (self.Phim * self.helicity_N - self.Phin * self.helicity_M) / (
             self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
@@ -1214,6 +1361,8 @@ class PassingPerturbedPoincare:
             self.etas_all,
             self.vpars_all,
             self.t_all,
+            self.DA_all,
+            self.DA_times,
         ) = self.compute_passing_map()
 
     def _set_helicity_Np_Mp(self, helicity_Np, helicity_Mp):
@@ -1290,8 +1439,10 @@ class PassingPerturbedPoincare:
                     "No solution for vpar found! Check the parameters and "
                     "initial conditions."
                 )
-            else:
+            elif a != 0:
                 return (-b + self.sign_vpar * np.sqrt(b**2 - 4 * a * c)) / (2 * a)
+            else:
+                return (-c / b) * self.sign_vpar
 
         # Create mesh grid if not provided directly
         if not hasattr(self, "s_init") or not hasattr(self, "chis_init"):
@@ -1315,7 +1466,6 @@ class PassingPerturbedPoincare:
                 s_init.append(s[i])
                 chis_init.append(chis[i])
                 vpars_init.append(vpar)
-                theta, zeta = self.chi_eta_to_theta_zeta(chis[i], 0)
             except RuntimeError:
                 continue
 
@@ -1386,6 +1536,7 @@ class PassingPerturbedPoincare:
                 (s,chi,eta).
             time : The time at which the trajectory returns to the eta -
                 omega/n' * t plane.
+            peta : Timeseries of the canonical momentum p_eta along the trajectory.
         """
         phase = self.omega * t
         self.saw.phase = phase
@@ -1439,9 +1590,39 @@ class PassingPerturbedPoincare:
             point[0] = res_hit[2]
             point[1] = self.chi(res_hit[3], res_hit[4])
             point[2] = res_hit[5]
-            return point, res_hit[0] + t, self.eta(res_hit[3], res_hit[4])
         else:
             raise RuntimeError("Alternative stopping criterion reached in passing_map.")
+
+        if not self.DA_poinc:
+            return point, res_hit[0] + t, self.eta(res_hit[3], res_hit[4])
+        else:
+            # define trajectories
+            time_momentum = res_tys[0][:, 0]
+            s_path = res_tys[0][:, 1]
+            theta_path = res_tys[0][:, 2]
+            zeta_path = res_tys[0][:, 3]
+            vpar_path = res_tys[0][:, 4]
+
+            # set points for trajectories:
+            points_traj = np.zeros((len(time_momentum), 4))
+            points_traj[:, 0] = s_path
+            points_traj[:, 1] = theta_path
+            points_traj[:, 2] = zeta_path
+            points_traj[:, 3] = time_momentum
+
+            Peta = compute_peta(
+                self.saw,
+                points_traj,
+                vpar_path,
+                self.mass,
+                self.charge,
+                self.helicity_M,
+                self.helicity_N,
+                helicity_Mp=self.helicity_Mp,
+                helicity_Np=self.helicity_Np,
+            )
+            Peta = np.column_stack((time_momentum, Peta))
+            return point, res_hit[0] + t, self.eta(res_hit[3], res_hit[4]), Peta
 
     def compute_passing_map(self):
         r"""
@@ -1455,6 +1636,8 @@ class PassingPerturbedPoincare:
         etas_all = []
         vpars_all = []
         t_all = []
+        DA_all = []
+        DA_times = []
         first, last = parallel_loop_bounds(self.comm, Ntrj)
         for itrj in range(first, last):
             tr = [self.s_init[itrj], self.chis_init[itrj], self.vpars_init[itrj]]
@@ -1463,16 +1646,39 @@ class PassingPerturbedPoincare:
             eta_traj = [0]
             vpars_traj = [tr[2]]
             t_traj = [0]
-            for _jj in range(self.Nmaps):
+            particle_DAs = []
+            particle_DA_times = []
+            for jj in range(self.Nmaps):
                 try:
-                    tr, time, eta = self.passing_map(tr, t_traj[-1], eta_traj[-1])
+                    if self.DA_poinc:
+                        if jj == 0:
+                            tr, time, eta, Peta = self.passing_map(
+                                tr, t_traj[-1], eta_traj[-1]
+                            )
+                        else:
+                            tr, time, eta, Peta_iter = self.passing_map(
+                                tr, t_traj[-1], eta_traj[-1]
+                            )
+                            Peta_iter[:, 0] += Peta[-1, 0]
+                            Peta = np.vstack((Peta, Peta_iter[1:, :]))
+                    else:
+                        tr, time, eta = self.passing_map(tr, t_traj[-1], eta_traj[-1])
                     s_traj.append(tr[0])
                     chis_traj.append(tr[1])
                     vpars_traj.append(tr[2])
                     t_traj.append(time)
                     eta_traj.append(eta)
+                    if self.DA_poinc and jj in self.WBA_transit_steps:
+                        time_at_evaluation, DA_at_evaluation = return_DA(Peta)
+                        particle_DAs.append(DA_at_evaluation)
+                        particle_DA_times.append(jj)
                 except RuntimeError:
+                    if self.DA_poinc:
+                        particle_DAs.append(np.nan)
+                        particle_DA_times.append(np.nan)
                     break
+            DA_all.append(particle_DAs)
+            DA_times.append(particle_DA_times)
             s_all.append(s_traj)
             chis_all.append(chis_traj)
             etas_all.append(eta_traj)
@@ -1485,44 +1691,169 @@ class PassingPerturbedPoincare:
             etas_all = [i for o in self.comm.allgather(etas_all) for i in o]
             vpars_all = [i for o in self.comm.allgather(vpars_all) for i in o]
             t_all = [i for o in self.comm.allgather(t_all) for i in o]
+            DA_all = [i for o in self.comm.allgather(DA_all) for i in o]
+            DA_times = [i for o in self.comm.allgather(DA_times) for i in o]
 
-        return s_all, chis_all, etas_all, vpars_all, t_all
+        return s_all, chis_all, etas_all, vpars_all, t_all, DA_all, DA_times
 
-    def plot_poincare(self, ax=None, filename="passing_poincare.pdf"):
+    def plot_poincare(
+        self,
+        ax=None,
+        filename="passing_poincare.pdf",
+        convergence_test_indicies=None,
+        DA_max=7,
+        ylims=(0, 1),
+    ):
         r"""
         Plot the passing Poincare map and save to a file. It is recommended to only
         call this function on MPI rank 0.
-
         Args:
             ax : Matplotlib axis to plot on. If None, a new figure and axis are
                  created.
             filename : Name of the file to save the plot
                        (default: 'passing_poincare.pdf').
+            convergence_test_indicies : Indices of initial conditions to show
+            in convergence plot.
+            DA_max : Maximum value of Digit Accuracy to show on colorbar
+            ylims : Tuple specifying y-axis limits for the Poincare plot.
         Returns:
             ax : The Matplotlib axis containing the plot.
         """
-        import matplotlib
 
-        matplotlib.use("Agg")  # Don't use interactive backend
+        import matplotlib as mpl
         import matplotlib.pyplot as plt
+        from matplotlib.cm import ScalarMappable
+
+        mpl.use("Agg")  # Don't use interactive backend
+
+        try:
+            import cmcrameri.cm as cmc  # noqa: F401
+
+            cmap = "cmc.managua"
+        except ImportError:
+            cmap = "viridis"
+
+        star_ICs = False
+
+        if convergence_test_indicies is None:
+            convergence_test_indicies = list(range(len(self.s_all)))
+        else:
+            star_ICs = True
+
+        if self.DA_poinc and self.nconvergence_points > 1:
+            s_itrj_map = {}
+            for itrj in convergence_test_indicies:
+                s_itrj_map[itrj] = self.s_all[itrj][0]
+
+            min_s = min(list(s_itrj_map.values()))
+            max_s = max(list(s_itrj_map.values()))
+            s_lst_true = list(s_itrj_map.values())
+            cmap_s = mpl.colormaps["copper"].resampled(len(s_lst_true) ** 2)
 
         if ax is None:
             fig, ax = plt.subplots()
 
+        def normalize(numbers):
+            if not numbers:
+                return []
+            min_val, max_val = 0, DA_max
+            normalized_numbers = [(x - min_val) / (max_val - min_val) for x in numbers]
+            return normalized_numbers
+
+        if self.DA_poinc:
+            final_DAs = []
+            # retrieve final DA for each trajectory if the particle is not lost
+            # put it into a list
+            for elem in self.DA_all:
+                if len(elem) == self.nconvergence_points:
+                    final_DAs.append(elem[self.nconvergence_points - 1])
+                else:
+                    final_DAs.append(np.nan)
+            # normalized DA values for colormap
+            DA_norm_all = normalize(final_DAs)
+            cmap_object = mpl.colormaps[cmap].resampled(len(self.DA_all) ** 2)
+
         ax.set_xlabel(r"$\chi$")
         ax.set_ylabel(r"$s$")
         ax.set_xlim([0, 2 * np.pi])
-        ax.set_ylim([0, 1])
-        for i in range(len(self.chis_all)):
-            ax.scatter(
-                np.mod(self.chis_all[i], 2 * np.pi),
-                self.s_all[i],
-                marker="o",
-                s=0.5,
-                edgecolors="none",
-            )
-            plt.savefig(filename)
+        ax.set_ylim([ylims[0], ylims[1]])
 
+        for i in range(len(self.chis_all)):
+            if self.DA_poinc:
+                ax.scatter(
+                    np.mod(self.chis_all[i], 2 * np.pi),
+                    self.s_all[i],
+                    marker="o",
+                    s=0.75,
+                    c=cmap_object(DA_norm_all[i]),
+                    edgecolors="none",
+                )
+            else:
+                ax.scatter(
+                    np.mod(self.chis_all[i], 2 * np.pi),
+                    self.s_all[i],
+                    marker="o",
+                    s=0.75,
+                    edgecolors="none",
+                )
+
+        if star_ICs:
+            # scatter initial conditions observed in convergence plot onto poincare plot
+            for i in s_itrj_map:
+                s_norm = (s_itrj_map[i] - min_s) / (max_s - min_s)
+                ax.scatter(
+                    np.mod(self.chis_all[i][0], 2 * np.pi),
+                    self.s_all[i][0],
+                    marker="*",
+                    s=25,
+                    color=cmap_s(s_norm),
+                    edgecolors="magenta",
+                )
+
+        if self.DA_poinc:
+            # make colorbar for DA values
+            max_val = DA_max
+            norm = plt.Normalize(0, max_val)
+            fig.colorbar(
+                ScalarMappable(norm=norm, cmap=mpl.colormaps[cmap]),
+                ax=ax,
+                orientation="vertical",
+                label="Digit Accuracy",
+            )
+        plt.savefig(filename)
+
+        # convergence plot - change in DA with number of transit evaluations
+        # histogram of final DA values
+        if self.DA_poinc and self.nconvergence_points > 1:
+            fig, ax2 = plt.subplots(1, 1)
+            ax2.set_ylabel(r"Digit Accuracy")
+            ax2.set_xlabel(r"Toroidal Periods")
+
+            for itrj in s_itrj_map:
+                ax2.plot(
+                    self.DA_times[itrj],
+                    self.DA_all[itrj],
+                    color=cmap_s((s_itrj_map[itrj] - min_s) / (max_s - min_s)),
+                    alpha=0.75,
+                    label=f"{s_itrj_map[itrj]}",
+                )
+            norm = plt.Normalize(min(s_lst_true), max(s_lst_true))
+            fig.colorbar(
+                ScalarMappable(norm=norm, cmap=cmap_s),
+                ax=ax,
+                orientation="vertical",
+                label="$s$",
+            )
+
+            fig.tight_layout()
+            plt.savefig("convergence_" + filename)
+
+            plt.clf()
+            plt.hist(final_DAs)
+            plt.tight_layout()
+            plt.xlabel("Digit Accuracy")
+            plt.title("Distribution of Digit Accuracy")
+            plt.savefig("DA_histogram_" + filename)
         return ax
 
     def get_poincare_data(self):
@@ -1532,7 +1863,15 @@ class PassingPerturbedPoincare:
         Returns:
             s_all, chis_all, etas_all, vpars_all, t_all : Lists of trajectory data.
         """
-        return self.s_all, self.chis_all, self.etas_all, self.vpars_all, self.t_all
+        return (
+            self.s_all,
+            self.chis_all,
+            self.etas_all,
+            self.vpars_all,
+            self.t_all,
+            self.DA_all,
+            self.DA_times,
+        )
 
 
 def trajectory_to_vtk(res_ty, field, filename="trajectory"):
