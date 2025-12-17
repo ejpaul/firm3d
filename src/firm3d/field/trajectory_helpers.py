@@ -2961,17 +2961,16 @@ class MapPhaseSpace:
         Phin_max,
         Phim_max,
         omega,
-        sign_vpar,
         mass,
         charge,
         Ekin,
         helicity_N,
         helicity_M,
-        helicity_Mp,
-        helicity_Np,
-        ns_points=12,
-        particles_per_surface = 6,
-        nlambda_points=12,
+        helicity_Mp=None,
+        helicity_Np=None,
+        ns_points=20,
+        particles_per_surface = 20,
+        nlambda_points=20,
         randomize_particles = False,
         number_of_particles = 10000,
         Eprime = None,
@@ -2987,14 +2986,34 @@ class MapPhaseSpace:
         nconvergence_points = 1
     ):
         # @TODO: add user checks for saw
-        # @TODO: add user checks for helicity
+        # @TODO: Eprime for random init 
         # @TODO: add option to feed in ICs directly
+        # @TODO: add convergence points support
+        # @TODO: implement saving 
+
 
         # set field parameters
         self.saw = saw
         self.B0 = saw.B0
         self.helicity_M = helicity_M
         self.helicity_N = helicity_N
+
+        if helicity_Mp is None and helicity_Np is None:
+            # If modB contours close poloidally, then use theta as mapping coordinate
+            if helicity_M == 0:
+                helicity_Mp = 1
+                helicity_Np = 0
+            # Otherwise, use zeta as mapping coordinate
+            else:
+                helicity_Mp = 0
+                helicity_Np = -1
+        else:
+            if (helicity_Mp * helicity_N) == (helicity_Np * helicity_M):
+                raise ValueError(
+                    "Chosen helicities (N, M, N', M') do not create a well "
+                    "defined Jacobian."
+                )
+            
         self.helicity_Mp = helicity_Mp
         self.helicity_Np = helicity_Np
         #self.Phihat = max(saw.Phihat_value_or_tuple)
@@ -3015,14 +3034,11 @@ class MapPhaseSpace:
         # set timing parameters
         self.tmax = tmax
         self.min_timestep = min_timestep
-
-        # @TODO: add Eprime calculation
-        # @TODO: ADD RANDOM CONST EPRIME? ONLY EXISTS FOR GRID
+        
         self.Ekin = Ekin
         self.vtotal = np.sqrt(2*self.Ekin/mass)
         self.mass = mass
         self.charge = charge
-        self.vpar_sign = sign_vpar
         self.Eprime_slice = Eprime_slice
         self.Eprime = Eprime
 
@@ -3227,7 +3243,7 @@ class MapPhaseSpace:
                 sgn = np.sign(pitch_angle_flat[particle_index])
                 vpars_temp = initialize_velocity_uniform(
                     self.vtotal,
-                    points_temp.shape[1],
+                    points_temp.shape[0],
                     comm=self.comm,
                     seed=None,
                 )
@@ -3328,13 +3344,10 @@ class MapPhaseSpace:
         print("Tracing particles in perturbed field...", flush=True)
 
         first, last = parallel_loop_bounds(self.comm, len(self.s))
-        res_tys = []  # what need out: trajectory
+        res_tys = []  
         res_hits = []
 
-        # what need out: 
-
         for itrj in range(first, last):
-            print(f'tracing particle {itrj}/{len(self.s)}', flush=True)
             point = np.zeros((1, 4))  # initialize with t = 0
             point[:, 0] = self.s[itrj]
             point[:, 1] = self.thetas[itrj]
@@ -3380,11 +3393,12 @@ class MapPhaseSpace:
                 start_state = [0, point[0, 0], point[0, 1], point[0, 2], None, None, None]
                 particle_out = [start_state, start_state]
                 res_tys.append(particle_out)
-                res_hits.append(np.asarray(gc_zeta_hits))
+                res_hits.append(gc_zeta_hits[0])
                 continue
 
             self.saw.set_points(points_trajectory)
             modB = self.saw.B0.modB()[:, 0]
+            weighted_muB = self.mus[itrj] * self.mass * modB[0]
             E = 0.5 * self.mass * vpar_path**2 + self.mass * mu[0] * modB + self.charge * self.saw.Phi()[:, 0]
             Peta_values  = compute_peta(
                 self.saw,
@@ -3430,15 +3444,16 @@ class MapPhaseSpace:
             v_par_signs = np.sign(vpar_path)
             bounces = np.sum(v_par_signs[1:] * v_par_signs[:-1] < 0)
 
-            start_phasespace = [vpar_path[0],Peta_values[0], E[0], self.mus[itrj]]
+            start_phasespace = [vpar_path[0],Peta_values[0], E[0], weighted_muB]
             end_phasespace = [vpar_path[-1],Peta_values[-1], E[-1]]
             # puts time back in front 
             # t, s, theta, zeta, vpar, peta, E
             end_state = [points_trajectory[-1,-1].tolist()] + end_points.tolist() + end_phasespace
             start_state = [points_trajectory[0,-1].tolist()] + start_points.tolist() + start_phasespace
-            particle_out = [start_state, end_state, diffusion_data, mean_data, DA_eval, bounces, self.mus[itrj]]
+            particle_out = [start_state, end_state, diffusion_data, mean_data, DA_eval, bounces, weighted_muB]
             res_tys.append(particle_out)
             res_hits.append(gc_zeta_hits[0])
+        print(f'{self.comm.rank=} done tracing particles', flush=True)
 
         if self.comm is not None:
             res_tys = [i for o in self.comm.allgather(res_tys) for i in o]
@@ -3446,9 +3461,13 @@ class MapPhaseSpace:
 
         lost_total = []
         for i in range(len(res_hits)):
-            if res_hits[i].size>0:
-                if int(res_hits[i][0][1]) ==-1:
-                    lost_total.append(i)
+            if res_hits[i].size>0: 
+                try:            
+                    if int(res_hits[i][0][1]) ==-1:
+                        lost_total.append(i)
+                    print(f'{res_hits[i]=} succeeded', flush=True)
+                except:
+                    print(f'{res_hits[i]=} failed',flush=True)
 
         DAs = []
         Peta_start = []
@@ -3467,8 +3486,8 @@ class MapPhaseSpace:
                 end = elem[1]
                 
                 DAs.append(elem[4])
-                Peta_start.append(start[4])
-                pitch_initial.append(start[7]/start[6])  # peta / E
+                Peta_start.append(start[1])
+                pitch_initial.append((start[7]/self.Ekin) * np.sign(start[5]))  # peta / E
 
         
         self.DA_final = DAs
@@ -3512,6 +3531,128 @@ class MapPhaseSpace:
 
         fig.colorbar(im2, ax=ax, label='Digit Accuracy')
         plt.savefig(savepath, dpi=400)
+
+class LostPlot:
+    def __init__(
+            self,
+            saw,
+            mass,
+            charge,
+            Ekin,
+            helicity_N,
+            helicity_M,
+            helicity_Mp=None,
+            helicity_Np=None,
+            randomize_particles = False,
+            number_of_particles = 10000,
+            Eprime = None,
+            Eprime_slice = False,
+            min_timestep=1e-6,
+            s_lims=[0.01,0.95],
+            mean=True,
+            comm=None,
+            tmax=1e-2,
+            tol=1e-10,
+            solver_options={},
+            savedata=[True, 'DATA/'],
+            nconvergence_points = 1):
+        # set field parameters
+        self.saw = saw
+        self.B0 = saw.B0
+        self.helicity_M = helicity_M
+        self.helicity_N = helicity_N
+
+        if helicity_Mp is None and helicity_Np is None:
+            # If modB contours close poloidally, then use theta as mapping coordinate
+            if helicity_M == 0:
+                self.helicity_Mp = 1
+                self.helicity_Np = 0
+            # Otherwise, use zeta as mapping coordinate
+            else:
+                self.helicity_Mp = 0
+                self.helicity_Np = -1
+        else:
+            if (helicity_Mp * helicity_N) == (helicity_Np * helicity_M):
+                raise ValueError(
+                    "Chosen helicities (N, M, N', M') do not create a well "
+                    "defined Jacobian."
+                )
+                # set timing parameters
+        self.tmax = tmax
+        self.min_timestep = min_timestep
+
+        # @TODO: add Eprime calculation
+        # @TODO: ADD RANDOM CONST EPRIME? ONLY EXISTS FOR GRID
+        self.Ekin = Ekin
+        self.vtotal = np.sqrt(2*self.Ekin/mass)
+        self.mass = mass
+        self.charge = charge
+        self.Eprime_slice = Eprime_slice
+        self.Eprime = Eprime
+
+                # set communicator parameters
+        self.comm = comm
+        self.verbose=False
+        if self.comm==None:
+            self.verbose = True
+        elif self.comm.rank==0:
+            self.verbose = True
+
+        self.solver_options = solver_options
+
+        def min_volumemodB():
+            resolution = 100 
+            points = np.zeros((resolution * resolution,3))
+
+            for surface in np.linspace(0,0.99,resolution):
+                if surface == 0:
+                    points = initialize_position_uniform_surf(self.B0,resolution ,surface)
+                else:
+                    sampled_surface = initialize_position_uniform_surf(self.B0, resolution ,surface)
+                    points = np.concatenate((points,sampled_surface), axis=0)
+                    
+            self.B0.set_points(points)
+            modB = self.B0.modB()[:,0]
+            return np.min(modB)
+        
+        self.min_volmodB=min_volumemodB()
+
+        # plotting settings
+        self.mean = mean
+        self.savedata = savedata[0]
+        self.savepath = savedata[1]
+        self.convergence_points = nconvergence_points
+
+        self.s_min = s_lims[0]
+        self.s_max = s_lims[1]
+
+        if randomize_particles:
+            self.nParticles = number_of_particles
+            s, thetas, zetas, vpar, mu = self.instantiate_uniform_particles(self.nParticles)
+
+        
+        return
+    
+    def instantiate_uniform_particles(self, nParticles):
+        tracing_points = initialize_position_uniform_vol(
+            self.B0,
+            nParticles,
+            comm=self.comm,
+            seed=None,
+        )
+
+        vpars_init = initialize_velocity_uniform(
+            self.vtotal,
+            nParticles,
+            comm=self.comm,
+            seed=None,
+        )
+        
+        self.B0.set_points(tracing_points)
+        modB = self.B0.modB()[:,0]
+        mus_per_mass = (1/(2 * modB)) * (self.vtotal**2 - vpars_init**2)
+        return tracing_points[:,0],tracing_points[:,1],tracing_points[:,2], vpars_init, mus_per_mass
+
 
 def trajectory_to_vtk(res_ty, field, filename="trajectory"):
     r"""
