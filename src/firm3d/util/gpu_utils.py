@@ -4,8 +4,23 @@ __all__ = ["boozer_interpolant", "cartesian_interpolant"]
 
 
 def boozer_interpolant(field, nfp, n_metagrid_pts):
-    ### NEW INTERPOLANT
+    r"""
+    Set up a Boozer vacuum interpolant for tracing.
 
+    Args:
+        field: BoozerMagneticField object
+        nfp: Integer, number of field periods in the device
+        n_meta_grid_pts: Integer, number of cells in s, theta, zeta
+            to use for interpolation
+
+    Returns:
+        srange : (s_start, s_end, number of grid points in s for interpolation)
+        trange : same as srange, but for theta
+        zrange : same as srange, but for zeta
+        cell_quad_pts : The interpolant data. Each row is a point in the grid,
+            data is stored in columns modB, dmodBds, dmodBdtheta, dmodBdzeta, G, iota
+        maximum observed J at grid points, useful for rejection sampling
+    """
     srange = (0, 1.0, 3 * n_metagrid_pts + 1)
     trange = (0, np.pi, 3 * n_metagrid_pts + 1)
     zrange = (0, 2 * np.pi / nfp, 3 * n_metagrid_pts + 1)
@@ -68,7 +83,24 @@ def boozer_interpolant(field, nfp, n_metagrid_pts):
 
 
 def boozer_saw_interpolant(field, nfp, n_metagrid_pts):
-    ### NEW INTERPOLANT
+    r"""
+    Set up a Boozer vacuum interpolant for tracing.
+
+    Args:
+        field: BoozerMagneticField object
+        nfp: Integer, number of field periods in the device
+        n_meta_grid_pts: Integer, number of cells in s, theta, zeta
+            to use for interpolation
+
+    Returns:
+        srange : (s_start, s_end, number of grid points in s for interpolation)
+        trange : same as srange, but for theta
+        zrange : same as srange, but for zeta
+        cell_quad_pts : The interpolant data. Each row is a point in the grid,
+            data is stored in columns
+            modB, dmodBds, dmodBdtheta, dmodBdzeta, G, dGds, I, dIds, iota, diotads
+        maximum observed J at grid points, useful for rejection sampling
+    """
 
     srange = (0, 1.0, 3 * n_metagrid_pts + 1)
     trange = (0, np.pi, 3 * n_metagrid_pts + 1)
@@ -136,11 +168,23 @@ def boozer_saw_interpolant(field, nfp, n_metagrid_pts):
 
 
 def cartesian_interpolant(field, sc_particle, nfp, n_metagrid_pts):
-    ### NEW INTERPOLANT
+    r"""
+    Set up a Boozer vacuum interpolant for tracing.
 
-    # srange = (0, 1.0, 3*n_metagrid_pts+1)
-    # trange = (0, np.pi, 3*n_metagrid_pts+1)
-    # zrange = (0, 2*np.pi/nfp, 3*n_metagrid_pts+1)
+    Args:
+        field: MagneticField object
+        nfp: Integer, number of field periods in the device
+        n_meta_grid_pts: Integer, number of cells in r, phi, zeta
+            to use for interpolation
+
+    Returns:
+        r_range : (r_start, r_end, number of grid points in r for interpolation)
+        phi_range : same as r_range, but for phi
+        z_range : same as r_range, but for zeta
+        cell_quad_pts : The interpolant data. Each row is a point in the grid,
+         data is stored in columns B, GradAbsB, signed distance function
+    """
+
     r_range = (field.r_range[0], field.r_range[1], 3 * field.r_range[2] + 1)
     phi_range = (field.phi_range[0], field.phi_range[1], 3 * field.phi_range[2] + 1)
     z_range = (field.z_range[0], field.z_range[1], 3 * field.z_range[2] + 1)
