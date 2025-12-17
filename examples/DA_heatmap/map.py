@@ -33,13 +33,13 @@ AE_filename = "QH_10harmonics_scale0_00464159.npy"
 folder = 'figs'
 harmonic = 7
 
-mpl.rcParams['font.size'] = 16          # base font size
-mpl.rcParams['axes.labelsize'] = 20     # x/y labels
-mpl.rcParams['axes.titlesize'] = 20
-mpl.rcParams['xtick.labelsize'] = 16
-mpl.rcParams['ytick.labelsize'] = 16
-mpl.rcParams['legend.fontsize'] = 16
-mpl.rcParams['figure.titlesize'] = 18
+mpl.rcParams['font.size'] = 14          # base font size
+mpl.rcParams['axes.labelsize'] = 14     # x/y labels
+mpl.rcParams['axes.titlesize'] = 14
+mpl.rcParams['xtick.labelsize'] = 14
+mpl.rcParams['ytick.labelsize'] = 14
+mpl.rcParams['legend.fontsize'] = 14
+mpl.rcParams['figure.titlesize'] = 14
 
 order = 3
 degree = 3
@@ -94,7 +94,6 @@ heat_map = MapPhaseSpace(
     Phin,
     Phim,
     omega,
-    sign_vpar,
     mass,
     charge,
     Ekin,
@@ -102,8 +101,7 @@ heat_map = MapPhaseSpace(
     helicity_M,
     helicity_Mp,
     helicity_Np,
-    randomize_particles = True,
-    number_of_particles = 5000,
+    randomize_particles = False,
     comm=comm
 )
 
