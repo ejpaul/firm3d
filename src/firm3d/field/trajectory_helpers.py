@@ -1715,7 +1715,7 @@ class PassingPerturbedPoincare:
                 axis=0,
                 stopping_criteria=[
                     MinToroidalFluxStoppingCriterion(0.001),
-                    MaxToroidalFluxStoppingCriterion(1.0),
+                    MaxToroidalFluxStoppingCriterion(0.99),
                 ],
                 forget_exact_path=True,
                 vpars_stop=True,
@@ -1723,7 +1723,7 @@ class PassingPerturbedPoincare:
                 **self.solver_options,
                 )
         except: 
-            print(f"Error integrating guiding center equations at {point=}, {t=}, {eta=}")
+            print(f"Error integrating guiding center equations at {point=}, {t=}, {eta=}", flush=True)
             raise RuntimeError()
         if len(res_hits[0]) == 0:
             raise RuntimeError("No stopping criterion reached in passing_map.")
@@ -1850,6 +1850,7 @@ class PassingPerturbedPoincare:
         DA_max=7,
         lines=None,
         ylims=(0, 1),
+        colorbar=True,
         s_axis_label = True
     ):
         r"""
@@ -1902,8 +1903,6 @@ class PassingPerturbedPoincare:
             max_s = max(list(s_itrj_map.values()))
             s_lst_true = list(s_itrj_map.values())
             cmap_s = mpl.colormaps["copper"].resampled(len(s_lst_true) ** 2)
-
-        print(f'comm.rank= {self.comm.rank}', flush=True)
 
         def normalize(numbers):
             if not numbers:
@@ -1968,12 +1967,13 @@ class PassingPerturbedPoincare:
             # make colorbar for DA values
             max_val = DA_max
             norm = plt.Normalize(0, max_val)
-            fig.colorbar(
-                ScalarMappable(norm=norm, cmap=mpl.colormaps[cmap]),
-                ax=ax,
-                orientation="vertical",
-                label="Digit Accuracy",
-            )
+            if colorbar:
+                fig.colorbar(
+                    ScalarMappable(norm=norm, cmap=mpl.colormaps[cmap]),
+                    ax=ax,
+                    orientation="vertical",
+                    label="Digit Accuracy",
+                )
         print('Lines to plot:', lines, flush=True)
         lines_2 = []
         if lines is not None:
@@ -2532,6 +2532,7 @@ class PassingPerturbedPetaPoincare:
                 omegas=omegas,
                 vpars=[0],
                 axis = 0,
+                ODE_solver="dormand_prince",
                 stopping_criteria=[
                     MinToroidalFluxStoppingCriterion(0.001),
                     MaxToroidalFluxStoppingCriterion(1.0),
@@ -2844,8 +2845,6 @@ class PassingPerturbedPetaPoincare:
             # normalized DA values for colormap
             DA_norm_all = normalize(final_DAs)
             cmap_object = mpl.colormaps[cmap].resampled(len(self.DA_all) ** 2)
-        print(f"final_DAs: {final_DAs}")
-
         ax.set_ylabel(r"$\chi$")
         ax.set_xlabel(r"$P_\eta$")
         ax.set_ylim([0, 2 * np.pi])
@@ -2925,7 +2924,6 @@ class PassingPerturbedPetaPoincare:
 
         plt.clf()
         final_Petas = [self.Peta_all[i][-1]for i in range(len(self.Peta_all)) if len(self.Peta_all[i])>self.Nmaps-3]
-        print(f'{(final_Petas)=}')
         plt.hist(self.Petas_init, alpha=0.5,density=True,bins=30, label='init')
         plt.hist(final_Petas, alpha=0.5, density=True,bins=30, label='final')
         plt.xlabel(r"$P_\eta$")
@@ -2977,6 +2975,7 @@ class MapPhaseSpace:
         Eprime_slice = False,
         min_timestep=1e-6,
         s_lims=[0.01,0.95],
+        diffusion = False,
         mean=True,
         comm=None,
         tmax=1e-2,
@@ -3092,6 +3091,7 @@ class MapPhaseSpace:
             s, thetas, zetas, vpar, mu = self.instantiate_gridded_particles()
 
         # set parameters for convergence plot
+        self.diffusion = diffusion
         expected_length = int(self.tmax/self.min_timestep)
         expected_step = int(expected_length/self.convergence_points)
         self.WBA_transit_steps = np.linspace(expected_step, expected_length - 1, num=nconvergence_points, dtype=int).tolist()
@@ -3166,7 +3166,7 @@ class MapPhaseSpace:
     
     def vpar_func_perturbed(self, s, theta, zeta, mu, sgn):
         # Choose initial conditions on the eta = 0 plane
-        point = np.zeros((len(s), 4))  # initialize with t = 0
+        point = np.zeros((1, 4))  # initialize with t = 0
         point[:, 0] = s
         point[:, 1] = theta
         point[:, 2] = zeta
@@ -3227,17 +3227,19 @@ class MapPhaseSpace:
                     self.particles_per_surface,
                     surfaces_flat[particle_index],
                     comm=self.comm)
-            print(f'{points_temp.shape=}')
             if self.Eprime_slice:
                 sgn = np.sign(pitch_angle_flat[particle_index])
                 mu = (np.abs(pitch_angle_flat[particle_index]) * self.Ekin)
-                vpars_temp = self.vpar_func_perturbed(
-                    points_temp[:,0],
-                    points_temp[:,1],
-                    points_temp[:,2],
-                    mu,
-                    sgn
-                )
+                vpars_temp = []
+                for i in range(points_temp.shape[0]):
+                    vpars_temp = self.vpar_func_perturbed(
+                        points_temp[i,0],
+                        points_temp[i,1],
+                        points_temp[i,2],
+                        mu,
+                        sgn
+                    )
+                vpars_temp = np.array(vpars_temp)
                 mus_temp = mu/self.mass * np.ones_like(vpars_temp)
             else:
                 sgn = np.sign(pitch_angle_flat[particle_index])
@@ -3254,14 +3256,14 @@ class MapPhaseSpace:
             mask = ~np.isnan(vpars_temp)
             vpars_temp = vpars_temp[mask]
             points_temp = points_temp[mask]
-
             vpars_temp = vpars_temp.tolist()
             vpars += vpars_temp
+            mus_temp = mus_temp.tolist()
             mus += mus_temp
             if particle_index == 0:
                 points = points_temp
             else: 
-                points = np.stack((points, points_temp))
+                points = np.concatenate((points, points_temp), axis=0)
         print(f'{points.shape=}')
         return points[:,0].tolist(), points[:,1].tolist(), points[:,2].tolist(), vpars, mus
 
@@ -3375,7 +3377,6 @@ class MapPhaseSpace:
                     ODE_solver="dormand_prince",
                     **self.solver_options,
                     )
-            print(f'traced particle {itrj}/{len(self.s)}', flush=True)
             points_trajectory = gc_tys[0]
             time_momentum, s_path, theta_path, zeta_path, vpar_path = points_trajectory[:, 0], points_trajectory[:, 1], points_trajectory[:, 2], points_trajectory[:, 3], points_trajectory[:, 4]
             points_trajectory = np.column_stack(
@@ -3472,6 +3473,7 @@ class MapPhaseSpace:
         DAs = []
         Peta_start = []
         pitch_initial = []
+        bounces = []
 
         for elem in res_tys:
             # index 0: start state: 
@@ -3485,13 +3487,18 @@ class MapPhaseSpace:
                 start = elem[0]
                 end = elem[1]
                 
-                DAs.append(elem[4])
+                if self.diffusion: 
+                    DAs.append(elem[2][0])  # diffusion data
+                else:
+                    DAs.append(elem[4])
                 Peta_start.append(start[1])
-                pitch_initial.append((start[7]/self.Ekin) * np.sign(start[5]))  # peta / E
+                pitch_initial.append((start[7]/self.Ekin) * np.sign(start[4]))  # peta / E
+                bounces.append(elem[5])
 
         
         self.DA_final = DAs
         self.res_tys = res_tys
+        self.bounces = bounces
         #self.da_values, self.wall_lost, self.surfaces, self.pitch_angles =
         return DAs, lost_total, Peta_start, pitch_initial
 
@@ -3526,11 +3533,14 @@ class MapPhaseSpace:
 
         im2 = ax.pcolormesh(X2, Y2, stat.T, shading='auto', cmap="cmc.managua", norm=norm)
         ax.set_title(r'Heatmap of Digit Accuracy')
-        ax.set_xlabel(r'$\lambda = \frac{\mu}{E}$')
+        ax.set_xlabel(r'$\lambda = \frac{\mu}{E} \text{sign}(v_{||})$')
         ax.set_ylabel(r'$s_0$')
 
+        fig.tight_layout()
         fig.colorbar(im2, ax=ax, label='Digit Accuracy')
         plt.savefig(savepath, dpi=400)
+
+
 
 class LostPlot:
     def __init__(

@@ -85,7 +85,6 @@ poinc = PassingPerturbedPoincare(
     ns_poinc=ns_poinc,
     nchi_poinc=nchi_poinc,
     Nmaps=Nmaps,
-    comm=comm_world,
     solver_options={"reltol": tol, "abstol": tol},
 )
 
