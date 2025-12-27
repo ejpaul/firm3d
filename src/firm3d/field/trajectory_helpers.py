@@ -1937,7 +1937,7 @@ class PassingPerturbedPoincare:
                     np.mod(self.chis_all[i], 2 * np.pi),
                     self.s_all[i],
                     marker="o",
-                    s=1,
+                    s=2,
                     c=cmap_object(DA_norm_all[i]),
                     edgecolors="none",
                 )
@@ -1946,7 +1946,7 @@ class PassingPerturbedPoincare:
                     np.mod(self.chis_all[i], 2 * np.pi),
                     self.s_all[i],
                     marker="o",
-                    s=1,
+                    s=2,
                     edgecolors="none",
                 )
 
@@ -2981,6 +2981,7 @@ class MapPhaseSpace:
         tmax=1e-2,
         tol=1e-10,
         solver_options={},
+        unperturbed=False,
         savedata=[True, 'DATA/'],
         nconvergence_points = 1
     ):
@@ -3022,9 +3023,16 @@ class MapPhaseSpace:
         self.Phimp = (self.Phim * self.helicity_Np - self.Phin * self.helicity_Mp)/( self.helicity_M * self.helicity_Np - self.helicity_Mp * self.helicity_N)
         self.Phinp = (self.Phim * self.helicity_Np - self.Phin * self.helicity_Mp)/( self.helicity_M * self.helicity_Np - self.helicity_Mp * self.helicity_N)
         
-        self.nprime = (self.Phim * self.helicity_N - self.Phin * self.helicity_M) / (
-            self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
-        )
+        # Compute the invariant Eprime
+        if unperturbed: 
+            self.nprime = ( helicity_N - helicity_M) / (
+                helicity_Np * helicity_M - helicity_N * helicity_Mp
+            )
+        else:
+            self.nprime = (self.Phim * helicity_N - self.Phin * helicity_M) / (
+                helicity_Np * helicity_M - helicity_N * helicity_Mp
+            )
+
         self.omega = omega
         self.omegan = self.omega / self.nprime
 
@@ -3232,13 +3240,14 @@ class MapPhaseSpace:
                 mu = (np.abs(pitch_angle_flat[particle_index]) * self.Ekin)
                 vpars_temp = []
                 for i in range(points_temp.shape[0]):
-                    vpars_temp = self.vpar_func_perturbed(
+                    vp_temp = self.vpar_func_perturbed(
                         points_temp[i,0],
                         points_temp[i,1],
                         points_temp[i,2],
                         mu,
                         sgn
                     )
+                    vpars_temp.append(vp_temp[0])
                 vpars_temp = np.array(vpars_temp)
                 mus_temp = mu/self.mass * np.ones_like(vpars_temp)
             else:
@@ -3336,7 +3345,7 @@ class MapPhaseSpace:
                     lost_total.append(i)
         
         # remove wall lost particles from the list of evaluated particles
-        points=np.delete(points, lost_total, axis=0)
+        points = np.delete(points, lost_total, axis=0)
         vpars_init = np.delete(vpars_init, lost_total, axis=0)
         mus = np.delete(mus, lost_total, axis=0)
 
@@ -3390,7 +3399,7 @@ class MapPhaseSpace:
                 vpar_path = vpar_path[:idx_wall]
 
             if points_trajectory.shape[0] < 10:
-                print(f"Particle {itrj} has no valid trajectory points \t {point[0, :]}", flush=True)
+                print(f"Particle {itrj} has no valid trajectory points \t {point[-1, :]}", flush=True)
                 start_state = [0, point[0, 0], point[0, 1], point[0, 2], None, None, None]
                 particle_out = [start_state, start_state]
                 res_tys.append(particle_out)
@@ -3462,13 +3471,9 @@ class MapPhaseSpace:
 
         lost_total = []
         for i in range(len(res_hits)):
-            if res_hits[i].size>0: 
-                try:            
-                    if int(res_hits[i][0][1]) ==-1:
-                        lost_total.append(i)
-                    print(f'{res_hits[i]=} succeeded', flush=True)
-                except:
-                    print(f'{res_hits[i]=} failed',flush=True)
+            if res_hits[i].size>0:     
+                if int(res_hits[i][0][1]) ==-1:
+                    lost_total.append(i)
 
         DAs = []
         Peta_start = []
@@ -3510,7 +3515,7 @@ class MapPhaseSpace:
         import cmcrameri.cm as cmc 
 
         if ax is None:
-            fig, ax = plt.subplots()
+            fig, ax = plt.subplots(figsize=(14,12))
         else:
             fig = ax.get_figure()
 
@@ -3520,7 +3525,7 @@ class MapPhaseSpace:
         
         norm = mpl.colors.Normalize(vmin=0, vmax=DA_max)
 
-        print(f"{(self.pitch_angles)=} {(self.surfaces)=} {(self.DA_final)=}")
+        #print(f"{(self.pitch_angles)=} {(self.surfaces)=} {(self.DA_final)=}")
 
         stat, x_edges, y_edges, binnumber = binned_statistic_2d(
             np.array(self.pitch_angles), np.array(self.surfaces), np.array(self.DA_final),
@@ -3532,41 +3537,205 @@ class MapPhaseSpace:
         X2, Y2 = np.meshgrid(x_edges, y_edges)
 
         im2 = ax.pcolormesh(X2, Y2, stat.T, shading='auto', cmap="cmc.managua", norm=norm)
-        ax.set_title(r'Heatmap of Digit Accuracy')
+        
+        if self.diffusion:
+            colorlabel = r'$D_{eff}$'
+        else:
+            colorlabel = 'Digit Accuracy'
         ax.set_xlabel(r'$\lambda = \frac{\mu}{E} \text{sign}(v_{||})$')
         ax.set_ylabel(r'$s_0$')
+        ax.set_xlim([-1, 1])
 
         fig.tight_layout()
-        fig.colorbar(im2, ax=ax, label='Digit Accuracy')
+        fig.colorbar(im2, ax=ax, label=colorlabel)
         plt.savefig(savepath, dpi=400)
 
+    def plot_ratio(self, ax=None,nx=20, ny=20, savepath = 'heatmap_ratio.png'):
+        import matplotlib as mpl
+        from matplotlib.cm import ScalarMappable
+        import matplotlib.pyplot as plt
+        from scipy.stats import binned_statistic_2d
 
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(12,12))
+        else:
+            fig = ax.get_figure()
 
-class LostPlot:
-    def __init__(
-            self,
-            saw,
-            mass,
-            charge,
-            Ekin,
-            helicity_N,
-            helicity_M,
-            helicity_Mp=None,
-            helicity_Np=None,
-            randomize_particles = False,
-            number_of_particles = 10000,
-            Eprime = None,
-            Eprime_slice = False,
-            min_timestep=1e-6,
-            s_lims=[0.01,0.95],
-            mean=True,
-            comm=None,
-            tmax=1e-2,
-            tol=1e-10,
-            solver_options={},
-            savedata=[True, 'DATA/'],
-            nconvergence_points = 1):
-        # set field parameters
+        if not self.randomize_particles:
+            ny = self.ns_points
+            nx = self.nlambda_points
+    
+
+        #print(f"{(self.pitch_angles)=} {(self.surfaces)=} {(self.DA_final)=}")
+
+        stat, x_edges, y_edges, binnumber = binned_statistic_2d(
+            np.array(self.pitch_angles), np.array(self.surfaces), np.array(self.DA_final),
+            statistic='mean',
+            bins=[nx, ny]
+        )
+
+        x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
+        y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
+
+        # Meshgrid for bin centers
+        Xc, Yc = np.meshgrid(x_centers, y_centers)
+
+        RATIO_grid = np.zeros_like(stat)
+        num_list = []
+        denom_list = []
+        s_lst = []
+        ratio_pre_weighted = []
+        from scipy.constants import m_e, epsilon_0, e
+        Z_alpha = 2
+        Z_i = 1
+        lnLambda = 18
+
+        plt.rcParams.update({'font.size': 16})
+
+        Te_eV = 12e3  * np.abs(e)      # 12 keV to J
+        n_i = 2e20  # m^-3  
+        def pa_frequency(s):
+            v_Te = np.sqrt(2 * Te_eV / m_e)
+
+            # prefactor
+            prefactor = (n_i * Z_i**2 * Z_alpha**2 * e**4 * lnLambda) \
+                        / (6 * np.sqrt(np.pi) * epsilon_0**2 * self.mass**2 * self.vtotal**3)
+            
+            # temperature/mass correction
+            temp_factor = (m_e**1.5 * v_Te**3) / (Te_eV**1.5)
+
+            # final rate
+            v_d = prefactor * temp_factor
+            return v_d
+
+        def compute_jacobian_prime(points):
+            self.B0.set_points(points)
+            dGds = self.B0.dGds()[:, 0]
+            G = self.B0.G()[:, 0]
+            modB = self.B0.modB()[:, 0]
+            dBds = self.B0.dmodBds()[:, 0]
+            diotads = self.B0.diotads()[:, 0]
+            dIds = self.B0.dIds()[:, 0]
+            I = self.B0.I()[:, 0]
+            iota = self.B0.iota()[:, 0]
+
+            denom = (G + iota * I)
+            inner = 2 * dBds - modB * (dGds + I * diotads + iota * dIds) / denom
+            return modB * inner / denom
+        def dpeta_ds(points, lam):
+            self.B0.set_points(points)
+            G = self.B0.G()[:, 0]
+            I = self.B0.I()[:, 0]
+            modB = self.B0.modB()[:, 0]
+            dBds = self.B0.dmodBds()[:, 0]
+            dIds = self.B0.dIds()[:, 0]
+            dGds = self.B0.dGds()[:, 0]
+            psi = self.B0.psi0 * points[:, 0]
+            psip = self.B0.psip()[:, 0]
+
+            alpha = self.saw.alpha()[:, 0]
+            dalphads = self.saw.dalphadpsi()[:, 0]
+
+            constant = (self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp)
+
+            geometry = (self.helicity_M * G + self.helicity_N * I)
+            geometry_prime = (self.helicity_M * dGds + self.helicity_N * dIds) 
+            vpar = np.sqrt(self.vtotal * (1-lam))
+
+            field_term = (self.mass * vpar / modB + self.charge * alpha + self.charge * self.helicity_N * psi + self.charge * self.helicity_M * psip)
+
+            ke_prime = (-1* (self.mass * vpar * dBds)/(modB**2))
+            pertubation_prime = self.charge * dalphads
+            field_terms_prime = self.charge * self.helicity_N * self.B0.psi0 + self.charge
+
+            dpeta_ds = (1/constant) * (geometry_prime * field_term)     
+            dpeta_ds +=  (1/constant) * (geometry * (ke_prime + pertubation_prime) + geometry * field_terms_prime)
+            return dpeta_ds
+
+        def RATIO(D, points,pitch,  m,n):
+
+            self.B0.set_points(points)
+            G = self.B0.G()[:, 0]
+            I = self.B0.I()[:, 0]
+            modB = self.B0.modB()[:, 0]
+            iota = self.B0.iota()[:, 0]
+            diotads = self.B0.diotads()[:, 0]
+
+            diotads_fraction = (diotads * m)/ (iota * m - n)
+
+            dPdE = 2 * self.mass / modB
+            dTds_term = ( diotads_fraction + compute_jacobian_prime(points) * compute_jacobian(points))
+            numerator = D * (dpeta_ds(points, pitch))
+
+            denom = ((self.helicity_M*G + self.helicity_N*I) / (self.helicity_Np*self.helicity_M - self.helicity_Mp + self.helicity_N ))**2 * pa_frequency()**2*(dPdE)**2
+            RATIO = -1 * numerator / denom
+            return RATIO, numerator, denom
+
+        def compute_jacobian(points):
+            self.B0.set_points(points)
+            G = self.B0.G()[:, 0]
+            modB = self.B0.modB()[:, 0]
+            I = self.B0.I()[:, 0]
+            iota = self.B0.iota()[:, 0]
+
+            denom = (G + iota * I)
+
+            return modB**2 / denom
+
+        for i in range(nx):
+            for j in range(ny):
+                D_val = stat[j, i]   # binned D in this cell
+                s_val = Yc[j, i]
+                lam_val = Xc[j, i]
+
+                pts = initialize_position_uniform_surf(self.B0, 100, s_val)
+                ratio, numerator, denom =  RATIO(D_val, pts, np.abs(lam_val), self.Phim, self.Phin)
+                ratio_pre_weighted.append(ratio)
+                ratio *= compute_jacobian(pts)
+                ratio_weighted  = np.sum(ratio) / np.sum(compute_jacobian(pts))
+
+                num_list.append(numerator)
+                denom_list.append(denom)
+                s_lst.append(s_val)
+                RATIO_grid[j, i] = ratio_weighted
+
+        Xc, Yc = np.meshgrid(x_centers, y_centers)
+
+        levels = 100
+        cont = ax.contourf(
+            Xc, Yc, RATIO_grid,
+            levels=levels,
+            cmap="plasma"
+        )
+        ax.set_title(r'R = $\frac{\nu_{stoch}}{\nu_{\text{Pitch Angle}}}$')
+        fig.colorbar(cont, ax=ax, label='R')
+        ax.set_ylabel(r'$s_0$')
+        ax.set_xlabel(r'$\lambda = \frac{\mu}{E} \text{sign}(v_{||})$')
+        plt.savefig(savepath, dpi=400)
+
+class WBAParticles:
+    def __init__(self, 
+    saw,
+    initial_conditions,
+    v_pars,
+    mu_per_mass,
+    mass,
+    charge,
+    helicity_N,
+    helicity_M,
+    helicity_Mp=None,
+    helicity_Np=None,
+    mean=True,
+    savedata=(False,'DATA/'),
+    tmax = 1e-2,
+    min_timestep = 1e-6,
+    comm=None,
+    DA_cutoff=3,
+    skipped_particles = [],
+    solver_options = {},
+    nconvergence_points=1):
+        
+        self.comm = comm
         self.saw = saw
         self.B0 = saw.B0
         self.helicity_M = helicity_M
@@ -3587,20 +3756,12 @@ class LostPlot:
                     "Chosen helicities (N, M, N', M') do not create a well "
                     "defined Jacobian."
                 )
-                # set timing parameters
-        self.tmax = tmax
-        self.min_timestep = min_timestep
-
-        # @TODO: add Eprime calculation
-        # @TODO: ADD RANDOM CONST EPRIME? ONLY EXISTS FOR GRID
-        self.Ekin = Ekin
-        self.vtotal = np.sqrt(2*self.Ekin/mass)
+            self.helicity_Mp = helicity_Mp
+            self.helicity_Np = helicity_Np
+        
         self.mass = mass
         self.charge = charge
-        self.Eprime_slice = Eprime_slice
-        self.Eprime = Eprime
 
-                # set communicator parameters
         self.comm = comm
         self.verbose=False
         if self.comm==None:
@@ -3610,58 +3771,146 @@ class LostPlot:
 
         self.solver_options = solver_options
 
-        def min_volumemodB():
-            resolution = 100 
-            points = np.zeros((resolution * resolution,3))
-
-            for surface in np.linspace(0,0.99,resolution):
-                if surface == 0:
-                    points = initialize_position_uniform_surf(self.B0,resolution ,surface)
-                else:
-                    sampled_surface = initialize_position_uniform_surf(self.B0, resolution ,surface)
-                    points = np.concatenate((points,sampled_surface), axis=0)
-                    
-            self.B0.set_points(points)
-            modB = self.B0.modB()[:,0]
-            return np.min(modB)
-        
-        self.min_volmodB=min_volumemodB()
-
-        # plotting settings
         self.mean = mean
         self.savedata = savedata[0]
         self.savepath = savedata[1]
         self.convergence_points = nconvergence_points
 
-        self.s_min = s_lims[0]
-        self.s_max = s_lims[1]
-
-        if randomize_particles:
-            self.nParticles = number_of_particles
-            s, thetas, zetas, vpar, mu = self.instantiate_uniform_particles(self.nParticles)
-
+        if self.savedata:
+            self.IC_filepaths = {
+                's0': self.savepath + 'uniform_s0.txt',
+                'theta0': self.savepath + 'uniform_theta0.txt',
+                'zeta0': self.savepath + 'uniform_zeta0.txt',
+                'vpar0': self.savepath + 'uniform_vpar0.txt',
+                'mu_per_mass': self.savepath + 'uniform_mu_per_mass.txt'
+            }
+            self.final_filepaths = {
+                'DA': self.savepath + f'DA.txt',
+                'wall_lost': self.savepath + f'wall_lost.txt',
+            }
         
-        return
+        self.skip = skipped_particles
+        if not self.check_filepaths(self.final_filepaths):
+            points_phase = np.append(initial_conditions, np.zeros((initial_conditions.shape[0],1)), axis=1)
+            self.gc_tys = self.trace_particles(saw, points_phase, v_pars, mu_per_mass)
+            self.DAs, self.wall_lost_indicies, self.wall_lost_times = self.quantify_chaos_and_losses(
+                    trajectories=self.gc_tys,
+                    equilibrium_lost_indicies = self.skip)
+            np.savetxt(self.final_filepaths['DA'], np.array(self.DAs))
+            np.savetxt(self.final_filepaths['wall_lost'], np.column_stack((self.wall_lost_indicies, self.wall_lost_times)))
+        else:
+            self.DAs = np.loadtxt(self.final_filepaths['DA']).tolist()
+            wall_lost = np.loadtxt(self.final_filepaths['wall_lost']).astype(int)
+            self.wall_lost_indicies = wall_lost[:,0].tolist()
+            self.wall_lost_times = wall_lost[:,1].tolist()
+        fractional_chaotic = self.compute_fractions(DA_cutoff=DA_cutoff)
+        
+    def compute_fractions(self, DA_cutoff=3):
+        uniform_fractional_chaotic = [(sum([1 for i in range(len(self.uniform_DA)) if ((self.uniform_DA[i]<DA_cutoff) or (i in self.uniform_lost))])/(self.uni_numparticle)) * 100]
+        return uniform_fractional_chaotic          
+
+    def quantify_chaos_and_losses(self, trajectories, equilibrium_lost_indicies):
+        lost_total = []
+        DA_list = []
+        lost_times = []
+
+        for i in range(len(trajectories)):
+            # trajectories are in format: 
+            # first slice, last slice, DA
+            # slice = [s, theta, zeta, time]
+            if i in equilibrium_lost_indicies:
+                DA_list.append(np.nan)
+                continue
+
+            final_time = trajectories[i][1][3]
+            final_s = trajectories[i][1][0]
+            DA = trajectories[i][2]
+            
+                
+            # check if particle lost to wall
+            if final_time < (self.tmax-2e-6):
+                lost_total.append(int(i))
+                lost_times.append(final_time)
+            DA_list.append(DA)
+        return DA_list, lost_total, lost_times
+
+    def check_filepaths(self,filepaths):
+        return all([exists(fp) for fp in filepaths.values()])
     
-    def instantiate_uniform_particles(self, nParticles):
-        tracing_points = initialize_position_uniform_vol(
-            self.B0,
-            nParticles,
-            comm=self.comm,
-            seed=None,
-        )
+    def trace_particles(self, saw, points_phase, vpars, mus, ):
+        first, last = parallel_loop_bounds(self.comm, points_phase.shape[0])
+        res_tys = []  
+        res_hits = []
 
-        vpars_init = initialize_velocity_uniform(
-            self.vtotal,
-            nParticles,
-            comm=self.comm,
-            seed=None,
-        )
-        
-        self.B0.set_points(tracing_points)
-        modB = self.B0.modB()[:,0]
-        mus_per_mass = (1/(2 * modB)) * (self.vtotal**2 - vpars_init**2)
-        return tracing_points[:,0],tracing_points[:,1],tracing_points[:,2], vpars_init, mus_per_mass
+        for itrj in range(first, last):
+            if itrj in self.skip:
+                start_state = [points_phase[itrj, 0], points_phase[itrj, 1], points_phase[itrj, 2],0]
+                particle_out = [start_state, start_state, np.nan]
+                res_tys.append(particle_out)
+                res_hits.append(np.array([]))
+                continue
+            #print(f'{points_phase[itrj].shape=} \t{vpars[itrj]=} \t{mus[itrj]=}', flush=True)
+            gc_tys, gc_zeta_hits = trace_particles_boozer_perturbed(
+                    perturbed_field = saw, 
+                    stz_inits = points_phase[itrj,:].reshape(1,4), 
+                    parallel_speeds = [vpars[itrj]],
+                    mus = [mus[itrj]], 
+                    tmax=self.tmax, 
+                    mass=self.mass, 
+                    charge=self.charge,
+                    Ekin=self.Ekin,
+                    abstol=1e-9,
+                    reltol=1e-9,
+                    stopping_criteria=[
+                        MaxToroidalFluxStoppingCriterion(1.0)
+                    ],
+                    mode='gc_noK',
+                    ODE_solver="dormand_prince",
+                    **self.solver_options,)
+            
+            points_trajectory = gc_tys[0]
+            time_momentum, s_path, theta_path, zeta_path, vpar_path = points_trajectory[:, 0], points_trajectory[:, 1], points_trajectory[:, 2], points_trajectory[:, 3], points_trajectory[:, 4]
+            points_trajectory = np.column_stack(
+                (s_path, theta_path, zeta_path, time_momentum)
+            )
+            idx_wall = np.argmax(s_path >= 1) if np.any(s_path >= 1) else None
+            if idx_wall is not None and s_path[idx_wall] >= 1:
+                print(f"Particle {itrj} hit the wall at time {time_momentum[idx_wall]}, s = {s_path[idx_wall]}",flush=True)
+                idx_wall -= 1
+                points_trajectory = points_trajectory[:idx_wall, :]
+                vpar_path = vpar_path[:idx_wall]
+
+            if points_trajectory.shape[0] < 8:
+                print(f"Particle {itrj} has no valid trajectory points \t {points_trajectory[-1, :]}", flush=True)
+                start_state = points_trajectory[0, :].tolist()
+                end_state = points_trajectory[-1, :].tolist()
+                particle_out = [start_state, end_state, np.nan]
+                res_tys.append(particle_out)
+                res_hits.append(gc_zeta_hits[0])
+                continue
+
+            Peta_values  = compute_peta(
+                saw,
+                points_trajectory,
+                vpar_path,
+                self.mass,
+                self.charge,
+                self.helicity_M,
+                self.helicity_N,
+                self.helicity_Mp,
+                self.helicity_Np
+            )
+            time_eval, DA_eval = return_DA(np.column_stack((points_trajectory[:, 3], Peta_values)))
+
+            first_slice = points_trajectory[0,:]
+            last_slice = points_trajectory[-1,:]
+            particle_out = [first_slice.tolist(), last_slice.tolist(), DA_eval]
+            res_tys.append(particle_out)
+            res_hits.append(gc_zeta_hits[0])
+        if self.comm is not None:
+            res_tys = [i for o in self.comm.allgather(res_tys) for i in o]
+        return res_tys
+
 
 
 def trajectory_to_vtk(res_ty, field, filename="trajectory"):
