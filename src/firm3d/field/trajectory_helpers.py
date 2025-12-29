@@ -2971,6 +2971,9 @@ class MapPhaseSpace:
         nlambda_points=20,
         randomize_particles = False,
         number_of_particles = 10000,
+        initial_conditions = None,
+        initial_vpar = None,
+        initial_mu_per_particle = None,
         Eprime = None,
         Eprime_slice = False,
         min_timestep=1e-6,
@@ -2980,6 +2983,7 @@ class MapPhaseSpace:
         comm=None,
         tmax=1e-2,
         tol=1e-10,
+        skip = [],
         solver_options={},
         unperturbed=False,
         savedata=[True, 'DATA/'],
@@ -3085,18 +3089,28 @@ class MapPhaseSpace:
         self.s_min = s_lims[0]
         self.s_max = s_lims[1]
 
-        self.randomize_particles = randomize_particles
-        # instantiate ICs 
-        if randomize_particles:
-            self.nParticles = number_of_particles
-            s, thetas, zetas, vpar, mu = self.instantiate_uniform_particles(self.nParticles)
+        if initial_conditions is None: 
+            self.randomize_particles = randomize_particles
+            # instantiate ICs 
+            if randomize_particles:
+                self.nParticles = number_of_particles
+                s, thetas, zetas, vpar, mu = self.instantiate_uniform_particles(self.nParticles)
 
+            else:
+                self.ns_points = ns_points
+                self.particles_per_surface = particles_per_surface
+                self.nlambda_points = nlambda_points
+                self.nParticles = ns_points * particles_per_surface * nlambda_points
+                s, thetas, zetas, vpar, mu = self.instantiate_gridded_particles()
         else:
-            self.ns_points = ns_points
-            self.particles_per_surface = particles_per_surface
-            self.nlambda_points = nlambda_points
-            self.nParticles = ns_points * particles_per_surface * nlambda_points
-            s, thetas, zetas, vpar, mu = self.instantiate_gridded_particles()
+            s = initial_conditions[:,0]
+            thetas = initial_conditions[:,1]
+            zetas = initial_conditions[:,2]
+            if initial_vpar is not None and initial_mu_per_particle is not None:
+                vpar = initial_vpar
+                mu = initial_mu_per_particle
+            else:
+                raise ValueError("If providing initial conditions, must provide both initial_vpar and initial_mu_per_particle")
 
         # set parameters for convergence plot
         self.diffusion = diffusion
@@ -3108,9 +3122,40 @@ class MapPhaseSpace:
         initial_point[:, 0] = s
         initial_point[:, 1] = thetas
         initial_point[:, 2] = zetas
-        self.s, self.thetas, self.zetas, self.vpar, self.mus, self.equilibrium_lost = self.remove_equilibrium_lost_particles(initial_point, vpar, mu)
-        self.da_values, self.wall_lost, self.surfaces, self.pitch_angles = self.trace_particles()
 
+        if self.savedata:
+            self.IC_filepaths = {
+                's0': self.savepath + '_s0.txt',
+                'theta0': self.savepath + '_theta0.txt',
+                'zeta0': self.savepath + '_zeta0.txt',
+                'vpar0': self.savepath + '_vpar0.txt',
+                'mu_per_mass': self.savepath + '_mu_per_mass.txt'
+            }
+            if diffusion:
+                self.final_filepaths = {
+                    'D': self.savepath + f'Deff.txt',
+                    'wall_lost': self.savepath + f'wall_lost.txt',
+                }
+            else:
+                self.final_filepaths = {
+                    'D': self.savepath + f'DA.txt',
+                    'wall_lost': self.savepath + f'wall_lost.txt',
+                }
+
+        self.equilibrium_lost = skip
+        if self.check_filepaths(self,self.final_filepaths):
+            self.DAs = np.loadtxt(self.final_filepaths['DA']).tolist()
+            wall_lost = np.loadtxt(self.final_filepaths['wall_lost']).astype(int)
+            self.wall_lost_indicies = wall_lost[:,0].tolist()
+            self.wall_lost_times = wall_lost[:,1].tolist()
+        else:
+            self.s, self.thetas, self.zetas, self.vpar, self.mus, self.equilibrium_lost = self.remove_equilibrium_lost_particles(initial_point, vpar, mu)
+            self.da_values, self.wall_lost, self.surfaces, self.pitch_angles = self.trace_particles()
+
+
+    def check_filepaths(self,filepaths):
+        return all([exists(fp) for fp in filepaths.values()])
+    
     def chi(self, theta, zeta):
         r"""
         Compute the helical angle chi = M*theta - N*zeta.
@@ -3715,27 +3760,26 @@ class MapPhaseSpace:
 
 class WBAParticles:
     def __init__(self, 
-    saw,
-    initial_conditions,
-    v_pars,
-    mu_per_mass,
-    mass,
-    charge,
-    helicity_N,
-    helicity_M,
-    helicity_Mp=None,
-    helicity_Np=None,
-    mean=True,
-    savedata=(False,'DATA/'),
-    tmax = 1e-2,
-    min_timestep = 1e-6,
-    comm=None,
-    DA_cutoff=3,
-    skipped_particles = [],
-    solver_options = {},
-    nconvergence_points=1):
-        
-        self.comm = comm
+            saw,
+            initial_conditions,
+            v_pars,
+            mu_per_mass,
+            mass,
+            charge,
+            helicity_N,
+            helicity_M,
+            helicity_Mp=None,
+            helicity_Np=None,
+            mean=True,
+            savedata=(False,'DATA/'),
+            tmax = 1e-2,
+            min_timestep = 1e-6,
+            comm=None,
+            DA_cutoff=3,
+            skipped_particles = [],
+            solver_options = {},
+            nconvergence_points=1):
+
         self.saw = saw
         self.B0 = saw.B0
         self.helicity_M = helicity_M

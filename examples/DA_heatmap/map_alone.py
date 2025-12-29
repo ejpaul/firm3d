@@ -29,21 +29,21 @@ except ImportError:
 
 
 boozmn_filename = "boozmn_betaQH.nc"
-AE_filename = "QH_10harmonics_scale0_00464159.npy"
+AE_filename = "QH_10harmonics_scale0_001.npy"
 folder = 'figs'
-harmonic = 1
+harmonic = 0
 
-mpl.rcParams['font.size'] = 16          # base font size
-mpl.rcParams['axes.labelsize'] = 20     # x/y labels
-mpl.rcParams['axes.titlesize'] = 20
-mpl.rcParams['xtick.labelsize'] = 16
-mpl.rcParams['ytick.labelsize'] = 16
-mpl.rcParams['legend.fontsize'] = 16
-mpl.rcParams['figure.titlesize'] = 18
+mpl.rcParams['font.size'] = 14          # base font size
+mpl.rcParams['axes.labelsize'] = 14     # x/y labels
+mpl.rcParams['axes.titlesize'] = 14
+mpl.rcParams['xtick.labelsize'] = 14
+mpl.rcParams['ytick.labelsize'] = 14
+mpl.rcParams['legend.fontsize'] = 14
+mpl.rcParams['figure.titlesize'] = 14
 
 order = 3
 degree = 3
-resolution = 50
+resolution = 10
 ns_interp = resolution  # number of radial grid points for interpolation
 ntheta_interp = resolution  # number of poloidal grid points for interpolation
 nzeta_interp = resolution  # number of toroidal grid points for interpolation
@@ -53,7 +53,7 @@ helicity_N = -4
 helicity_Mp = 0
 helicity_Np = -1
 
-bri = BoozerRadialInterpolant(boozmn_filename, order, no_K=True, helicity_M=helicity_M, helicity_N=helicity_N, comm=comm)
+bri = BoozerRadialInterpolant(boozmn_filename, order,no_K=True,helicity_M=helicity_M,helicity_N=helicity_N, comm=comm) #
 field = InterpolatedBoozerField(
     bri,
     degree,
@@ -65,13 +65,18 @@ field = InterpolatedBoozerField(
 
 
 AE_temp = AE3DEigenvector.load_from_numpy(AE_filename)
+saw = ShearAlfvenWavesSuperposition.from_ae3d(AE_temp,
+                B0 = field,
+                minor_radius_meters = 1.7,
+                phase=0.0
+            )
 omega =  np.sqrt(AE_temp.eigenvalue)*1000
-Phihat = (AE_temp.s_coords, AE_temp.harmonics[harmonic].amplitudes)
-Phihat = max(np.abs(Phihat[1]))# * 50
+#Phihat = (AE_temp.s_coords, AE_temp.harmonics[harmonic].amplitudes)
 Phin = AE_temp.harmonics[harmonic].n
 Phim = AE_temp.harmonics[harmonic].m
+print(f"{Phim=}, {Phin=}", flush=True)
 
-saw = ShearAlfvenHarmonic(Phihat, Phim=Phim, Phin=Phin,omega=omega, B0=field, phase=0)
+#saw = ShearAlfvenHarmonic(Phihat, Phim=Phim, Phin=Phin,omega=omega, B0=field, phase=0)
 sign_vpar = 1  # 1 for co-passing, -1 for counter-passing
 p0_int = 0.5
 mass = ALPHA_PARTICLE_MASS
@@ -107,9 +112,15 @@ Peta0 = compute_peta(
     helicity_M,
     helicity_N,
 )
-nprime = (Phim * helicity_N - Phin * helicity_M) / (
-            helicity_Np * helicity_M - helicity_N * helicity_Mp
-        )
+unperturbed = False #False
+if unperturbed: 
+    nprime = ( helicity_N - helicity_M) / (
+        helicity_Np * helicity_M - helicity_N * helicity_Mp
+    )
+else:
+    nprime = (Phim * helicity_N - Phin * helicity_M) / (
+        helicity_Np * helicity_M - helicity_N * helicity_Mp
+    )
 Eprime = nprime * Ekin - omega * Peta0
 
 heat_map = MapPhaseSpace(
@@ -124,9 +135,9 @@ heat_map = MapPhaseSpace(
     helicity_M=helicity_M,
     helicity_Mp=helicity_Mp,
     helicity_Np=helicity_Np,
-    randomize_particles = False,
-    Eprime_slice = True,
-    Eprime = Eprime,
+    unperturbed=True,
+    randomize_particles=True,
+    number_of_particles=6000,
     comm=comm
 )
 
@@ -163,8 +174,8 @@ def calculate_crossings(drift_helicity, h_res, radial_position):
 def calculate_QS_resonance(Phim,Phin,M,N,omega,drift_omega_zeta, ell):
     return (Phin - N*Phim - omega / drift_omega_zeta) / (Phim+ell) + N
 
-profile = compute_rotational_profile(field, lam, sign_vpar, mass, charge, Ekin, comm)
-drift_omega_zeta = np.mean(profile[:,2])
+#profile = compute_rotational_profile(field, lam, sign_vpar, mass, charge, Ekin, comm)
+#drift_omega_zeta = np.mean(profile[:,2])
 if verbose: 
-    heat_map.plot_surfaces(savepath = f'figs/fixedeprime_{lam=}_{p0_int=}.png')
+    heat_map.plot_ratio(savepath = f'figs/full_field_QS.png')
     plt.clf()
