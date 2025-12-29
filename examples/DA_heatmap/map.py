@@ -31,7 +31,7 @@ except ImportError:
 boozmn_filename = "boozmn_betaQH.nc"
 AE_filename = "QH_10harmonics_scale0_00464159.npy"
 folder = 'figs'
-harmonic = 1
+harmonic = 7
 
 mpl.rcParams['font.size'] = 18          # base font size
 mpl.rcParams['axes.labelsize'] = 18     # x/y labels
@@ -53,7 +53,7 @@ helicity_N = -4
 helicity_Mp = 0
 helicity_Np = -1
 
-bri = BoozerRadialInterpolant(boozmn_filename, order, no_K=True, helicity_M=helicity_M, helicity_N=helicity_N, comm=comm)
+bri = BoozerRadialInterpolant(boozmn_filename, order, no_K=True, helicity_N=helicity_N, helicity_M=helicity_M, comm=comm)
 field = InterpolatedBoozerField(
     bri,
     degree,
@@ -71,6 +71,8 @@ Phihat = (AE_temp.s_coords, AE_temp.harmonics[harmonic].amplitudes)
 Phin = AE_temp.harmonics[harmonic].n
 Phim = AE_temp.harmonics[harmonic].m
 
+print(f"{Phim=}, {Phin=}", flush=True)
+
 saw = ShearAlfvenHarmonic(Phihat, Phim=Phim, Phin=Phin,omega=omega, B0=field, phase=0)
 sign_vpar = 1  # 1 for co-passing, -1 for counter-passing
 p0_int = 0.0
@@ -83,7 +85,7 @@ vtotal = np.sqrt(
 lam = 0.0  
 nchi_poinc = 5
 ns_poinc = 100
-Nmaps = 3000
+Nmaps = 5000
 p0 = np.zeros((1, 3))
 p0[0, 0] = p0_int # s
 
@@ -204,7 +206,7 @@ if verbose:
 
     
     if isinstance(Phihat, tuple):
-        filename = f"{folder}/{harmonic}_{lam}_0.004"
+        filename = f"{folder}/{harmonic}_{lam}_0.004_FF"
         ax_left.plot(Phihat[1][:-1], Phihat[0])
         a, lines_colors = map.plot_poincare(ax = ax_center, 
                                             filename=filename,
@@ -216,7 +218,7 @@ if verbose:
             ell, arr, color = elem
             ax_left.plot([min(Phihat[1]), max(Phihat[1])], [arr, arr], lw=10, color=color)
         heat_map.plot_surfaces(ax = ax_right)
-        a.get_figure()
+        fig = ax_right.get_figure()
         fig.savefig(filename + ".png", dpi = 400)
     else:
         filename = f"{folder}/flat_{harmonic}_{lam}_{round(Phihat,0)}"
@@ -233,6 +235,7 @@ if verbose:
         heat_map.plot_surfaces(ax = ax_right)
         fig.savefig(filename + ".png", dpi = 400)
 
+'''
     plt.clf()
     from scipy.stats import binned_statistic_2d
     stat, x_edges, y_edges, binnumber = binned_statistic_2d(
@@ -269,3 +272,4 @@ if verbose:
     plt.tight_layout()
     plt.colorbar(im2, label='Min Bounces')
     plt.savefig('figs/bounces_min.png', dpi=400)
+'''
