@@ -3766,6 +3766,7 @@ class WBAParticles:
             mu_per_mass,
             mass,
             charge,
+            Ekin,
             helicity_N,
             helicity_M,
             helicity_Mp=None,
@@ -3805,6 +3806,7 @@ class WBAParticles:
         
         self.mass = mass
         self.charge = charge
+        self.Ekin = Ekin
 
         self.comm = comm
         self.verbose=False
@@ -3814,6 +3816,7 @@ class WBAParticles:
             self.verbose = True
 
         self.solver_options = solver_options
+        self.tmax = tmax
 
         self.mean = mean
         self.savedata = savedata[0]
@@ -3847,10 +3850,11 @@ class WBAParticles:
             wall_lost = np.loadtxt(self.final_filepaths['wall_lost']).astype(int)
             self.wall_lost_indicies = wall_lost[:,0].tolist()
             self.wall_lost_times = wall_lost[:,1].tolist()
+        self.numparticle = len(self.DAs)-len(self.skip)
         fractional_chaotic = self.compute_fractions(DA_cutoff=DA_cutoff)
         
     def compute_fractions(self, DA_cutoff=3):
-        uniform_fractional_chaotic = [(sum([1 for i in range(len(self.uniform_DA)) if ((self.uniform_DA[i]<DA_cutoff) or (i in self.uniform_lost))])/(self.uni_numparticle)) * 100]
+        uniform_fractional_chaotic = [(sum([1 for i in range(len(self.DAs)) if ((self.DAs[i]<DA_cutoff) or (i in self.wall_lost_indicies))])/(self.numparticle)) * 100]
         return uniform_fractional_chaotic          
 
     def quantify_chaos_and_losses(self, trajectories, equilibrium_lost_indicies):
