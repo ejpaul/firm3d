@@ -9,6 +9,8 @@ from ..field.boozermagneticfield import (
     ShearAlfvenHarmonic,
     ShearAlfvenWave,
     ShearAlfvenWavesSuperposition,
+    BoozerMagneticField, 
+    ShearAlfvenWave
 )
 from ..field.tracing import (
     MaxToroidalFluxStoppingCriterion,
@@ -3808,6 +3810,7 @@ class WBAParticles:
             np.savetxt(self.final_filepaths['DA'], np.array(self.DAs))
             np.savetxt(self.final_filepaths['wall_lost'], np.column_stack((self.wall_lost_indicies, self.wall_lost_times)))
         else:
+            print('loaded existing data files', flush=True)
             self.DAs = np.loadtxt(self.final_filepaths['DA']).tolist()
             wall_lost = np.loadtxt(self.final_filepaths['wall_lost']).astype(int)
             self.wall_lost_indicies = wall_lost[:,0].tolist()
@@ -3899,7 +3902,510 @@ class WBAParticles:
                 res_hits.append(gc_zeta_hits[0])
                 continue
 
-            Peta_values  = compute_peta(
+            Peta_values = compute_peta(
+                saw,
+                points_trajectory,
+                vpar_path,
+                self.mass,
+                self.charge,
+                self.helicity_M,
+                self.helicity_N,
+                self.helicity_Mp,
+                self.helicity_Np
+            )
+            time_eval, DA_eval = return_DA(np.column_stack((points_trajectory[:, 3], Peta_values)))
+
+            first_slice = points_trajectory[0,:]
+            last_slice = points_trajectory[-1,:]
+            particle_out = [first_slice.tolist(), last_slice.tolist(), DA_eval]
+            res_tys.append(particle_out)
+            res_hits.append(gc_zeta_hits[0])
+        if self.comm is not None:
+            res_tys = [i for o in self.comm.allgather(res_tys) for i in o]
+        if self.verbose:
+            with open(self.savepath + "_data.pkl", "wb") as f:
+                import pickle
+                pickle.dump(res_tys, f)
+        return res_tys
+
+class WBAUnPertParticles:
+    def __init__(self, 
+            B0,
+            initial_conditions,
+            v_pars,
+            mass,
+            charge,
+            Ekin,
+            helicity_N,
+            helicity_M,
+            helicity_Mp=None,
+            helicity_Np=None,
+            mean=True,
+            savedata=(False,'DATA/'),
+            tmax = 1e-2,
+            min_timestep = 1e-6,
+            comm=None,
+            DA_cutoff=3,
+            skipped_particles = [],
+            solver_options = {},
+            nconvergence_points=1):
+
+        self.B0 = B0
+        self.helicity_M = helicity_M
+        self.helicity_N = helicity_N
+
+        if helicity_Mp is None and helicity_Np is None:
+            # If modB contours close poloidally, then use theta as mapping coordinate
+            if helicity_M == 0:
+                self.helicity_Mp = 1
+                self.helicity_Np = 0
+            # Otherwise, use zeta as mapping coordinate
+            else:
+                self.helicity_Mp = 0
+                self.helicity_Np = -1
+        else:
+            if (helicity_Mp * helicity_N) == (helicity_Np * helicity_M):
+                raise ValueError(
+                    "Chosen helicities (N, M, N', M') do not create a well "
+                    "defined Jacobian."
+                )
+            self.helicity_Mp = helicity_Mp
+            self.helicity_Np = helicity_Np
+        
+        self.mass = mass
+        self.charge = charge
+        self.Ekin = Ekin
+
+        self.comm = comm
+        self.verbose=False
+        if self.comm==None:
+            self.verbose = True
+        elif self.comm.rank==0:
+            self.verbose = True
+
+        self.solver_options = solver_options
+        self.tmax = tmax
+
+        self.mean = mean
+        self.savedata = savedata[0]
+        self.savepath = savedata[1]
+        self.convergence_points = nconvergence_points
+
+        if self.savedata:
+            self.IC_filepaths = {
+                's0': self.savepath + 'uniform_s0.txt',
+                'theta0': self.savepath + 'uniform_theta0.txt',
+                'zeta0': self.savepath + 'uniform_zeta0.txt',
+                'vpar0': self.savepath + 'uniform_vpar0.txt',
+                'mu_per_mass': self.savepath + 'uniform_mu_per_mass.txt'
+            }
+            self.final_filepaths = {
+                'DA': self.savepath + f'DA.txt',
+                'wall_lost': self.savepath + f'wall_lost.txt',
+            }
+        
+        self.skip = skipped_particles
+        if not self.check_filepaths(self.final_filepaths):
+            self.gc_tys = self.trace_particles(B0, initial_conditions, v_pars)
+            self.DAs, self.wall_lost_indicies, self.wall_lost_times = self.quantify_chaos_and_losses(
+                    trajectories=self.gc_tys,
+                    equilibrium_lost_indicies = self.skip)
+            np.savetxt(self.final_filepaths['DA'], np.array(self.DAs))
+            np.savetxt(self.final_filepaths['wall_lost'], np.column_stack((self.wall_lost_indicies, self.wall_lost_times)))
+        else:
+            print('loaded existing data files', flush=True)
+            self.DAs = np.loadtxt(self.final_filepaths['DA']).tolist()
+            wall_lost = np.loadtxt(self.final_filepaths['wall_lost']).astype(int)
+            self.wall_lost_indicies = wall_lost[:,0].tolist()
+            self.wall_lost_times = wall_lost[:,1].tolist()
+        self.numparticle = len(self.DAs)-len(self.skip)
+        fractional_chaotic = self.compute_fractions(DA_cutoff=DA_cutoff)
+        
+    def compute_fractions(self, DA_cutoff=3):
+        uniform_fractional_chaotic = [(sum([1 for i in range(len(self.DAs)) if ((self.DAs[i]<DA_cutoff) or (i in self.wall_lost_indicies))])/(self.numparticle)) * 100]
+        return uniform_fractional_chaotic          
+
+    def quantify_chaos_and_losses(self, trajectories, equilibrium_lost_indicies):
+        lost_total = []
+        DA_list = []
+        lost_times = []
+
+        for i in range(len(trajectories)):
+            # trajectories are in format: 
+            # first slice, last slice, DA
+            # slice = [s, theta, zeta, time]
+            if i in equilibrium_lost_indicies:
+                DA_list.append(np.nan)
+                continue
+
+            final_time = trajectories[i][1][3]
+            final_s = trajectories[i][1][0]
+            DA = trajectories[i][2]
+            
+                
+            # check if particle lost to wall
+            if final_time < (self.tmax-2e-6):
+                lost_total.append(int(i))
+                lost_times.append(final_time)
+            DA_list.append(DA)
+        return DA_list, lost_total, lost_times
+
+    def check_filepaths(self,filepaths):
+        return all([exists(fp) for fp in filepaths.values()])
+    
+    def trace_particles(self, field, points_phase, vpars):
+        first, last = parallel_loop_bounds(self.comm, points_phase.shape[0])
+        res_tys = []  
+        res_hits = []
+        print(f"{points_phase.shape[0]=}")
+
+        for itrj in range(first, last):
+            if itrj in self.skip:
+                start_state = [points_phase[itrj, 0], points_phase[itrj, 1], points_phase[itrj, 2]]
+                particle_out = [start_state, start_state, np.nan]
+                res_tys.append(particle_out)
+                res_hits.append(np.array([]))
+                continue
+            
+            #print(f'{points_phase[itrj].shape=} \t{vpars[itrj]=} \t{mus[itrj]=}', flush=True)
+            pt = np.zeros((1, 3))
+            pt[0, 0] = points_phase[itrj, 0]
+            pt[0, 1] = points_phase[itrj, 1]
+            pt[0, 2] = points_phase[itrj, 2]
+            self.vtotal = np.sqrt(2*self.Ekin/self.mass)
+            print(f'vpar_frac = {vpars[itrj]/self.vtotal}',flush=True)
+            print(f'{isinstance(field, BoozerMagneticField)}',flush=True)
+            gc_tys, gc_zeta_hits = trace_particles_boozer(
+                    field,
+                    stz_inits = pt, 
+                    parallel_speeds = [vpars[itrj]],
+                    tmax=self.tmax, 
+                    mass=self.mass, 
+                    charge=self.charge,
+                    Ekin=self.Ekin,
+                    abstol=1e-9,
+                    reltol=1e-9,
+                    stopping_criteria=[
+                        MaxToroidalFluxStoppingCriterion(1.0)
+                    ],
+                    mode='gc_noK',
+                    ODE_solver="dormand_prince",
+                    **self.solver_options,)
+            
+            points_trajectory = gc_tys[0]
+            time_momentum = points_trajectory[:, 0]
+            s_path = points_trajectory[:, 1]
+            theta_path = points_trajectory[:, 2]
+            zeta_path = points_trajectory[:, 3]
+            vpar_path = points_trajectory[:, 4]
+            points_trajectory = np.column_stack(
+                (s_path, theta_path, zeta_path, time_momentum)
+            )
+            idx_wall = np.argmax(s_path >= 1) if np.any(s_path >= 1) else None
+            if idx_wall is not None and s_path[idx_wall] >= 1:
+                print(f"Particle {itrj} hit the wall at time {time_momentum[idx_wall]}, s = {s_path[idx_wall]}",flush=True)
+                idx_wall -= 1
+                points_trajectory = points_trajectory[:idx_wall, :]
+                vpar_path = vpar_path[:idx_wall]
+
+            if points_trajectory.shape[0] < 8:
+                print(f"Particle {itrj} has no valid trajectory points \t {points_trajectory[-1, :]}", flush=True)
+                start_state = points_trajectory[0, :].tolist()
+                end_state = points_trajectory[-1, :].tolist()
+                particle_out = [start_state, end_state, np.nan]
+                res_tys.append(particle_out)
+                res_hits.append(gc_zeta_hits[0])
+                continue
+
+            traj = points_trajectory[:,:-1]
+            print(f'{traj.shape=}', flush=True)
+
+            Peta_values = compute_peta(
+                self.B0,
+                points=traj,
+                vpar=vpar_path,
+                mass=self.mass,
+                charge=self.charge,
+                helicity_M=self.helicity_M,
+                helicity_N=self.helicity_N,
+                helicity_Mp=self.helicity_Mp,
+                helicity_Np=self.helicity_Np
+            )
+            time_eval, DA_eval = return_DA(np.column_stack((points_trajectory[:, 3], Peta_values)))
+
+            first_slice = points_trajectory[0,:]
+            last_slice = points_trajectory[-1,:]
+            particle_out = [first_slice.tolist(), last_slice.tolist(), DA_eval]
+            res_tys.append(particle_out)
+            res_hits.append(gc_zeta_hits[0])
+        if self.comm is not None:
+            res_tys = [i for o in self.comm.allgather(res_tys) for i in o]
+        return res_tys
+
+
+class LostPlot:
+    def __init__(
+            self,
+            saws,
+            B0,
+            mass,
+            charge,
+            Ekin,
+            helicity_N,
+            helicity_M,
+            helicity_Mp=None,
+            helicity_Np=None,
+            randomize_particles = False,
+            number_of_particles = 10000,
+            lambda_resolution=20,
+            min_timestep=1e-6,
+            s_lims=[0.01,0.95],
+            mean=True,
+            comm=None,
+            tmax=1e-2,
+            tol=1e-10,
+            solver_options={},
+            savedata=[True, 'DATA/'],
+            nconvergence_points = 1):
+        # set field parameters
+        self.B0 = B0
+        self.helicity_M = helicity_M
+        self.helicity_N = helicity_N
+
+        if helicity_Mp is None and helicity_Np is None:
+            # If modB contours close poloidally, then use theta as mapping coordinate
+            if helicity_M == 0:
+                self.helicity_Mp = 1
+                self.helicity_Np = 0
+            # Otherwise, use zeta as mapping coordinate
+            else:
+                self.helicity_Mp = 0
+                self.helicity_Np = -1
+        else:
+            if (helicity_Mp * helicity_N) == (helicity_Np * helicity_M):
+                raise ValueError(
+                    "Chosen helicities (N, M, N', M') do not create a well "
+                    "defined Jacobian."
+                )
+            self.helicity_Mp = helicity_Mp
+            self.helicity_Np = helicity_Np
+                # set timing parameters
+        self.tmax = tmax
+        self.min_timestep = min_timestep
+
+        # @TODO: add Eprime calculation
+        # @TODO: ADD RANDOM CONST EPRIME? ONLY EXISTS FOR GRID
+        self.Ekin = Ekin
+        self.vtotal = np.sqrt(2*self.Ekin/mass)
+        self.mass = mass
+        self.charge = charge
+
+        # set communicator parameters
+        self.comm = comm
+        self.verbose=False
+        if self.comm==None:
+            self.verbose = True
+        elif self.comm.rank==0:
+            self.verbose = True
+
+        self.solver_options = solver_options
+
+        def min_volumemodB():
+            resolution = 100 
+            points = np.zeros((resolution * resolution,3))
+
+            for surface in np.linspace(0,0.99,resolution):
+                if surface == 0:
+                    points = initialize_position_uniform_surf(self.B0,resolution ,surface)
+                else:
+                    sampled_surface = initialize_position_uniform_surf(self.B0, resolution ,surface)
+                    points = np.concatenate((points,sampled_surface), axis=0)
+                    
+            self.B0.set_points(points)
+            modB = self.B0.modB()[:,0]
+            return np.min(modB)
+        
+        self.min_volmodB=min_volumemodB()
+        self.nParticles = number_of_particles
+        self.phase_space_resolution = int(number_of_particles/lambda_resolution)
+        self.lambda_resolution = lambda_resolution
+
+        # plotting settings
+        self.mean = mean
+        self.savedata = savedata[0]
+        self.savepath = savedata[1]
+        self.convergence_points = nconvergence_points
+
+        self.s_min = s_lims[0]
+        self.s_max = s_lims[1]
+
+        self.saws = saws
+
+        if self.savedata:
+            self.uniform_IC_filepaths = {
+                's0': self.savepath + 'uniform_s0.txt',
+                'theta0': self.savepath + 'uniform_theta0.txt',
+                'zeta0': self.savepath + 'uniform_zeta0.txt',
+                'vpar0': self.savepath + 'uniform_vpar0.txt',
+                'mu_per_mass': self.savepath + 'uniform_mu_per_mass.txt'
+            }
+            self.fusion_born_IC_filepaths = {
+                's0': self.savepath + 'fusion_born_s0.txt',
+                'theta0': self.savepath + 'fusion_born_theta0.txt',
+                'zeta0': self.savepath + 'fusion_born_zeta0.txt',
+                'vpar0': self.savepath + 'fusion_born_vpar0.txt',
+                'mu_per_mass': self.savepath + 'fusion_born_mu_per_mass.txt'
+            }
+
+        self.saw_energies = [elem[0] for elem in saws]
+        uniform_data = self.analyze_wave_perturbations()
+        self.uniform_DA, self.uniform_lost = uniform_data[0], uniform_data[1]
+        self.uni_numparticle = self.nParticles - len(self.uniform_equilibrium_lost_particles)
+
+    def check_filepaths(self,filepaths):
+        return all([exists(fp) for fp in filepaths.values()])
+
+    def uniform_volume_particles(self):
+        if self.savedata:
+            if self.check_filepaths(self.uniform_IC_filepaths):
+                s0 = np.loadtxt(self.uniform_IC_filepaths['s0']).tolist()
+                theta0 = np.loadtxt(self.uniform_IC_filepaths['theta0']).tolist()
+                zeta0 = np.loadtxt(self.uniform_IC_filepaths['zeta0']).tolist()
+                vpar0 = np.loadtxt(self.uniform_IC_filepaths['vpar0']).tolist()
+                mu_per_mass = np.loadtxt(self.uniform_IC_filepaths['mu_per_mass']).tolist()
+                return s0, theta0, zeta0, vpar0, mu_per_mass
+
+        points = initialize_position_uniform_vol(self.B0, self.phase_space_resolution, comm=self.comm) # shape of (nparticles,3)
+        uniform_vpar_init = np.linspace(-self.vtotal, self.vtotal, self.lambda_resolution)
+    
+        vpar_grid, point_idx = np.meshgrid(uniform_vpar_init, np.arange(points.shape[0]))
+
+        uniform_vpar_init = vpar_grid.flatten()
+        points = points[point_idx.ravel()]
+
+        print(f'Instantiating Uniform Particles: {points.shape=}, {uniform_vpar_init.shape=}')
+
+        self.B0.set_points(points)
+        uniform_mu_per_mass = (self.vtotal**2 - uniform_vpar_init**2) / (2 * self.B0.modB()[:,0])
+
+        if self.savedata:
+            np.savetxt(self.uniform_IC_filepaths['s0'], points[:,0])
+            np.savetxt(self.uniform_IC_filepaths['theta0'], points[:,1])
+            np.savetxt(self.uniform_IC_filepaths['zeta0'], points[:,2])
+            np.savetxt(self.uniform_IC_filepaths['vpar0'], uniform_vpar_init)
+            np.savetxt(self.uniform_IC_filepaths['mu_per_mass'], uniform_mu_per_mass)
+
+        return points[:,0], points[:,1], points[:,2], uniform_vpar_init, uniform_mu_per_mass
+    
+    def random_uniform_particles(self, nParticles):
+        tracing_points = initialize_position_uniform_vol(
+            self.B0,
+            nParticles,
+            comm=self.comm,
+            seed=None,
+        )
+
+        vpars_init = initialize_velocity_uniform(
+            self.vtotal,
+            nParticles,
+            comm=self.comm,
+            seed=None,
+        )
+        
+        self.B0.set_points(tracing_points)
+        modB = self.B0.modB()[:,0]
+        mus_per_mass = (1/(2 * modB)) * (self.vtotal**2 - vpars_init**2)
+        return tracing_points[:,0],tracing_points[:,1],tracing_points[:,2], vpars_init, mus_per_mass
+
+    def compute_uniform_fractions(self, DA_cutoff=3):
+        uniform_fractional_chaotic = [(sum([1 for i in range(len(self.uniform_DA)) if ((self.uniform_DA[i]<DA_cutoff) or (i in self.uniform_lost))])/(self.uni_numparticle)) * 100]
+        return uniform_fractional_chaotic
+
+    def quantify_chaos_and_losses(self, trajectories, equilibrium_lost_indicies):
+        lost_total = []
+        DA_list = []
+        lost_times = []
+
+        for i in range(len(trajectories)):
+            # trajectories are in format: 
+            # first slice, last slice, DA
+            # slice = [s, theta, zeta, time]
+            if i in equilibrium_lost_indicies:
+                DA_list.append(np.nan)
+                continue
+
+            final_time = trajectories[i][1][3]
+            final_s = trajectories[i][1][0]
+            DA = trajectories[i][2]
+            
+                
+            # check if particle lost to wall
+            if final_time < (self.tmax-2e-6):
+                lost_total.append(int(i))
+                lost_times.append(final_time)
+            DA_list.append(DA)
+        return DA_list, lost_total, lost_times    
+    
+    def trace_particles(self, saw, points_phase, vpars, mus, equilibrium_lost_indicies=[]):
+        print(f"Tracing particles in perturbed field... {points_phase.shape=}", flush=True)
+
+        first, last = parallel_loop_bounds(self.comm, points_phase.shape[0])
+        res_tys = []  
+        res_hits = []
+
+        for itrj in range(first, last):
+            if itrj in equilibrium_lost_indicies:
+                start_state = [points_phase[itrj, 0], points_phase[itrj, 1], points_phase[itrj, 2],0]
+                particle_out = [start_state, start_state, np.nan]
+                res_tys.append(particle_out)
+                res_hits.append(np.array([]))
+                continue
+            #print(f'{points_phase[itrj].shape=} \t{vpars[itrj]=} \t{mus[itrj]=}', flush=True)
+            gc_tys, gc_zeta_hits = trace_particles_boozer_perturbed(
+                    perturbed_field = saw, 
+                    stz_inits = points_phase[itrj,:].reshape(1,4), 
+                    parallel_speeds = [vpars[itrj]],
+                    mus = [mus[itrj]], 
+                    tmax=self.tmax, 
+                    mass=self.mass, 
+                    charge=self.charge,
+                    Ekin=self.Ekin,
+                    abstol=1e-9,
+                    reltol=1e-9,
+                    stopping_criteria=[
+                        MaxToroidalFluxStoppingCriterion(1.0)
+                    ],
+                    mode='gc_noK',
+                    ODE_solver="dormand_prince",
+                    **self.solver_options,)
+            
+            points_trajectory = gc_tys[0]
+            time_momentum, s_path, theta_path, zeta_path, vpar_path = points_trajectory[:, 0], points_trajectory[:, 1], points_trajectory[:, 2], points_trajectory[:, 3], points_trajectory[:, 4]
+            points_trajectory = np.column_stack(
+                (s_path, theta_path, zeta_path, time_momentum)
+            )
+            idx_wall = np.argmax(s_path >= 1) if np.any(s_path >= 1) else None
+            if idx_wall is not None and s_path[idx_wall] >= 1:
+                print(f"Particle {itrj} hit the wall at time {time_momentum[idx_wall]}, s = {s_path[idx_wall]}",flush=True)
+                idx_wall -= 1
+                points_trajectory = points_trajectory[:idx_wall, :]
+                vpar_path = vpar_path[:idx_wall]
+
+            if points_trajectory.shape[0] < 8:
+                print(f"Particle {itrj} has no valid trajectory points \t {points_trajectory[-1, :]}", flush=True)
+                start_state = points_trajectory[0, :].tolist()
+                end_state = points_trajectory[-1, :].tolist()
+                particle_out = [start_state, end_state, np.nan]
+                res_tys.append(particle_out)
+                res_hits.append(gc_zeta_hits[0])
+                continue
+
+            #saw.set_points(points_trajectory)
+
+            #modB = saw.B0.modB()[:, 0]
+            #weighted_muB = self.mus[itrj] * self.mass * modB[0]
+            #E = 0.5 * self.mass * vpar_path**2 + self.mass * mus[itrj] * modB + self.charge * saw.Phi()[:, 0]
+            Peta_values = compute_peta(
                 saw,
                 points_trajectory,
                 vpar_path,
@@ -3920,7 +4426,78 @@ class WBAParticles:
         if self.comm is not None:
             res_tys = [i for o in self.comm.allgather(res_tys) for i in o]
         return res_tys
+    
+    def analyze_wave_perturbations(self):
+        uniform_ics = list(self.uniform_volume_particles())
+        uni_s0, uni_theta0, uni_zeta0, uni_vpar0, uni_mu_per_mass = uniform_ics
 
+        uni_initial_points = np.zeros((len(uni_s0), 3))
+        uni_initial_points[:, 0] = uni_s0
+        uni_initial_points[:, 1] = uni_theta0
+        uni_initial_points[:, 2] = uni_zeta0
+        self.uni_initial_points = uni_initial_points
+
+        saw_uni_DAs = []
+        saw_uni_wall_lost = []
+        uni_equilibrium_lost_particles = []
+
+        for obj in self.saws:
+            print(f'obj={obj}')
+            strength = obj[0]
+            saw = obj[1]
+
+            uniform_filepaths = {
+                'DA': self.savepath + f'uniform_DA_{strength}.txt',
+                'wall_lost': self.savepath + f'uniform_wall_{strength}.txt',
+            }
+
+            if self.check_filepaths(uniform_filepaths):
+                uniform_DAs = np.loadtxt(uniform_filepaths['DA']).tolist()
+                uniform_wall_lost = np.loadtxt(uniform_filepaths['wall_lost']).astype(int)
+                uniform_wall_lost = uniform_wall_lost.tolist()
+                if strength==0:
+                    uni_equilibrium_lost_particles = uniform_wall_lost
+            else:
+                points_phase = np.append(uni_initial_points, np.zeros((uni_initial_points.shape[0],1)), axis=1)
+                
+                saw.set_points(points_phase)
+                gc_tys = self.trace_particles(saw, points_phase, uni_vpar0, uni_mu_per_mass)
+
+                uniform_DAs, uniform_wall_lost, uniform_lost_times = self.quantify_chaos_and_losses(
+                    trajectories=gc_tys,
+                    equilibrium_lost_indicies = uni_equilibrium_lost_particles)
+                
+                if strength==0:
+                    uni_equilibrium_lost_particles = uniform_wall_lost
+                
+                if self.savedata and self.verbose:
+                    np.savetxt(uniform_filepaths['DA'], np.array(uniform_DAs))
+                    np.savetxt(uniform_filepaths['wall_lost'], np.column_stack((uniform_wall_lost, uniform_lost_times)))
+
+            saw_uni_DAs.append(uniform_DAs)
+            saw_uni_wall_lost.append(uniform_wall_lost)
+
+        self.uniform_equilibrium_lost_particles = uni_equilibrium_lost_particles
+        #print('Uniform equilibrium lost particles:', uni_equilibrium_lost_particles)
+        return [saw_uni_DAs,saw_uni_wall_lost]
+    
+    def plot(self, prefix=None, DA_cuttoff=3):
+        self.compute_uniform_fractions(DA_cutoff=DA_cuttoff)
+        import matplotlib.pyplot as plt
+
+        if prefix==None:
+            prefix = self.savepath.split("/")[-2]
+        plt.clf()
+        self.var = r'$\sqrt{\frac{\delta U}{U_0}}$'
+        plt.xlabel(self.var)
+
+        #plt.plot(self.saw_energies, self.fractional_fusion_born_lost,label='Fusion born ICs lost to wall')
+        plt.ylabel('% of Particles')
+        plt.xscale('log')
+        plt.plot(self.saw_energies, self.uniform_fractional_chaotic,label='Phase Space occupied by chaos')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(f'{prefix}_chaosic.png')
 
 
 def trajectory_to_vtk(res_ty, field, filename="trajectory"):
