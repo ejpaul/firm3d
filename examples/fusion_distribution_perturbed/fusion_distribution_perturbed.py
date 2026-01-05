@@ -74,7 +74,7 @@ def sigmav(T):
         return T ** (-2 / 3) * np.exp(-19.94 * T ** (-1 / 3))
     else:
         return 0
-
+# @TODO: fix the initial condition issue so that they are saved
 
 # Reactivity profile
 reactivity = lambda s: nD(s) * nT(s) * sigmav(T(s))
