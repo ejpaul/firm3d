@@ -216,7 +216,6 @@ class TestingFiniteBeta(unittest.TestCase):
         # for consistency of the Jacobian and satisfying the magnetic
         # differential equation
         for field_name, FieldClass in field_classes:
-            print(field_name)
             for asym in [True, False]:
                 filename = filename_mhd_lasym if asym else filename_mhd
                 filename_wout = filename_mhd_lasym_wout if asym else filename_mhd_wout
@@ -1219,66 +1218,6 @@ class TestingBoozerSplineField(unittest.TestCase):
             bsf.set_points(points)
 
             # Check that angular derivatives integrate to zero
-            print(
-                "dmodBdtheta: ",
-                np.max(
-                    np.abs(np.mean(bsf.dmodBdtheta().reshape(np.shape(thetas)), axis=0))
-                ),
-            )
-            print(
-                "dmodBdzeta: ",
-                np.max(
-                    np.abs(np.mean(bsf.dmodBdzeta().reshape(np.shape(thetas)), axis=1))
-                ),
-            )
-            print(
-                "dRdtheta: ",
-                np.max(
-                    np.abs(np.mean(bsf.dRdtheta().reshape(np.shape(thetas)), axis=0))
-                ),
-            )
-            print(
-                "dRdzeta: ",
-                np.max(
-                    np.abs(np.mean(bsf.dRdzeta().reshape(np.shape(thetas)), axis=1))
-                ),
-            )
-            print(
-                "dZdtheta: ",
-                np.max(
-                    np.abs(np.mean(bsf.dZdtheta().reshape(np.shape(thetas)), axis=0))
-                ),
-            )
-            print(
-                "dZdzeta: ",
-                np.max(
-                    np.abs(np.mean(bsf.dZdzeta().reshape(np.shape(thetas)), axis=1))
-                ),
-            )
-            print(
-                "dnudtheta: ",
-                np.max(
-                    np.abs(np.mean(bsf.dnudtheta().reshape(np.shape(thetas)), axis=0))
-                ),
-            )
-            print(
-                "dnudzeta: ",
-                np.max(
-                    np.abs(np.mean(bsf.dnudzeta().reshape(np.shape(thetas)), axis=1))
-                ),
-            )
-            print(
-                "dKdtheta: ",
-                np.max(
-                    np.abs(np.mean(bsf.dKdtheta().reshape(np.shape(thetas)), axis=0))
-                ),
-            )
-            print(
-                "dKdzeta: ",
-                np.max(
-                    np.abs(np.mean(bsf.dKdzeta().reshape(np.shape(thetas)), axis=1))
-                ),
-            )
             assert np.allclose(
                 np.mean(bsf.dmodBdtheta().reshape(np.shape(thetas)), axis=0),
                 0,
@@ -1374,10 +1313,8 @@ class TestingBoozerSplineField(unittest.TestCase):
                 "dIds",
                 "K",
             ]:
-                print(field)
                 field_bri = getattr(bri, field)()
                 field_bsf = getattr(bsf, field)()
-                print(np.max(np.abs(field_bri - field_bsf)))
                 assert np.allclose(field_bri, field_bsf, atol=tol)
 
     def test_boozersplinefield_derivs_methods(self):
