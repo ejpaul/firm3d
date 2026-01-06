@@ -3,7 +3,6 @@ import time
 import numpy as np
 
 from firm3d.field.boozermagneticfield import (
-    BoozerRadialInterpolant,
     InterpolatedBoozerField,
 )
 from firm3d.field.trajectory_helpers import PassingPoincare
@@ -40,16 +39,15 @@ setup_logging(f"stdout_passing_freq_{resolution}_{comm_size}.txt")
 time1 = time.time()
 M = 1
 N = 4
-bri = BoozerRadialInterpolant(
-    boozmn_filename, order, no_K=True, comm=comm_world, helicity_M=M, helicity_N=N
-)
-
-field = InterpolatedBoozerField(
-    bri,
-    degree,
-    ns_interp=ns_interp,
-    ntheta_interp=ntheta_interp,
-    nzeta_interp=nzeta_interp,
+field = InterpolatedBoozerField.from_booz_xform(
+    boozmn_filename,
+    order=order,
+    ns=ns_interp,
+    ntheta=ntheta_interp,
+    nzeta=nzeta_interp,
+    helicity_M=M,
+    helicity_N=N,
+    comm=comm_world,
 )
 
 poinc = PassingPoincare(

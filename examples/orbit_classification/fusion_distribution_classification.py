@@ -5,7 +5,6 @@ import numpy as np
 
 from firm3d._core.util import parallel_loop_bounds
 from firm3d.field.boozermagneticfield import (
-    BoozerRadialInterpolant,
     InterpolatedBoozerField,
 )
 from firm3d.field.tracing import (
@@ -59,16 +58,14 @@ stdout_file = open(  # noqa: SIM115
 )
 sys.stdout = stdout_file
 
-## Setup radial interpolation
-bri = BoozerRadialInterpolant(boozmn_filename, order, no_K=True, comm=comm)
-
-## Setup 3d interpolation
-field = InterpolatedBoozerField(
-    bri,
-    degree,
-    ns_interp=ns_interp,
-    ntheta_interp=ntheta_interp,
-    nzeta_interp=nzeta_interp,
+## Setup field interpolation
+field = InterpolatedBoozerField.from_booz_xform(
+    boozmn_filename,
+    order=order,
+    ns=ns_interp,
+    ntheta=ntheta_interp,
+    nzeta=nzeta_interp,
+    comm=comm,
 )
 
 # Define fusion birth distribution

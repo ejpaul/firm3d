@@ -911,7 +911,7 @@ class BoozerSplineField(BoozerMagneticField):
         boozmn_name="boozmn.nc",
         field_type=None,
         comm=None,
-        spline_deriv=False,
+        spline_deriv=True,
     ):
         r"""
         Initialize a BoozerSplineField object. The field is interpolated on the
@@ -3364,10 +3364,12 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
         boozmn_name="boozmn.nc",
         field_type=None,
         comm=None,
-        spline_deriv=False,
+        spline_deriv=True,
         extrapolate=True,
         initialize=None,
     ):
+        import time
+        time1 = time.time()
         bsf = BoozerSplineField(
             equil,
             mpol=mpol,
@@ -3384,6 +3386,8 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
             comm=comm,
             spline_deriv=spline_deriv,
         )
+        time2 = time.time()
+        print(f"Time taken to create BoozerSplineField in python: {time2 - time1} seconds")
         if ns is None:
             ns = bsf.ns_b
         return cls(
