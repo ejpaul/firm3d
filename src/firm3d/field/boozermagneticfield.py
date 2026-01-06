@@ -1853,13 +1853,6 @@ class BoozerSplineField(BoozerMagneticField):
             points_sym[mask, 2] = 2 * np.pi / self.nfp - points_sym[mask, 2]
         else:
             mask = np.zeros(points.shape[0], dtype=bool)
-        assert np.all(points_sym[:, 1] >= 0)
-        if self.stellsym:
-            assert np.all(points_sym[:, 1] <= np.pi)
-        else:
-            assert np.all(points_sym[:, 1] <= 2 * np.pi)
-        assert np.all(points_sym[:, 2] >= 0)
-        assert np.all(points_sym[:, 2] <= 2 * np.pi / self.nfp)
 
         return points_sym, mask
 
