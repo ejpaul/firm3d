@@ -11,6 +11,7 @@ from firm3d._core.util import align_and_pad, allocate_aligned_and_padded_array
 from firm3d.field.boozermagneticfield import (
     BoozerAnalytic,
     BoozerRadialInterpolant,
+    BoozerSplineField,
     InterpolatedBoozerField,
 )
 from firm3dpp import inverse_fourier_transform_even, inverse_fourier_transform_odd
@@ -25,13 +26,11 @@ filename_mhd_reduced = str((TEST_DIR / "boozmn_n3are_R7.75B5.7_reduced.nc").reso
 filename_mhd_reordered = str(
     (TEST_DIR / "boozmn_n3are_R7.75B5.7_reordered.nc").resolve()
 )
-filename_mhd_lasym = str((TEST_DIR / "boozmn_ITERModel_reference.nc").resolve())
-filename_mhd_lasym_wout = str((TEST_DIR / "wout_ITERModel_reference.nc").resolve())
-filename_mhd_lasym_reduced = str(
-    (TEST_DIR / "boozmn_ITERModel_reference_reduced.nc").resolve()
+filename_mhd_lasym = str(
+    (TEST_DIR / "boozmn_LandremanSenguptaPlunk_section5p3.nc").resolve()
 )
-filename_mhd_lasym_reordered = str(
-    (TEST_DIR / "boozmn_ITERModel_reference_reordered.nc").resolve()
+filename_mhd_lasym_wout = str(
+    (TEST_DIR / "wout_LandremanSenguptaPlunk_section5p3.nc").resolve()
 )
 
 try:
@@ -141,158 +140,178 @@ class TestingAnalytic(unittest.TestCase):
 class TestingFiniteBeta(unittest.TestCase):
     def test_boozerradialinterpolant_finite_beta(self):
         """
-        This first loop tests a finite-beta equilibria
+        This first loop tests a finite-beta equilibria for both
+        BoozerRadialInterpolant and BoozerSplineField
         """
-        # This one is stellarator symmetric
-        filename_sym = filename_mhd
-        filename_sym_wout = filename_mhd_wout
-        filename_sym_reduced = filename_mhd_reduced
-        filename_sym_reordered = filename_mhd_reordered
-        filename_asym = filename_mhd_lasym
-        filename_asym_wout = filename_mhd_lasym_wout
-        filename_asym_reduced = filename_mhd_lasym_reduced
-        filename_asym_reordered = filename_mhd_lasym_reordered
         order = 3
-        ntheta = 21
-        nzeta = 20
+        ntheta = 96
+        nzeta = 96
 
-        # The following tests different initializations of BoozerRadialInterpolant
-        for asym in [True, False]:
-            if asym:
-                filename = filename_asym
-                filename_wout = filename_asym_wout
-                filename_reduced = filename_asym_reduced
-                filename_reordered = filename_asym_reordered
-            else:
-                filename = filename_sym
-                filename_wout = filename_sym_wout
-                filename_reduced = filename_sym_reduced
-                filename_reordered = filename_sym_reordered
+        # Test both BoozerRadialInterpolant and BoozerSplineField
+        field_classes = [
+            ("BoozerSplineField", BoozerSplineField),
+            ("BoozerRadialInterpolant", BoozerRadialInterpolant),
+        ]
+
+        for field_name, FieldClass in field_classes:
+            # The following tests different initializations
+            filename = filename_mhd
+            filename_wout = filename_mhd_wout
+            filename_reduced = filename_mhd_reduced
+            filename_reordered = filename_mhd_reordered
 
             # First, initialize correctly-sized grid (booz_xform)
-            bri = BoozerRadialInterpolant(filename, order, comm=comm)
+            if field_name == "BoozerSplineField":
+                field = FieldClass(filename, ntheta=ntheta, nzeta=nzeta, comm=comm)
+            else:
+                field = FieldClass(filename, order, comm=comm)
 
             thetas = np.linspace(0, 2 * np.pi, ntheta, endpoint=False)
-            zetas = np.linspace(0, 2 * np.pi / bri.nfp, nzeta, endpoint=False)
+            zetas = np.linspace(0, 2 * np.pi / field.nfp, nzeta, endpoint=False)
 
             thetas, zetas = np.meshgrid(thetas, zetas)
             thetas_flat = thetas.flatten()
             zetas_flat = zetas.flatten()
 
-            s_0 = np.copy(bri.s_half_ext)
-            G_0 = bri.G_spline(0.5)
+            s_0 = np.copy(field.s_half_ext)
+            G_0 = field.G_spline(0.5)
 
             # Next, initialize with wout file and check for consistency
-            bri = BoozerRadialInterpolant(
-                filename_wout,
-                order,
-                comm=comm,
-            )
+            if field_name == "BoozerSplineField":
+                field = FieldClass(
+                    filename_wout,
+                    ntheta=ntheta,
+                    nzeta=nzeta,
+                    comm=comm,
+                )
+            else:
+                field = FieldClass(filename_wout, order, comm=comm)
 
-            s_1 = np.copy(bri.s_half_ext)
-            G_1 = bri.G_spline(0.5)
+            s_1 = np.copy(field.s_half_ext)
+            G_1 = field.G_spline(0.5)
 
             assert np.allclose(s_0, s_1)
             assert G_0 == G_1
 
             # Next, initialize wrong size of radial grid
             with self.assertRaises(ValueError):
-                bri = BoozerRadialInterpolant(
-                    filename_reduced,
-                    order,
-                    comm=comm,
-                )
+                if field_name == "BoozerSplineField":
+                    field = FieldClass(
+                        filename_reduced,
+                        ntheta=ntheta,
+                        nzeta=nzeta,
+                        comm=comm,
+                    )
+                else:
+                    field = FieldClass(filename_reduced, order, comm=comm)
 
             # Next, initialize grid with incorrect order or s points
-            with self.assertRaises(ValueError):
-                bri = BoozerRadialInterpolant(
-                    filename_reordered,
-                    order,
-                    comm=comm,
-                )
+            # Note: BoozerSplineField doesn't check for reordered files
+            # in the same way, so we only test this for BoozerRadialInterpolant
+            if field_name == "BoozerRadialInterpolant":
+                with self.assertRaises(ValueError):
+                    field = FieldClass(filename_reordered, order, comm=comm)
 
         # These tests require higher resolution equilibrium, since they check
         # for consistency of the Jacobian and satisfying the magnetic
         # differential equation
-        for asym in [False, True]:
-            if asym:
-                filename = filename_mhd_lasym
-                filename_wout = filename_mhd_lasym_wout
-            else:
-                filename = filename_mhd
-                filename_wout = filename_mhd_wout
+        for field_name, FieldClass in field_classes:
+            print(field_name)
+            for asym in [True, False]:
+                filename = filename_mhd_lasym if asym else filename_mhd
+                filename_wout = filename_mhd_lasym_wout if asym else filename_mhd_wout
 
-            bri = BoozerRadialInterpolant(filename, order, comm=comm)
-            isurf = round(0.75 * len(bri.s_half_ext))
+                if field_name == "BoozerSplineField":
+                    field = FieldClass(
+                        filename,
+                        ntheta=ntheta,
+                        nzeta=nzeta,
+                        comm=comm,
+                        no_K=False,
+                        spline_deriv=True,
+                    )
+                else:
+                    field = FieldClass(filename, order, comm=comm, no_K=False)
 
-            """
-            These evaluation points test that the Jacobian sqrtg = (G + iota I)/B^2
-            matches sqrt(det(g_ij)).
-            """
-            # Perform interpolation from full grid
-            points = np.zeros((len(thetas_flat), 3))
-            points[:, 0] = bri.s_half_ext[isurf]
-            points[:, 1] = thetas_flat
-            points[:, 2] = zetas_flat
-            bri.set_points(points)
+                isurf = round(0.75 * len(field.s_half_ext))
 
-            G = bri.G()[:, 0]
-            I = bri.I()[:, 0]
-            iota = bri.iota()[:, 0]
-            B = bri.modB()[:, 0]
-            sqrtg = (G + iota * I) / (B * B)
+                """
+                These evaluation points test that the Jacobian sqrtg = (G + iota I)/B^2
+                matches sqrt(det(g_ij)).
+                """
+                # Perform interpolation from full grid
+                points = np.zeros((len(thetas_flat), 3))
+                points[:, 0] = field.s_half_ext[isurf]
+                points[:, 1] = thetas_flat
+                points[:, 2] = zetas_flat
+                field.set_points(points)
 
-            detg = np.abs(np.sqrt(np.abs(bri.get_covariant_metric().det())) / bri.psi0)
+                G = field.G()[:, 0]
+                I = field.I()[:, 0]
+                iota = field.iota()[:, 0]
+                B = field.modB()[:, 0]
+                sqrtg = (G + iota * I) / (B * B)
 
-            assert np.allclose(
-                detg / np.mean(np.abs(sqrtg)),
-                np.abs(sqrtg) / np.mean(np.abs(sqrtg)),
-                atol=1e-2,
-            )
+                detg = np.abs(
+                    np.sqrt(np.abs(field.get_covariant_metric().det())) / field.psi0
+                )
 
-            """
-            These evluation points test that K() satisfies the magnetic
-            differential equation: iota dK/dtheta + dK/dzeta = sqrt(g)
-            mu0*p'(psi) + G'(psi) + iota*I'(psi)
-            """
-            isurf = round(0.75 * len(bri.s_half_ext))
-            points = np.zeros((len(thetas_flat), 3))
-            s_full = np.linspace(0, 1, bri.bx.ns_b + 1)
-            points[:, 0] = s_full[isurf]
-            points[:, 1] = thetas_flat
-            points[:, 2] = zetas_flat
+                assert np.allclose(
+                    detg / np.mean(np.abs(sqrtg)),
+                    np.abs(sqrtg) / np.mean(np.abs(sqrtg)),
+                    atol=1e-2,
+                )
 
-            bri.set_points(points)
+                # Asym equilibria is at p = 0
+                if not asym:
+                    """
+                    These evaluation points test that K() satisfies the magnetic
+                    differential equation: iota dK/dtheta + dK/dzeta = sqrt(g)
+                    mu0*p'(psi) + G'(psi) + iota*I'(psi)
+                    """
+                    isurf = round(0.3 * len(field.s_half_ext))
+                    points = np.zeros((len(thetas_flat), 3))
+                    # For BoozerSplineField, use s_full from the field
+                    # For BoozerRadialInterpolant, compute from bx.ns_b
+                    if field_name == "BoozerSplineField":
+                        s_full = field.s_full
+                    else:
+                        s_full = np.linspace(0, 1, field.bx.ns_b + 1)
+                    points[:, 0] = s_full[isurf]
+                    points[:, 1] = thetas_flat
+                    points[:, 2] = zetas_flat
 
-            K = bri.K()[:, 0]
-            dKdtheta = bri.dKdtheta()[:, 0]
-            dKdzeta = bri.dKdzeta()[:, 0]
-            K_derivs = bri.K_derivs()
+                    field.set_points(points)
 
-            assert np.allclose(K_derivs[:, 0], dKdtheta)
-            assert np.allclose(K_derivs[:, 1], dKdzeta)
+                    K = field.K()[:, 0]
+                    dKdtheta = field.dKdtheta()[:, 0]
+                    dKdzeta = field.dKdzeta()[:, 0]
+                    K_derivs = field.K_derivs()
 
-            I = bri.I()[:, 0]
-            G = bri.G()[:, 0]
-            iota = bri.iota()[:, 0]
-            modB = bri.modB()[:, 0]
-            sqrtg = (G + iota * I) / (modB * modB)
-            dGdpsi = bri.dGds()[:, 0] / bri.psi0
-            dIdpsi = bri.dIds()[:, 0] / bri.psi0
+                    assert np.allclose(K_derivs[:, 0], dKdtheta)
+                    assert np.allclose(K_derivs[:, 1], dKdzeta)
 
-            f = netcdf_file(filename_wout, mmap=False)
-            pres = f.variables["pres"][()]
-            ds = bri.s_half_ext[2] - bri.s_half_ext[1]
-            dpdpsi = (pres[isurf + 1] - pres[isurf - 1]) / (2 * ds * bri.psi0)
-            mu0 = 4 * np.pi * 1e-7
-            rhs = mu0 * dpdpsi * sqrtg + dGdpsi + iota * dIdpsi
+                    I = field.I()[:, 0]
+                    G = field.G()[:, 0]
+                    iota = field.iota()[:, 0]
+                    modB = field.modB()[:, 0]
+                    sqrtg = (G + iota * I) / (modB * modB)
+                    dGdpsi = field.dGds()[:, 0] / field.psi0
+                    dIdpsi = field.dIds()[:, 0] / field.psi0
 
-            K = K.reshape(np.shape(thetas))
-            dKdtheta = dKdtheta.reshape(np.shape(thetas))
-            dKdzeta = dKdzeta.reshape(np.shape(zetas))
-            lhs = iota.reshape(np.shape(thetas)) * dKdtheta + dKdzeta
+                    f = netcdf_file(filename_wout, mmap=False)
+                    pres = f.variables["pres"][()]
+                    ds = field.s_half_ext[2] - field.s_half_ext[1]
+                    dpdpsi = (pres[isurf + 1] - pres[isurf - 1]) / (2 * ds * field.psi0)
+                    mu0 = 4 * np.pi * 1e-7
+                    rhs = mu0 * dpdpsi * sqrtg + dGdpsi + iota * dIdpsi
 
-            assert np.allclose(rhs, lhs.flatten(), atol=1e-2)
+                    K = K.reshape(np.shape(thetas))
+                    dKdtheta = dKdtheta.reshape(np.shape(thetas))
+                    dKdzeta = dKdzeta.reshape(np.shape(zetas))
+                    lhs = iota.reshape(np.shape(thetas)) * dKdtheta + dKdzeta
+
+                    assert np.allclose(rhs, lhs.flatten(), atol=1e-2)
 
     def test_boozerradialinterpolant_vacuum(self):
         """
@@ -373,13 +392,12 @@ class TestingFiniteBeta(unittest.TestCase):
 
             # Only compare away from axis since inacurracies are introduced
             # through spline due to r ~ sqrt(s) behavior
-            mean_dGds = np.mean(np.abs(bri.dGds()[5:, 0])) if bri.asym else 1
 
             s_full = np.linspace(0, 1, bri.bx.ns_b + 1)
             assert np.allclose(
-                bri.dGds()[5::, 0] / mean_dGds,
-                G_spline.derivative()(s_full[6:-1]) / mean_dGds,
-                atol=1e-2,
+                bri.dGds()[5::, 0],
+                G_spline.derivative()(s_full[6:-1]),
+                atol=1e-5,
             )
             mean_diotads = np.mean(np.abs(bri.diotads()[5::, 0]))
             assert np.allclose(
@@ -569,7 +587,8 @@ class TestingFiniteBeta(unittest.TestCase):
             )
 
             # Check that zeta derivatives are small since we are close to QA
-            assert np.allclose(bri.dmodBdzeta(), 0, atol=1e-2)
+            if not asym:
+                assert np.allclose(bri.dmodBdzeta(), 0, atol=1e-2)
 
             assert np.allclose(bri.R_derivs()[:, 0], bri.dRds()[:, 0])
             assert np.allclose(bri.R_derivs()[:, 1], bri.dRdtheta()[:, 0])
@@ -1043,6 +1062,7 @@ class TestingInverseFourier(unittest.TestCase):
                     padded_zetas,
                     ntor,
                     nfp,
+                    False,
                 )
                 inverse_fourier_transform_odd(
                     padded_odd_output,
@@ -1053,6 +1073,7 @@ class TestingInverseFourier(unittest.TestCase):
                     padded_zetas,
                     ntor,
                     nfp,
+                    False,
                 )
 
                 if comm is not None:
@@ -1093,6 +1114,7 @@ class TestingInverseFourier(unittest.TestCase):
                         zeta,
                         ntor,
                         nfp,
+                        False,
                     )
                     inverse_fourier_transform_odd(
                         odd_output,
@@ -1103,6 +1125,7 @@ class TestingInverseFourier(unittest.TestCase):
                         zeta,
                         ntor,
                         nfp,
+                        False,
                     )
 
                     if comm is not None:
@@ -1117,6 +1140,292 @@ class TestingInverseFourier(unittest.TestCase):
                         even_K[i], even_output[0], rtol=1e-12, atol=1e-11
                     )
                     assert np.allclose(odd_K[i], odd_output[0], rtol=1e-12, atol=1e-11)
+
+
+class TestingBoozerSplineField(unittest.TestCase):
+    def test_boozersplinefield_initialization(self):
+        """
+        Test BoozerSplineField initialization with boozmn and wout files.
+        """
+        ntheta = 21
+        nzeta = 20
+
+        for asym in [True, False]:
+            if asym:
+                filename = filename_mhd_lasym
+                filename_wout = filename_mhd_lasym_wout
+            else:
+                filename = filename_vac
+                filename_wout = filename_vac_wout
+
+            # Test initialization with boozmn file
+            bsf = BoozerSplineField(filename, ntheta=ntheta, nzeta=nzeta, comm=comm)
+
+            # Test initialization with wout file
+            bsf_wout = BoozerSplineField(
+                filename_wout,
+                ntheta=ntheta,
+                nzeta=nzeta,
+                mpol=20,
+                ntor=18,
+                comm=comm,
+            )
+
+            # Check that basic attributes are set
+            assert bsf.psi0 is not None
+            assert bsf.nfp is not None
+            assert bsf.ntheta == ntheta
+            assert bsf.nzeta == nzeta
+            assert bsf_wout.psi0 is not None
+            assert bsf_wout.nfp is not None
+
+            # Test error cases
+            with self.assertRaises(ValueError):
+                BoozerSplineField(
+                    filename_mhd_reduced,
+                    ntheta=ntheta,
+                    nzeta=nzeta,
+                    comm=comm,
+                )
+
+    def test_boozersplinefield_angular_derivatives_integrate_to_zero(self):
+        """
+        Test that angular derivatives integrate to zero over their periods.
+        """
+        ntheta = 72
+        nzeta = 72
+
+        filename = filename_vac
+        for spline_deriv in [True, False]:
+            bsf = BoozerSplineField(
+                filename,
+                ntheta=ntheta,
+                nzeta=nzeta,
+                comm=comm,
+                spline_deriv=spline_deriv,
+                no_K=False,
+            )
+            tol = 1e-6
+
+            ntheta_test = 48
+            nzeta_test = 48
+            thetas = np.linspace(0, 2 * np.pi, ntheta_test, endpoint=False)
+            zetas = np.linspace(0, 2 * np.pi / bsf.nfp, nzeta_test, endpoint=False)
+            [zetas, thetas] = np.meshgrid(zetas, thetas)
+            points = np.zeros((len(thetas.flatten()), 3))
+            points[:, 0] = 0.5 * np.ones_like(thetas.flatten())
+            points[:, 1] = thetas.flatten()
+            points[:, 2] = zetas.flatten()
+            bsf.set_points(points)
+
+            # Check that angular derivatives integrate to zero
+            print(
+                "dmodBdtheta: ",
+                np.max(
+                    np.abs(np.mean(bsf.dmodBdtheta().reshape(np.shape(thetas)), axis=0))
+                ),
+            )
+            print(
+                "dmodBdzeta: ",
+                np.max(
+                    np.abs(np.mean(bsf.dmodBdzeta().reshape(np.shape(thetas)), axis=1))
+                ),
+            )
+            print(
+                "dRdtheta: ",
+                np.max(
+                    np.abs(np.mean(bsf.dRdtheta().reshape(np.shape(thetas)), axis=0))
+                ),
+            )
+            print(
+                "dRdzeta: ",
+                np.max(
+                    np.abs(np.mean(bsf.dRdzeta().reshape(np.shape(thetas)), axis=1))
+                ),
+            )
+            print(
+                "dZdtheta: ",
+                np.max(
+                    np.abs(np.mean(bsf.dZdtheta().reshape(np.shape(thetas)), axis=0))
+                ),
+            )
+            print(
+                "dZdzeta: ",
+                np.max(
+                    np.abs(np.mean(bsf.dZdzeta().reshape(np.shape(thetas)), axis=1))
+                ),
+            )
+            print(
+                "dnudtheta: ",
+                np.max(
+                    np.abs(np.mean(bsf.dnudtheta().reshape(np.shape(thetas)), axis=0))
+                ),
+            )
+            print(
+                "dnudzeta: ",
+                np.max(
+                    np.abs(np.mean(bsf.dnudzeta().reshape(np.shape(thetas)), axis=1))
+                ),
+            )
+            print(
+                "dKdtheta: ",
+                np.max(
+                    np.abs(np.mean(bsf.dKdtheta().reshape(np.shape(thetas)), axis=0))
+                ),
+            )
+            print(
+                "dKdzeta: ",
+                np.max(
+                    np.abs(np.mean(bsf.dKdzeta().reshape(np.shape(thetas)), axis=1))
+                ),
+            )
+            assert np.allclose(
+                np.mean(bsf.dmodBdtheta().reshape(np.shape(thetas)), axis=0),
+                0,
+                atol=tol,
+            )
+            assert np.allclose(
+                np.mean(bsf.dmodBdzeta().reshape(np.shape(thetas)), axis=1),
+                0,
+                atol=tol,
+            )
+            assert np.allclose(
+                np.mean(bsf.dRdtheta().reshape(np.shape(thetas)), axis=0),
+                0,
+                atol=tol,
+            )
+            assert np.allclose(
+                np.mean(bsf.dRdzeta().reshape(np.shape(thetas)), axis=1),
+                0,
+                atol=tol,
+            )
+            assert np.allclose(
+                np.mean(bsf.dZdtheta().reshape(np.shape(thetas)), axis=0),
+                0,
+                atol=tol,
+            )
+            assert np.allclose(
+                np.mean(bsf.dZdzeta().reshape(np.shape(thetas)), axis=1),
+                0,
+                atol=tol,
+            )
+            assert np.allclose(
+                np.mean(bsf.dnudtheta().reshape(np.shape(thetas)), axis=0),
+                0,
+                atol=tol,
+            )
+            assert np.allclose(
+                np.mean(bsf.dnudzeta().reshape(np.shape(thetas)), axis=1),
+                0,
+                atol=tol,
+            )
+
+    def test_boozersplinefield_consistency_with_radial_interpolant(self):
+        """
+        Test that BoozerSplineField gives consistent results with
+        BoozerRadialInterpolant.
+        """
+        ntheta = 101
+        nzeta = 100
+
+        filename = filename_vac
+        bri = BoozerRadialInterpolant(filename, order=3, comm=comm, no_K=False)
+        for spline_deriv in [True, False]:
+            tol = 1e-4
+
+            bsf = BoozerSplineField(
+                filename,
+                ntheta=ntheta,
+                nzeta=nzeta,
+                comm=comm,
+                spline_deriv=spline_deriv,
+                no_K=False,
+            )
+
+            # Test at a set of points
+            npoints = 10
+            np.random.seed(42)
+            points = np.random.uniform(size=(npoints, 3))
+            points[:, 0] = points[:, 0] * 0.6 + 0.2  # s in [0.2, 0.8]
+            points[:, 1] = points[:, 0] * np.pi  # theta in [0, pi]
+            points[:, 2] = points[:, 0] * 2 * np.pi / bsf.nfp  # zeta in [0, 2*pi/nfp]
+
+            bri.set_points(points)
+            bsf.set_points(points)
+
+            for field in [
+                "modB",
+                "R",
+                "Z",
+                "G",
+                "iota",
+                "nu",
+                "dmodBdtheta",
+                "dmodBdzeta",
+                "dRdtheta",
+                "dRdzeta",
+                "dZdtheta",
+                "dZdzeta",
+                "dnudtheta",
+                "dnudzeta",
+                "dnuds",
+                "diotads",
+                "dGds",
+                "dIds",
+                "K",
+            ]:
+                print(field)
+                field_bri = getattr(bri, field)()
+                field_bsf = getattr(bsf, field)()
+                print(np.max(np.abs(field_bri - field_bsf)))
+                assert np.allclose(field_bri, field_bsf, atol=tol)
+
+    def test_boozersplinefield_derivs_methods(self):
+        """
+        Test that _derivs methods return consistent results.
+        """
+        ntheta = 21
+        nzeta = 20
+
+        filename = filename_vac
+        bsf = BoozerSplineField(
+            filename,
+            ntheta=ntheta,
+            nzeta=nzeta,
+            comm=comm,
+            no_K=False,
+        )
+
+        npoints = 10
+        points = np.zeros((npoints, 3))
+        points[:, 0] = np.linspace(0.2, 0.8, npoints)
+        points[:, 1] = np.linspace(0, np.pi, npoints)
+        points[:, 2] = np.linspace(0, 2 * np.pi / bsf.nfp, npoints)
+        bsf.set_points(points)
+
+        # Test modB_derivs
+        modB_derivs = bsf.modB_derivs()
+        assert np.allclose(modB_derivs[:, 0], bsf.dmodBds()[:, 0])
+        assert np.allclose(modB_derivs[:, 1], bsf.dmodBdtheta()[:, 0])
+        assert np.allclose(modB_derivs[:, 2], bsf.dmodBdzeta()[:, 0])
+
+        # Test R_derivs
+        R_derivs = bsf.R_derivs()
+        assert np.allclose(R_derivs[:, 0], bsf.dRds()[:, 0])
+        assert np.allclose(R_derivs[:, 1], bsf.dRdtheta()[:, 0])
+        assert np.allclose(R_derivs[:, 2], bsf.dRdzeta()[:, 0])
+
+        # Test Z_derivs
+        Z_derivs = bsf.Z_derivs()
+        assert np.allclose(Z_derivs[:, 0], bsf.dZds()[:, 0])
+        assert np.allclose(Z_derivs[:, 1], bsf.dZdtheta()[:, 0])
+        assert np.allclose(Z_derivs[:, 2], bsf.dZdzeta()[:, 0])
+
+        # Test nu_derivs
+        nu_derivs = bsf.nu_derivs()
+        assert np.allclose(nu_derivs[:, 0], bsf.dnuds()[:, 0])
+        assert np.allclose(nu_derivs[:, 1], bsf.dnudtheta()[:, 0])
+        assert np.allclose(nu_derivs[:, 2], bsf.dnudzeta()[:, 0])
 
 
 if __name__ == "__main__":

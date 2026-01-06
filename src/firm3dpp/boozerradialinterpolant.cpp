@@ -283,7 +283,7 @@ Array fourier_transform_even(Array& K, Array& xm, Array& xn, Array& thetas, Arra
 }
 
 void inverse_fourier_transform_odd(Array& K, Array& kmns, Array& xm, Array& xn,
-    Array& thetas, Array& zetas, int ntor, int nfp) {
+    Array& thetas, Array& zetas, int ntor, int nfp, bool surf) {
     // K(ip) += kmns(im,ip)*sin(xm(im)*thetas(ip)-xn(im)*zetas(ip));
     std::size_t num_modes = xm.shape(0);
     std::size_t num_points = thetas.shape(0);
@@ -311,17 +311,22 @@ void inverse_fourier_transform_odd(Array& K, Array& kmns, Array& xm, Array& xn,
             simd_t sinterm, costerm;
             xs::sincos(-nfp*b_zetas, sin_nfpzetas, cos_nfpzetas);
 
-            int num_ntor = ntor + 1;
             int m = xm(0);
             int n = xn(0);
             int i = 0;
             for (int im=0; im < num_modes; ++im) {
-                b_kmns = xs::load_aligned(&kmns_array[im*num_points+ip]);
+                if (surf) {
+                    // When surf=true, kmns is 1D array (num_modes,), broadcast scalar to SIMD batch
+                    b_kmns = xs::batch<double, simd_size>(kmns_array[im]);
+                } else {
+                    b_kmns = xs::load_aligned(&kmns_array[im*num_points+ip]);
+                }
 
                 // recompute the angle from scratch every so often, to
                 // avoid accumulating floating point error
-                if(i % ANGLE_RECOMPUTE == 0)
+                if(i % ANGLE_RECOMPUTE == 0) {
                     xs::sincos(m*b_thetas-n*b_zetas, sinterm, costerm);
+                }
 
                 b_K = xs::fma(b_kmns, sinterm, b_K);
 
@@ -384,7 +389,7 @@ void inverse_fourier_transform_odd(Array& K, Array& kmns, Array& xm, Array& xn,
 }
 
 void inverse_fourier_transform_even(Array& K, Array& kmns, Array& xm, Array& xn,
-    Array& thetas, Array& zetas, int ntor, int nfp) {
+    Array& thetas, Array& zetas, int ntor, int nfp, bool surf) {
     // K(ip) += kmns(im,ip)*cos(xm(im)*thetas(ip)-xn(im)*zetas(ip));
     int num_modes = xm.shape(0);
     int num_points = thetas.shape(0);
@@ -410,17 +415,21 @@ void inverse_fourier_transform_even(Array& K, Array& kmns, Array& xm, Array& xn,
             simd_t sinterm, costerm;
             xs::sincos(-nfp*b_zetas, sin_nfpzetas, cos_nfpzetas);
 
-            int num_ntor = ntor + 1;
             int m = xm(0);
             int n = xn(0);
             int i = 0;
             for (int im=0; im < num_modes; ++im) {
-                b_kmns = xs::load_aligned(&kmns_array[im*num_points+ip]);
-
+                if (surf) {
+                    // When surf=true, kmns is 1D array (num_modes,), broadcast scalar to SIMD batch
+                    b_kmns = xs::batch<double, simd_size>(kmns_array[im]);
+                } else {
+                    b_kmns = xs::load_aligned(&kmns_array[im*num_points+ip]);
+                }
                 // recompute the angle from scratch every so often, to
                 // avoid accumulating floating point error
-                if(i % ANGLE_RECOMPUTE == 0)
+                if(i % ANGLE_RECOMPUTE == 0) {
                     xs::sincos(m*b_thetas-n*b_zetas, sinterm, costerm);
+                }
 
                 b_K = xs::fma(b_kmns, costerm, b_K);
 
