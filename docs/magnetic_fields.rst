@@ -75,6 +75,9 @@ If given a ``VMEC`` output file, performs a Boozer coordinate transformation usi
 
 Field evaluations are parallelized over the number of Fourier harmonics over CPUs, given the communicator ``comm``. In addition, the evaluations are parallelized over threads with OpenMP. Because the guiding center tracing routines are also parallelized over CPUs with MPI, we don't recommend passing ``comm`` to ``BoozerRadialInterpolant`` if it is being passed to a tracing routine.
 
+.. note::
+   For most use cases, it is recommended to use ``InterpolatedBoozerField.from_booz_xform()`` instead of creating a ``BoozerRadialInterpolant``. The ``from_booz_xform()`` method provides a more convenient interface (through the ``BoozerSplineField`` class) and is the preferred approach in most examples.
+
 Usage Example
 ~~~~~~~~~~~~
 
@@ -103,13 +106,109 @@ As stated above, the ``booz_xform`` equilibrium must be performed with all surfa
 
 Equilibria produced with the `STELLOPT implementation <https://github.com/PrincetonUniversity/STELLOPT>`_ can also be used.
 
+BoozerSplineField
+-----------------
+
+``BoozerSplineField`` interpolates the magnetic field on the VMEC grid using spline interpolation. It uses :class:`TricubicSpline` for 3D fields and :class:`CubicSpline` for 1D flux functions. This class is typically used internally by ``InterpolatedBoozerField.from_booz_xform()`` to handle the Boozer coordinate transformation and initial interpolation.
+
+The field can be created directly from a VMEC output file (``wout_*.nc``), a ``booz_xform`` output file (``boozmn_*.nc``), or a ``Booz_xform`` instance. When given a VMEC file, it automatically performs the Boozer coordinate transformation using ``booz_xform``.
+
+Key features:
+
+- Interpolates on the VMEC grid with user-specified angular resolution
+- Supports quasisymmetry enforcement through ``helicity_M`` and ``helicity_N`` parameters
+- Can enforce vacuum field assumptions or exclude the K component
+- Supports parallel computation via MPI communicator
+
+Usage Example
+~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   from firm3d.field import BoozerSplineField
+   from firm3d.util.mpi import comm_world
+
+   # Create field from booz_xform output
+   field = BoozerSplineField(
+       "boozmn_file.nc",
+       ntheta=48,  # number of poloidal grid points
+       nzeta=48,  # number of toroidal grid points
+       comm=comm_world  # optional MPI communicator
+   )
+
+   # Create field from VMEC output (performs booz_xform automatically)
+   field = BoozerSplineField(
+       "wout_file.nc",
+       mpol=32,  # number of poloidal mode numbers for booz_xform
+       ntor=32,  # number of toroidal mode numbers for booz_xform
+       ntheta=48,
+       nzeta=48,
+       comm=comm_world
+   )
+
+   # With quasisymmetry explicitly enforced
+   field = BoozerSplineField(
+       "boozmn_file.nc",
+       ntheta=48,
+       nzeta=48,
+       helicity_M=1,  # poloidal helicity coefficient
+       helicity_N=0,  # toroidal helicity coefficient
+       comm=comm_world
+   )
+
+   # Vacuum field (enforces G = mean(G), I = 0, K = 0)
+   field = BoozerSplineField(
+       "boozmn_file.nc",
+       ntheta=48,
+       nzeta=48,
+       enforce_vacuum=True,
+       comm=comm_world
+   )
+
+.. note::
+   For most use cases, it is recommended to use ``InterpolatedBoozerField.from_booz_xform()`` instead of creating a ``BoozerSplineField`` directly. The ``from_booz_xform()`` method creates a ``BoozerSplineField`` internally and wraps it with an ``InterpolatedBoozerField`` for optimal performance in particle tracing.
+
 InterpolatedBoozerField
 -----------------------
 
-This field takes an existing ``BoozerMagneticField`` instance, such as :ref:`BoozerRadialInterpolant`, and interpolates it on a regular grid in :math:`(s,\theta,\zeta)`. This resulting interpolant can then be evaluated very quickly inside the tracing loop.
+This field interpolates a magnetic field on a regular grid in :math:`(s,\theta,\zeta)`. This resulting interpolant can then be evaluated very quickly inside the tracing loop.
 
-Usage Example
-~~~~~~~~~~~~
+The recommended way to create an ``InterpolatedBoozerField`` from a ``booz_xform`` output file is using the ``from_booz_xform`` class method, which automatically handles the Boozer coordinate transformation and interpolation setup.
+
+Usage Example (Recommended)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   from firm3d.field import InterpolatedBoozerField
+   from firm3d.util.mpi import comm_world
+
+   # Create the interpolated field directly from booz_xform output
+   field = InterpolatedBoozerField.from_booz_xform(
+       "boozmn_file.nc",
+       order=3,  # order for radial interpolation
+       ns=48,  # number of radial points
+       ntheta=48,  # number of poloidal points
+       nzeta=48,  # number of toroidal points
+       comm=comm_world  # optional MPI communicator
+   )
+
+   # With quasisymmetry explicitly enforced
+   field = InterpolatedBoozerField.from_booz_xform(
+       "boozmn_file.nc",
+       order=3,
+       ns=48,
+       ntheta=48,
+       nzeta=48,
+       helicity_M=1,  # helicity M
+       helicity_N=0,  # helicity N
+       comm=comm_world
+   )
+
+Alternative Usage (Legacy)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For advanced use cases, you can also create an ``InterpolatedBoozerField`` from an existing ``BoozerMagneticField`` instance:
 
 .. code-block:: python
 
