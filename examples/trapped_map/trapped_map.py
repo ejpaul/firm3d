@@ -39,6 +39,8 @@ degree = 3  # Degree for Lagrange interpolation
 # Setup logging to redirect output to file
 setup_logging(f"stdout_trapped_map_{resolution}_{comm_size}.txt")
 
+time1 = time.time()
+
 field = InterpolatedBoozerField.from_booz_xform(
     boozmn_filename,
     order=order,
