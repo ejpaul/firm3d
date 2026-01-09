@@ -10,6 +10,7 @@ using std::vector;
     #include "symplectic.h"
 #endif
 
+#ifdef __CUDACC__
 extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tmax, double tol, int nparticles);
@@ -54,7 +55,7 @@ extern "C" vector<double> test_timestep_saw_nok(py::array_t<double> quad_pts, py
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
         py::array_t<double> loc_init, double m, double q, double v_total, py::array_t<double> vtang, py::array_t<double> time,
         double tol, double psi0, int nparticles);
-
+#endif
 
 void init_tracing(py::module_ &m){
     py::class_<StoppingCriterion, shared_ptr<StoppingCriterion>>(m, "StoppingCriterion");
@@ -127,7 +128,7 @@ void init_tracing(py::module_ &m){
         py::arg("DP_hmin")=0.0
     );
 
-
+#ifdef __CUDACC__
     m.def("cartesian_gpu_tracing", &cartesian_gpu_tracing,
         py::arg("quad_pts"),
         py::arg("srange"),
@@ -382,7 +383,7 @@ void init_tracing(py::module_ &m){
         py::arg("psi0"),
         py::arg("nparticles")
         );
-
+#endif
 
 
 }

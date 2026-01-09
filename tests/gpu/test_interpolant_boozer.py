@@ -1,23 +1,20 @@
-import os
 import numpy as np
 
+import firm3dpp
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
 )
-
 from firm3d.util.gpu_utils import boozer_interpolant
-import firm3dpp
 
 np.random.seed(1865)
 
 def test_interpolant_bfield_vacuum(field, nfp, n_metagrid_pts, n_test_pts):
-
     # generate test points
-    s = np.random.uniform(low=0, high=1, size=(n_test_pts,1))
-    t = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
-    z = np.random.uniform(low=0, high=2*np.pi, size=(n_test_pts,1))
-    stz = np.hstack((s,t,z))
+    s = np.random.uniform(low=0, high=1, size=(n_test_pts, 1))
+    t = np.random.uniform(low=0, high=2 * np.pi, size=(n_test_pts, 1))
+    z = np.random.uniform(low=0, high=2 * np.pi, size=(n_test_pts, 1))
+    stz = np.hstack((s, t, z))
 
     # SIMSOPT INTERPOLANT
     field.set_points(stz)
@@ -36,13 +33,19 @@ def test_interpolant_bfield_vacuum(field, nfp, n_metagrid_pts, n_test_pts):
     # Calculate interpolation
     # print(zrange)
     # exit()
-    new_interpolation = firm3dpp.test_gpu_interpolation(quad_info, srange, trange, zrange, stz, "boozer_vacuum", stz.shape[0])
+    new_interpolation = firm3dpp.test_gpu_interpolation(
+        quad_info, srange, trange, zrange, stz, "boozer_vacuum", stz.shape[0]
+    )
     new_interpolation = np.reshape(new_interpolation, (stz.shape[0], 6))
 
     # print(np.abs(simsopt_interpolation - new_interpolation) / simsopt_interpolation)
-    rel_err = np.abs((simsopt_interpolation - new_interpolation) / simsopt_interpolation)
+    rel_err = np.abs(
+        (simsopt_interpolation - new_interpolation) / simsopt_interpolation
+    )
     diff = np.max(rel_err)
-    print("Maximum relative error in interpolation values on {} points: {}".format(n_test_pts, diff))
+    print(
+        f"Maximum relative error in interpolation values on {n_test_pts} points: {diff}"
+    )
 
     if diff > 1e-8:
         print("BOOZER INTERPOLANT TEST FAILED")
@@ -102,7 +105,6 @@ def test_interpolant_bfield_finite_beta(field, nfp, n_metagrid_pts, n_test_pts):
         print("BOOZER INTERPOLANT TEST SUCCESS (general GC, 13 fields)")
 
 
-
 if __name__ == "__main__":
     np.set_printoptions(linewidth=300)
 
@@ -119,7 +121,7 @@ if __name__ == "__main__":
     n_metagrid_pts = 15
     srange = (0, 1, n_metagrid_pts)
     thetarange = (0, np.pi, n_metagrid_pts)
-    zetarange = (0, 2*np.pi/nfp, n_metagrid_pts)
+    zetarange = (0, 2 * np.pi / nfp, n_metagrid_pts)
     field = InterpolatedBoozerField(
         bri,
         degree,
