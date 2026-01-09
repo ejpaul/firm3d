@@ -22,9 +22,9 @@ np.random.seed(1800)
 
 def test_derivs(field, nfp, n_metagrid_pts, n_test_pts, vacuum):
     # generate test points
-    s = np.random.uniform(low=0, high=1, size=(n_test_pts,1))
-    t = np.random.uniform(low=0, high=2 * np.pi, size=(n_test_pts,1))
-    z = np.random.uniform(low=0, high=2 * np.pi, size=(n_test_pts,1))
+    s = np.random.uniform(low=0, high=1, size=(n_test_pts, 1))
+    t = np.random.uniform(low=0, high=2 * np.pi, size=(n_test_pts, 1))
+    z = np.random.uniform(low=0, high=2 * np.pi, size=(n_test_pts, 1))
     stz = np.hstack((s, t, z))
 
     VELOCITY = np.sqrt(2 * ENERGY / MASS)
@@ -34,8 +34,8 @@ def test_derivs(field, nfp, n_metagrid_pts, n_test_pts, vacuum):
     old_derivs = np.empty((n_test_pts, 4))
     start_time = time.time()
     for i in range(n_test_pts):
-        old_derivs[i,:] = firm3dpp.simsopt_derivs_boozer(
-            field, stz[i,:], MASS, CHARGE, VELOCITY, vpar_init[i], vacuum
+        old_derivs[i, :] = firm3dpp.simsopt_derivs_boozer(
+            field, stz[i, :], MASS, CHARGE, VELOCITY, vpar_init[i], vacuum
         )
     print(f"Time to compute simsopt derivatives: {time.time() - start_time} seconds")
 
@@ -52,7 +52,18 @@ def test_derivs(field, nfp, n_metagrid_pts, n_test_pts, vacuum):
     # print("calculating new derivatives")
     start_time = time.time()
     new_derivs = firm3dpp.test_derivatives_boozer(
-        quad_info, srange, trange, zrange, stz, vpar_init, VELOCITY, MASS, CHARGE, psi0, stz.shape[0], vacuum
+        quad_info,
+        srange,
+        trange,
+        zrange,
+        stz,
+        vpar_init,
+        VELOCITY,
+        MASS,
+        CHARGE,
+        psi0,
+        stz.shape[0],
+        vacuum,
     )
     print(f"Time to compute new derivatives: {time.time() - start_time} seconds")
     new_derivs = np.reshape(new_derivs, (stz.shape[0], 4))
@@ -61,7 +72,7 @@ def test_derivs(field, nfp, n_metagrid_pts, n_test_pts, vacuum):
     diff = np.max(rel_err)
     # print(np.abs(old_derivs - new_derivs) / old_derivs)
 
-    print("Maximum relative error in derivative values on {} points: {}".format(n_test_pts, diff))
+    print(f"Maximum relative error in derivative values on {n_test_pts} points: {diff}")
     beta_string = "VACUUM" if vacuum else "FINITE BETA"
     if diff > 1e-8:
         print(f"BOOZER RHS {beta_string} TEST FAILED")
@@ -88,7 +99,7 @@ def test_timestep(field, nfp, n_metagrid_pts, n_test_pts, vacuum):
     vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (n_test_pts,))
 
     # print("computing simsopt timestep")
-    
+
     gc_tys, gc_zeta_hits = trace_particles_boozer(
         field,
         stz,
@@ -101,11 +112,11 @@ def test_timestep(field, nfp, n_metagrid_pts, n_test_pts, vacuum):
         stopping_criteria=[IterationStoppingCriterion(0)],
         forget_exact_path=True,
     )
-    
+
     final_positions = np.array([x[-1] for x in gc_tys])
     final_positions = np.array(
         [
-            [x[0], x[1]*np.cos(x[2]), x[1]*np.sin(x[2]), x[3], x[4]]
+            [x[0], x[1] * np.cos(x[2]), x[1] * np.sin(x[2]), x[3], x[4]]
             for x in final_positions
         ]
     )
@@ -116,17 +127,17 @@ def test_timestep(field, nfp, n_metagrid_pts, n_test_pts, vacuum):
     stz = np.ascontiguousarray(stz)
     psi0 = field.psi0
     last_time = firm3dpp.test_timestep_boozer(
-        quad_pts=quad_info, 
+        quad_pts=quad_info,
         srange=srange,
         trange=trange,
-        zrange=zrange, 
+        zrange=zrange,
         stz_init=stz,
-        m=MASS, 
-        q=CHARGE, 
-        vtotal=np.sqrt(2*ENERGY/MASS),  
-        vtang=vpar_init, 
+        m=MASS,
+        q=CHARGE,
+        vtotal=np.sqrt(2 * ENERGY / MASS),
+        vtang=vpar_init,
         tol=1e-9,
-        psi0=psi0, 
+        psi0=psi0,
         nparticles=n_test_pts,
         vacuum=vacuum,
     )
@@ -135,13 +146,13 @@ def test_timestep(field, nfp, n_metagrid_pts, n_test_pts, vacuum):
     # map to pseudo-cylindrical coordinates
     new_final_positions = np.array(
         [
-            [x[0], x[1]*np.cos(x[2]), x[1]*np.sin(x[2]), x[3], x[4]]
+            [x[0], x[1] * np.cos(x[2]), x[1] * np.sin(x[2]), x[3], x[4]]
             for x in last_time
         ]
     )
-    
+
     # normalize vparallel errors
-    abs_err = np.abs((final_positions - new_final_positions) )
+    abs_err = np.abs(final_positions - new_final_positions)
     abs_err[:, 4] /= np.sqrt(2 * ENERGY / MASS)
     diff = np.max(abs_err)
     # print(np.abs(final_positions - new_final_positions) / final_positions)

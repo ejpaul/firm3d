@@ -39,7 +39,9 @@ def test_interpolant_bfield(field, nfp, n_metagrid_pts, n_test_pts, vacuum):
         n_quantities = 13
 
     ## NEW INTERPOLANT
-    srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, n_metagrid_pts, vacuum=vacuum)
+    srange, trange, zrange, quad_info, maxJ = boozer_interpolant(
+        field, nfp, n_metagrid_pts, vacuum=vacuum
+    )
     stz = np.ascontiguousarray(stz)
     new_interpolation = firm3dpp.test_gpu_interpolation(
         quad_info, srange, trange, zrange, stz, interpolation_type, stz.shape[0]
