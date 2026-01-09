@@ -10,7 +10,7 @@ using std::vector;
     #include "symplectic.h"
 #endif
 
-#ifdef __CUDACC__
+#ifdef USE_CUDA
 extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tmax, double tol, int nparticles);
@@ -30,7 +30,7 @@ extern "C" vector<double> boozer_saw_nok_gpu_tracing(py::array_t<double> quad_pt
 extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, std::string coordinates, int n_points);
 extern "C" py::array_t<double> test_derivatives_cartesian(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, py::array_t<double> vpar, double v_total, double m, double q,  int n_points);
 extern "C" py::array_t<double> test_derivatives_boozer(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, py::array_t<double> vpar, double v_total, double m, double q,  double psi0, int n_points);
-extern "C" py::array_t<double> test_derivatives_saw(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, 
+extern "C" py::array_t<double> test_derivatives_saw(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, 
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
         py::array_t<double> loc, py::array_t<double> vpar, py::array_t<double> time, double v_total, double m, double q,  double psi0, int n_points);
 extern "C" py::array_t<double> test_derivatives_saw_nok(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, 
@@ -128,7 +128,7 @@ void init_tracing(py::module_ &m){
         py::arg("DP_hmin")=0.0
     );
 
-#ifdef __CUDACC__
+#ifdef USE_CUDA
     m.def("cartesian_gpu_tracing", &cartesian_gpu_tracing,
         py::arg("quad_pts"),
         py::arg("srange"),
