@@ -894,7 +894,6 @@ class BoozerAnalytic(BoozerMagneticField):
         r = np.sqrt(np.abs(2 * psi / self.Bbar))
         dKdzeta[:, 0] = -self.N * self.K1 * r * np.cos(thetas - self.N * zetas)
 
-
 class BoozerSplineField(BoozerMagneticField):
     def __init__(
         self,
@@ -1210,16 +1209,17 @@ class BoozerSplineField(BoozerMagneticField):
                 self.diotads_grid = None
                 self.dGds_grid = None
                 self.dIds_grid = None
-            if self.asym:
-                self.bmns = None
-                self.rmns = None
-                self.zmnc = None
-                self.numnc = None
-                if not self.spline_deriv:
-                    self.dbmnsds = None
-                    self.dnumnsds = None
-                    self.drmnsds = None
-                    self.dzmncds = None
+            # Initialize asymmetry-related attributes to None for non-proc0 processes
+            # They will be set to actual values after broadcasting from proc0
+            self.bmns = None
+            self.rmns = None
+            self.zmnc = None
+            self.numnc = None
+            if not self.spline_deriv:
+                self.dbmnsds = None
+                self.dnumnsds = None
+                self.drmnsds = None
+                self.dzmncds = None
         if self.comm is not None:
             self.xm_b = self.comm.bcast(self.xm_b, root=0)
             self.xn_b = self.comm.bcast(self.xn_b, root=0)
@@ -1906,8 +1906,6 @@ class BoozerSplineField(BoozerMagneticField):
         K[:, :, :] = K_flat.reshape(
             (len(self.s_full), len(self.theta_grid), len(self.zeta_grid))
         )
-
-
 class BoozerRadialInterpolant(BoozerMagneticField):
     r"""
      The magnetic field can be computed at any point in Boozer coordinates
