@@ -1152,6 +1152,7 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     }
        
     vector<double> particle_output(7*nparticles);
+    double out[7*nparticles];
 
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
@@ -1161,7 +1162,6 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     if (maxloss >= 1.0) {
         // Single-pass tracing until tmax
         particle_trace_kernel<id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, args...);
-        double out[7*nparticles];
         gpuErrchk(cudaMemcpy(out, out_d, 7 * nparticles * sizeof(double), cudaMemcpyDeviceToHost) );
         for(int i=0; i<7*nparticles; ++i){
             particle_output[i] = out[i];
@@ -1191,8 +1191,9 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
             particle_trace_kernel<id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, args...);
 
             // Pull back results
-            std::vector<double> out(7*nparticles);
-            gpuErrchk(cudaMemcpy(out.data(), out_d, 7 * nparticles * sizeof(double), cudaMemcpyDeviceToHost));
+            // std::vector<double> out(7*nparticles);
+            // gpuErrchk(cudaMemcpy(out.data(), out_d, 7 * nparticles * sizeof(double), cudaMemcpyDeviceToHost));
+            gpuErrchk(cudaMemcpy(out, out_d, 7 * nparticles * sizeof(double), cudaMemcpyDeviceToHost) );
 
             // Update trackers and next-step initial conditions
             for (int i = 0; i < nparticles; ++i) {
