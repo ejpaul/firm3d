@@ -1164,6 +1164,12 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
         }
     }
 
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    std::cout << "tracing kernels time (ms): " << milliseconds<< "\n";
+
     gpuErrchk( cudaFree(quadpts_d) );
     gpuErrchk( cudaFree(init_pos_d) );
     gpuErrchk( cudaFree(out_d) );
