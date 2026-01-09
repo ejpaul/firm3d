@@ -2,9 +2,11 @@ cmake_minimum_required(VERSION 3.15)
 set(CMAKE_CXX_COMPILER_WORKS 1)
 project(firm3dpp)
 
-enable_language(CUDA)
-find_package(CUDAToolkit)
-if(CUDAToolkit_FOUND)
+include(CheckLanguage)
+check_language(CUDA)
+
+if(CMAKE_CUDA_COMPILER)
+    find_package(CUDAToolkit)
     add_definitions(-DUSE_CUDA)
 
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=sm_80")
