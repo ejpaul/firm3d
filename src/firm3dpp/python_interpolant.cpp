@@ -30,6 +30,7 @@ void init_interpolant(py::module_ &m){
         .def(py::init<InterpolationRule, RangeTriplet, RangeTriplet, RangeTriplet, int, bool, std::function<std::vector<bool>(Vec, Vec, Vec)>>())
         .def(py::init<InterpolationRule, RangeTriplet, RangeTriplet, RangeTriplet, int, bool>())
         .def("interpolate_batch", &RegularGridInterpolant3D<Array2>::interpolate_batch, "Interpolate a function by evaluating the function on all interpolation nodes simultanuously.")
+        .def("interpolate_from_grid_data", &RegularGridInterpolant3D<Array2>::interpolate_from_grid_data, "Build the interpolant from pre-computed grid data on DOF points.")
         .def("evaluate", &RegularGridInterpolant3D<Array2>::evaluate, "Evaluate the interpolant at a point.")
         .def("evaluate_batch", &RegularGridInterpolant3D<Array2>::evaluate_batch, "Evaluate the interpolant at multiple points (faster than `evaluate` as it uses prefetching).");
 }

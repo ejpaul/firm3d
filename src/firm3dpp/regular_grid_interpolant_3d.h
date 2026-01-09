@@ -297,6 +297,7 @@ class RegularGridInterpolant3D {
             {}
 
         void interpolate_batch(std::function<Vec(Vec, Vec, Vec)> &f); // build the interpolant
+        void interpolate_from_grid_data(const Vec& grid_data); // build the interpolant from pre-computed grid data on DOF points
 
         Vec evaluate(double x, double y, double z); // evaluate the interpolant at one location
         void evaluate_batch(Array& xyz, Array& fxyz); // evluate the interpolant at multiple locations

@@ -3173,6 +3173,620 @@ class BoozerRadialInterpolant(BoozerMagneticField):
         return output
 
 
+
+
+class InterpolatedBoozerFieldPython(BoozerMagneticField):
+    r"""
+    This class takes an existing :class:`BoozerMagneticField` and interpolates it on a
+    regular grid in :math:`s, \theta, \zeta` using the C++
+    :class:`RegularGridInterpolant3D`.
+    The field is represented as a piecewise polynomial in (s, theta, zeta) of a given
+    degree. The number of nodes in each direction are defined by ns_interp,
+    ntheta_interp, and nzeta_interp. It is recommended to use this field
+    representation in the tracing loop due to its speed in comparison to computing
+    the field quantities directly from the underlying :class:`BoozerMagneticField`.
+
+    This class implements all the methods of :class:`BoozerMagneticField`:
+    `modB`, `psip`, `G`, `I`, `iota`, `dGds`, `dIds`, `modB_derivs`, `K`, `K_derivs`,
+    and their derivatives.
+
+    Unlike the C++-based :class:`InterpolatedBoozerField`, this class uses Python
+    for initialization and handles parallelization using MPI.
+    """
+
+    def __init__(
+        self,
+        field,
+        degree,
+        srange=None,
+        thetarange=None,
+        zetarange=None,
+        ns_interp=48,
+        ntheta_interp=48,
+        nzeta_interp=48,
+        extrapolate=True,
+        nfp=None,
+        stellsym=None,
+        initialize=None,
+        comm=None,
+    ):
+        r"""
+        Args:
+            field: the underlying :class:`BoozerMagneticField` to be interpolated.
+            degree: the degree of the piecewise polynomial interpolant.
+            ns_interp: number of grid points in the :math:`s` direction.
+            ntheta_interp: number of grid points in the :math:`\theta` direction.
+            nzeta_interp: number of grid points in the :math:`\zeta` direction.
+            srange: a 3-tuple of the form ``(smin, smax, ns)``. This means that
+                the interval ``[smin, smax]`` is split into ``ns`` many
+                subintervals.
+            thetarange: a 3-tuple of the form ``(thetamin, thetamax, ntheta)``.
+                thetamin must be >= 0, and thetamax must be <=2*pi.
+            zetarange: a 3-tuple of the form ``(zetamin, zetamax, nzeta)``.
+                zetamin must be >= 0, and zetamax must be <=2*pi.
+            extrapolate: whether to extrapolate the field when evaluated outside
+                         the integration domain or to throw an error.
+            nfp: Whether to exploit rotational symmetry. In this case any toroidal angle
+                 is always mapped into the interval :math:`[0, 2\pi/\mathrm{nfp})`,
+                 hence it makes sense to use ``zetamin=0`` and
+                 ``zetamax=2*np.pi/nfp``. By default this is obtained from field.nfp.
+            stellsym: Whether to exploit stellarator symmetry. In this case
+                      ``theta`` is always mapped to the interval :math:`[0, \pi]`,
+                      hence it makes sense to use ``thetamin=0`` and
+                      ``thetamax=np.pi``. By default
+                      this is obtained from field.stellsym.
+            initialize: A list of strings, each of which is the name of a
+                field quantity, e.g., `modB`, to be initialized when the
+                interpolant is created. By default, this list is determined by
+                field.field_type.
+            comm: MPI communicator for parallelizing grid evaluation.
+                If None, evaluation is done serially.
+        """
+        if not isinstance(field, BoozerMagneticField):
+            raise TypeError("field must be an instance of BoozerMagneticField.")
+
+        # Determine default initialize list based on field_type
+        if initialize is None:
+            initialize = []
+        field_type = field.field_type.lower()
+        assert field_type in ["", "vac", "nok"]
+        self.field_type = field.field_type
+
+        initialize = sorted(initialize)
+        initialize_vac = sorted(["modB", "psip", "G", "iota", "modB_derivs"])
+        initialize_nok = sorted(
+            ["modB", "psip", "G", "I", "dGds", "dIds", "iota", "modB_derivs"]
+        )
+        initialize_gen = sorted(
+            [
+                "modB",
+                "psip",
+                "G",
+                "I",
+                "dGds",
+                "dIds",
+                "iota",
+                "modB_derivs",
+                "K",
+                "K_derivs",
+            ]
+        )
+        if initialize == []:
+            if field_type == "vac":
+                initialize = initialize_vac
+            elif field_type == "nok":
+                initialize = initialize_nok
+            elif field_type == "":
+                initialize = initialize_gen
+
+        if nfp is None:
+            nfp = field.nfp
+        if stellsym is None:
+            stellsym = field.stellsym
+
+        if srange is None:
+            srange = (0, 1, ns_interp)
+        if thetarange is None:
+            if stellsym:
+                thetarange = (0, np.pi, ntheta_interp)
+            else:
+                thetarange = (0, 2 * np.pi, ntheta_interp)
+        if zetarange is None:
+            zetarange = (0, 2 * np.pi / nfp, nzeta_interp)
+
+        BoozerMagneticField.__init__(self, field.psi0, self.field_type, nfp)
+        if np.any(np.asarray(thetarange[0:2]) < 0) or np.any(
+            np.asarray(thetarange[0:2]) > 2 * np.pi
+        ):
+            raise ValueError("thetamin and thetamax must be in [0,2*pi]")
+        if np.any(np.asarray(zetarange[0:2]) < 0) or np.any(
+            np.asarray(zetarange[0:2]) > 2 * np.pi
+        ):
+            raise ValueError("zetamin and zetamax must be in [0,2*pi]")
+
+        self.field = field
+        self.degree = degree
+        self.extrapolate = extrapolate
+        self.comm = comm
+        self.nfp = nfp
+        self.stellsym = stellsym
+
+        # Set up grid ranges
+        self.srange = srange
+        self.thetarange = thetarange
+        self.zetarange = zetarange
+        # angle0_range for flux functions: only need [0, pi] with 1 cell
+        self.angle0_range = (0.0, np.pi, 1)
+
+        # Create interpolation rule
+        self.rule = sopp.UniformInterpolationRule(degree)
+
+        # Initialize interpolants dictionary
+        # For BoozerMagneticField, we only need one interpolant per quantity
+        # (no time dependence)
+        self._interpolants = {}
+        self._status = {}
+
+        # Initialize requested quantities
+        if initialize:
+            for item in initialize:
+                self._initialize_quantity(item)
+
+        # Restore original points
+        original_points = self.field.get_points()
+        self.field.set_points(original_points)
+
+    def _initialize_quantity(self, quantity_name):
+        """Initialize interpolation for a specific quantity using C++ 3D interpolant.
+
+        Flux functions (psip, G, I, iota, dGds, dIds) use a smaller grid
+        (angle0_range) since they only depend on s.
+        """
+        if quantity_name in self._status and self._status[quantity_name]:
+            return
+
+        # Determine if this is a flux function (only depends on s)
+        flux_functions = ["psip", "G", "I", "iota", "dGds", "dIds", "diotads"]
+        is_flux_function = quantity_name in flux_functions
+
+        # Determine value_size: derivs quantities return 3 values
+        if quantity_name in ["modB_derivs", "R_derivs", "Z_derivs", "nu_derivs"]:
+            value_size = 3
+        else:
+            value_size = 1
+
+        # Choose appropriate ranges
+        if is_flux_function:
+            srange = self.srange
+            thetarange = self.angle0_range
+            zetarange = self.angle0_range
+        else:
+            srange = self.srange
+            thetarange = self.thetarange
+            zetarange = self.zetarange
+
+        # Store original points
+        original_points = self.field.get_points()
+
+        # Create interpolant
+        interpolant = sopp.RegularGridInterpolant3D(
+            self.rule, srange, thetarange, zetarange, value_size, self.extrapolate
+        )
+
+        # Extract grid parameters
+        s_min, s_max, ns = srange
+        theta_min, theta_max, ntheta = thetarange
+        zeta_min, zeta_max, nzeta = zetarange
+        degree = self.degree
+
+        # Build DOF grid coordinates
+        s_cell_size = (s_max - s_min) / ns
+        theta_cell_size = (theta_max - theta_min) / ntheta
+        zeta_cell_size = (zeta_max - zeta_min) / nzeta
+
+        s_dof = np.zeros(ns * degree + 1)
+        theta_dof = np.zeros(ntheta * degree + 1)
+        zeta_dof = np.zeros(nzeta * degree + 1)
+
+        rule_nodes = np.linspace(0.0, 1.0, degree + 1, endpoint=True)
+
+        for i in range(ns):
+            for j in range(degree + 1):
+                s_dof[i * degree + j] = (
+                    s_min + i * s_cell_size + rule_nodes[j] * s_cell_size
+                )
+
+        for i in range(ntheta):
+            for j in range(degree + 1):
+                theta_dof[i * degree + j] = (
+                    theta_min + i * theta_cell_size + rule_nodes[j] * theta_cell_size
+                )
+
+        for i in range(nzeta):
+            for j in range(degree + 1):
+                zeta_dof[i * degree + j] = (
+                    zeta_min + i * zeta_cell_size + rule_nodes[j] * zeta_cell_size
+                )
+
+        n_grid_points = (ns * degree + 1) * (ntheta * degree + 1) * (nzeta * degree + 1)
+
+        # Parallelize over grid points
+        first, last = parallel_loop_bounds(self.comm, n_grid_points)
+
+        # Create points for this process's slice
+        local_points = np.zeros((last - first, 3))
+        dof_size_y = ntheta * degree + 1
+        dof_size_z = nzeta * degree + 1
+        for local_idx, global_idx in enumerate(range(first, last)):
+            # Convert linear index to DOF indices (C-order: s varies slowest,
+            # zeta fastest)
+            i = global_idx // (dof_size_y * dof_size_z)
+            j = (global_idx // dof_size_z) % dof_size_y
+            k = global_idx % dof_size_z
+            local_points[local_idx, 0] = s_dof[i]
+            local_points[local_idx, 1] = theta_dof[j]
+            local_points[local_idx, 2] = zeta_dof[k]
+
+        # Evaluate field on grid
+        self.field.set_points(local_points)
+        local_values = getattr(self.field, quantity_name)()
+
+        # Flatten if needed for derivs quantities
+        if value_size == 3:
+            local_values = local_values.reshape(-1)
+        else:
+            local_values = local_values[:, 0]
+
+        # Use Allreduce to combine results from all processes
+        grid_data = np.zeros(n_grid_points * value_size)
+        grid_data[first * value_size : last * value_size] = local_values
+
+        if self.comm is not None and self.comm.size > 1:
+            if MPI is None:
+                raise RuntimeError("mpi4py not available but comm was provided")
+            self.comm.Allreduce(MPI.IN_PLACE, grid_data, op=MPI.SUM)
+
+        # Build interpolant from grid data
+        interpolant.interpolate_from_grid_data(grid_data.tolist())
+
+        # Clear grid data (no longer needed)
+        del grid_data
+
+        # Store interpolant
+        self._interpolants[quantity_name] = interpolant
+        self._status[quantity_name] = True
+
+        # Restore original points
+        self.field.set_points(original_points)
+
+    def _map_points_to_interpolation_range(self, stz, is_flux_function=False):
+        """Map points to fall within interpolation range using symmetries.
+
+        For flux functions, map to angle0_range (theta=0, zeta=0).
+        For other quantities, use symmetry exploitation similar to C++ version.
+        Returns the mapped points and a boolean array indicating which points
+        were flipped due to stellarator symmetry.
+        """
+        stz_mapped = stz.copy()
+        npoints = stz.shape[0]
+        theta = stz[:, 1]
+        zeta = stz[:, 2]
+        flipped = np.zeros(npoints, dtype=bool)
+
+        if is_flux_function:
+            # Flux functions only depend on s
+            stz_mapped[:, 1] = 0.0
+            stz_mapped[:, 2] = 0.0
+        else:
+            # Map using symmetries
+            period = 2 * np.pi / self.nfp
+
+            # Restrict theta to [0, 2*pi]
+            theta = np.mod(theta, 2 * np.pi)
+            if np.any(theta < 0):
+                theta[theta < 0] += 2 * np.pi
+            if np.any(theta > 2 * np.pi):
+                theta[theta > 2 * np.pi] -= 2 * np.pi
+
+            # Restrict zeta to [0, 2*pi/nfp]
+            zeta = np.mod(zeta, period)
+            if np.any(zeta < 0):
+                zeta[zeta < 0] += period
+            if np.any(zeta > period):
+                zeta[zeta > period] -= period
+
+            # Apply stellarator symmetry if applicable
+            if self.stellsym:
+                mask = theta > np.pi
+                if np.any(mask):
+                    zeta[mask] = period - zeta[mask]
+                    theta[mask] = 2 * np.pi - theta[mask]
+                    flipped[mask] = True
+
+            stz_mapped[:, 1] = theta
+            stz_mapped[:, 2] = zeta
+
+        return stz_mapped, flipped
+
+    def _evaluate_interpolant(self, quantity_name):
+        """Evaluate an interpolated quantity at the current points."""
+        if quantity_name not in self._status or not self._status[quantity_name]:
+            # Need to initialize this quantity
+            self._initialize_quantity(quantity_name)
+
+        # Get current points
+        points = np.asarray(self.get_points())
+        npoints = points.shape[0]
+
+        # Extract s, theta, zeta coordinates
+        stz = points[:, [0, 1, 2]]
+
+        # Determine if flux function
+        flux_functions = ["psip", "G", "I", "iota", "dGds", "dIds", "diotads"]
+        is_flux_function = quantity_name in flux_functions
+
+        # Map points to interpolation range and track which were flipped
+        stz_mapped, flipped = self._map_points_to_interpolation_range(stz, is_flux_function)
+
+        # Evaluate interpolant
+        # Determine value_size for derivs quantities
+        if quantity_name in ["modB_derivs", "R_derivs", "Z_derivs", "nu_derivs"]:
+            value_size = 3
+        else:
+            value_size = 1
+        result = np.zeros((npoints, value_size))
+        self._interpolants[quantity_name].evaluate_batch(stz_mapped, result)
+
+        # Apply stellarator symmetry corrections for odd/even quantities
+        if self.stellsym and np.any(flipped):
+            # Define odd quantities (negate scalar or component 0 for vectors)
+            # Note: dmodBdtheta, dmodBdzeta, dRdtheta, and dRdzeta are odd but are
+            # extracted from modB_derivs/R_derivs (which apply even symmetry, negating
+            # components 1 and 2)
+            odd_quantities = [
+                "K", "nu", "Z", "dnuds", "dZds",
+                "Z_derivs", "nu_derivs"
+            ]
+            # Define even quantities with derivatives:
+            # - modB_derivs: dmodBds (component 0) is even, dmodBdtheta (1) and dmodBdzeta (2) are odd
+            #   Apply even symmetry: negate components 1 and 2 (the odd ones)
+            # - R_derivs: dRds (component 0) is even, dRdtheta (1) and dRdzeta (2) are odd
+            #   Apply even symmetry: negate components 1 and 2 (the odd ones)
+            even_derivs_quantities = ["modB_derivs", "R_derivs"]
+
+            if quantity_name in odd_quantities:
+                # Apply odd symmetry: negate scalar or component 0 for vectors
+                if value_size == 1:
+                    result[flipped, 0] = -result[flipped, 0]
+                else:  # value_size == 3 for derivs
+                    result[flipped, 0] = -result[flipped, 0]
+            elif quantity_name in even_derivs_quantities:
+                # Apply even symmetry: negate theta and zeta derivatives (components 1 and 2)
+                # This correctly handles dmodBdtheta/dmodBdzeta (odd) and dRdtheta/dRdzeta (odd)
+                result[flipped, 1] = -result[flipped, 1]
+                result[flipped, 2] = -result[flipped, 2]
+
+        return result
+
+    # Implement all the BoozerMagneticField methods
+    def _modB_impl(self, modB):
+        """Implementation of modB using interpolation."""
+        modB[:] = self._evaluate_interpolant("modB")
+
+    def _psip_impl(self, psip):
+        """Implementation of psip using interpolation."""
+        psip[:] = self._evaluate_interpolant("psip")
+
+    def _G_impl(self, G):
+        """Implementation of G using interpolation."""
+        G[:] = self._evaluate_interpolant("G")
+
+    def _I_impl(self, I):
+        """Implementation of I using interpolation."""
+        I[:] = self._evaluate_interpolant("I")
+
+    def _iota_impl(self, iota):
+        """Implementation of iota using interpolation."""
+        iota[:] = self._evaluate_interpolant("iota")
+
+    def _dGds_impl(self, dGds):
+        """Implementation of dGds using interpolation."""
+        dGds[:] = self._evaluate_interpolant("dGds")
+
+    def _dIds_impl(self, dIds):
+        """Implementation of dIds using interpolation."""
+        dIds[:] = self._evaluate_interpolant("dIds")
+
+    def _diotads_impl(self, diotads):
+        """Implementation of diotads using interpolation."""
+        diotads[:] = self._evaluate_interpolant("diotads")
+
+    def _modB_derivs_impl(self, modB_derivs):
+        """Implementation of modB_derivs using interpolation."""
+        modB_derivs[:] = self._evaluate_interpolant("modB_derivs")
+
+    def _K_impl(self, K):
+        """Implementation of K using interpolation."""
+        K[:] = self._evaluate_interpolant("K")
+
+    def _dKdtheta_impl(self, dKdtheta):
+        """Implementation of dKdtheta using interpolation."""
+        dKdtheta[:] = self._evaluate_interpolant("dKdtheta")
+
+    def _dKdzeta_impl(self, dKdzeta):
+        """Implementation of dKdzeta using interpolation."""
+        dKdzeta[:] = self._evaluate_interpolant("dKdzeta")
+
+    def _K_derivs_impl(self, K_derivs):
+        """Implementation of K_derivs using interpolation."""
+        K_derivs[:] = self._evaluate_interpolant("K_derivs")
+
+    def _dmodBds_impl(self, dmodBds):
+        """Implementation of dmodBds using interpolation."""
+        derivs = self._evaluate_interpolant("modB_derivs")
+        dmodBds[:] = derivs[:, 0:1]
+
+    def _dmodBdtheta_impl(self, dmodBdtheta):
+        """Implementation of dmodBdtheta using interpolation."""
+        derivs = self._evaluate_interpolant("modB_derivs")
+        dmodBdtheta[:] = derivs[:, 1:2]
+
+    def _dmodBdzeta_impl(self, dmodBdzeta):
+        """Implementation of dmodBdzeta using interpolation."""
+        derivs = self._evaluate_interpolant("modB_derivs")
+        dmodBdzeta[:] = derivs[:, 2:3]
+
+    def _R_impl(self, R):
+        """Implementation of R using interpolation."""
+        R[:] = self._evaluate_interpolant("R")
+
+    def _dRds_impl(self, dRds):
+        """Implementation of dRds using interpolation."""
+        derivs = self._evaluate_interpolant("R_derivs")
+        dRds[:] = derivs[:, 0:1]
+
+    def _dRdtheta_impl(self, dRdtheta):
+        """Implementation of dRdtheta using interpolation."""
+        derivs = self._evaluate_interpolant("R_derivs")
+        dRdtheta[:] = derivs[:, 1:2]
+
+    def _dRdzeta_impl(self, dRdzeta):
+        """Implementation of dRdzeta using interpolation."""
+        derivs = self._evaluate_interpolant("R_derivs")
+        dRdzeta[:] = derivs[:, 2:3]
+
+    def _R_derivs_impl(self, R_derivs):
+        """Implementation of R_derivs using interpolation."""
+        R_derivs[:] = self._evaluate_interpolant("R_derivs")
+
+    def _Z_impl(self, Z):
+        """Implementation of Z using interpolation."""
+        Z[:] = self._evaluate_interpolant("Z")
+
+    def _dZds_impl(self, dZds):
+        """Implementation of dZds using interpolation."""
+        derivs = self._evaluate_interpolant("Z_derivs")
+        dZds[:] = derivs[:, 0:1]
+
+    def _dZdtheta_impl(self, dZdtheta):
+        """Implementation of dZdtheta using interpolation."""
+        derivs = self._evaluate_interpolant("Z_derivs")
+        dZdtheta[:] = derivs[:, 1:2]
+
+    def _dZdzeta_impl(self, dZdzeta):
+        """Implementation of dZdzeta using interpolation."""
+        derivs = self._evaluate_interpolant("Z_derivs")
+        dZdzeta[:] = derivs[:, 2:3]
+
+    def _Z_derivs_impl(self, Z_derivs):
+        """Implementation of Z_derivs using interpolation."""
+        Z_derivs[:] = self._evaluate_interpolant("Z_derivs")
+
+    def _nu_impl(self, nu):
+        """Implementation of nu using interpolation."""
+        nu[:] = self._evaluate_interpolant("nu")
+
+    def _dnuds_impl(self, dnuds):
+        """Implementation of dnuds using interpolation."""
+        derivs = self._evaluate_interpolant("nu_derivs")
+        dnuds[:] = derivs[:, 0:1]
+
+    def _dnudtheta_impl(self, dnudtheta):
+        """Implementation of dnudtheta using interpolation."""
+        derivs = self._evaluate_interpolant("nu_derivs")
+        dnudtheta[:] = derivs[:, 1:2]
+
+    def _dnudzeta_impl(self, dnudzeta):
+        """Implementation of dnudzeta using interpolation."""
+        derivs = self._evaluate_interpolant("nu_derivs")
+        dnudzeta[:] = derivs[:, 2:3]
+
+    def _nu_derivs_impl(self, nu_derivs):
+        """Implementation of nu_derivs using interpolation."""
+        nu_derivs[:] = self._evaluate_interpolant("nu_derivs")
+
+    @classmethod
+    def from_booz_xform(
+        cls,
+        equil,
+        order=3,
+        mpol=32,
+        ntor=32,
+        ns=None,
+        ntheta=48,
+        nzeta=48,
+        helicity_M=None,
+        helicity_N=None,
+        enforce_vacuum=False,
+        no_K=True,
+        write_boozmn=True,
+        boozmn_name="boozmn.nc",
+        field_type=None,
+        comm=None,
+        spline_deriv=True,
+        extrapolate=True,
+        initialize=None,
+    ):
+        r"""
+        Create an InterpolatedBoozerFieldPython from a Booz_xform equilibrium.
+
+        This is a convenience method that creates a :class:`BoozerSplineField` from
+        the equilibrium and then wraps it with :class:`InterpolatedBoozerFieldPython`.
+
+        Args:
+            equil: Either a string path to a VMEC wout file, or a Booz_xform object.
+            order: The degree of the piecewise polynomial interpolant (default: 3).
+            mpol: Maximum poloidal mode number for Boozer transformation (default: 32).
+            ntor: Maximum toroidal mode number for Boozer transformation (default: 32).
+            ns: Number of grid points in the s direction. If None, uses bsf.ns_b.
+            ntheta: Number of grid points in the theta direction (default: 48).
+            nzeta: Number of grid points in the zeta direction (default: 48).
+            helicity_M: Poloidal helicity mode number (default: None).
+            helicity_N: Toroidal helicity mode number (default: None).
+            enforce_vacuum: If True, enforce vacuum field constraints (default: False).
+            no_K: If True, do not compute or interpolate K (default: True).
+            write_boozmn: If True, save Boozer transformation to file (default: True).
+            boozmn_name: Name of the output file for Boozer transformation (default: "boozmn.nc").
+            field_type: Field type string ("vac", "nok", or ""). If None, determined from other parameters.
+            comm: MPI communicator for parallelization (default: None).
+            spline_deriv: If True, use spline derivatives (default: True).
+            extrapolate: Whether to extrapolate outside domain (default: True).
+            initialize: List of quantities to initialize. If None, determined from field_type.
+
+        Returns:
+            InterpolatedBoozerFieldPython: An interpolated field instance.
+        """
+        bsf = BoozerSplineField(
+            equil,
+            mpol=mpol,
+            ntor=ntor,
+            ntheta=ntheta,
+            nzeta=nzeta,
+            helicity_M=helicity_M,
+            helicity_N=helicity_N,
+            enforce_vacuum=enforce_vacuum,
+            no_K=no_K,
+            write_boozmn=write_boozmn,
+            boozmn_name=boozmn_name,
+            field_type=field_type,
+            comm=comm,
+            spline_deriv=spline_deriv,
+        )
+        if ns is None:
+            ns = bsf.ns_b
+        return cls(
+            bsf,
+            degree=order,
+            ns_interp=ns,
+            ntheta_interp=ntheta,
+            nzeta_interp=nzeta,
+            extrapolate=extrapolate,
+            nfp=bsf.nfp,
+            stellsym=bsf.stellsym,
+            initialize=initialize,
+            comm=comm,
+        )
+
 class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField):
     r"""
     This field takes an existing :class:`BoozerMagneticField` and interpolates it on a
