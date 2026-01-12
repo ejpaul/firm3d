@@ -307,11 +307,11 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
             stz_inits[:, 2] = stz_inits[:, 2] * (zetamax - zetamin) + zetamin
 
             bsh.set_points(stz_inits)
-            modB_inits = bsh.modB()
+            modB_inits = bsh.modB().flatten()
             assert np.all(modB_inits > 0)  # Make sure all modBs are positive
-            G_inits = bsh.G()
+            G_inits = bsh.G().flatten()
             mu_inits = (Ekin / m - 0.5 * vpar_inits**2) / modB_inits
-            psip_inits = bsh.psip()
+            psip_inits = bsh.psip().flatten()
             p_inits = vpar_inits * G_inits / modB_inits - q * psip_inits / m
 
             gc_tys, gc_zeta_hits = trace_particles_boozer(
