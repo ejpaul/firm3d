@@ -392,7 +392,7 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
             assert np.all(modB_inits > 0)
             G_inits = bsh.G()[:, 0]
             I_inits = bsh.I()[:, 0]
-            mu_inits = (Ekin / m - 0.5 * vpar_inits ** 2) / modB_inits
+            mu_inits = (Ekin / m - 0.5 * vpar_inits**2) / modB_inits
             psip_inits = bsh.psip()[:, 0]
             psi_inits = bsh.psi0 * stz_inits[:, 0]
             p_inits = (
@@ -468,7 +468,7 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
             assert np.all(modB_inits > 0)
             G_inits = bsh.G()[:, 0]
             I_inits = bsh.I()[:, 0]
-            mu_inits = (Ekin / m - 0.5 * vpar_inits ** 2) / modB_inits
+            mu_inits = (Ekin / m - 0.5 * vpar_inits**2) / modB_inits
             psip_inits = bsh.psip()[:, 0]
             psi_inits = bsh.psi0 * stz_inits[:, 0]
             p_inits = (
