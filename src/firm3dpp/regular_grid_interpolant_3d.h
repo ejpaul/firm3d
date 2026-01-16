@@ -11,6 +11,11 @@
 #include <tuple>
 #include <vector>
 
+// Raw MPI support (works with any MPI implementation, including mpi4py)
+#ifdef USE_MPI
+#include <mpi.h>
+#endif
+
 using Vec = std::vector<double>;
 using RangeTriplet = std::tuple<double, double, int>;
 
@@ -297,7 +302,9 @@ class RegularGridInterpolant3D {
             {}
 
         void interpolate_batch(std::function<Vec(Vec, Vec, Vec)> &f); // build the interpolant
-        void interpolate_from_grid_data(const Vec& grid_data); // build the interpolant from pre-computed grid data on DOF points
+#ifdef USE_MPI
+        void interpolate_batch(std::function<Vec(Vec, Vec, Vec)> &f, MPI_Comm comm); // build the interpolant with MPI parallelization (raw MPI, compatible with mpi4py)
+#endif
 
         Vec evaluate(double x, double y, double z); // evaluate the interpolant at one location
         void evaluate_batch(Array& xyz, Array& fxyz); // evluate the interpolant at multiple locations

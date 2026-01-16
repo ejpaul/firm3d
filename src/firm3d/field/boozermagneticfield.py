@@ -3812,6 +3812,7 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
         nfp=None,
         stellsym=None,
         initialize=None,
+        comm=None,
     ):
         r"""
         Args:
@@ -3842,6 +3843,9 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
                 field quantity, e.g., `modB`, to be initialized when the
                 interpolant is created.
                 By default, this list is determined by field.field_type.
+            comm: (MPI.Comm, optional) MPI communicator for parallel interpolation.
+                If provided, interpolation operations will be parallelized across
+                MPI processes. Default is None (sequential).
         """
         if initialize is None:
             initialize = []
@@ -3934,6 +3938,13 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
                 stacklevel=2,
             )
 
+        # Set MPI communicator if provided
+        if comm is not None:
+            if hasattr(self, 'set_mpi_comm'):
+                self.set_mpi_comm(comm)
+            else:
+                raise AttributeError("MPI support not available in this build.")
+
         sopp.InterpolatedBoozerField.__init__(
             self,
             field,
@@ -3945,11 +3956,25 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
             nfp,
             stellsym,
             field_type,
+            # comm,
         )
 
         if initialize:
             for item in initialize:
                 getattr(self, item)()
+
+    def set_mpi_comm(self, comm):
+        """
+        Set the MPI communicator for parallel operations.
+
+        Args:
+            comm: MPI communicator (from mpi4py) for parallelization.
+                If None, operations will be sequential.
+        """
+        self.comm = comm
+        # If the parent C++ class has set_mpi_comm, call it
+        if hasattr(sopp.InterpolatedBoozerField, 'set_mpi_comm'):
+            sopp.InterpolatedBoozerField.set_mpi_comm(self, comm)
 
     @classmethod
     def from_booz_xform(
@@ -4001,6 +4026,7 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
             nfp=bsf.nfp,
             stellsym=bsf.stellsym,
             initialize=initialize,
+            comm=comm,
         )
 
 

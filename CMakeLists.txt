@@ -27,6 +27,23 @@ else()
     set(Python_NumPy_INCLUDE_DIRS "${Python_INCLUDE_DIRS}")
 endif()
 
+# Find mpi4py include directory for MPI communicator support
+if(USE_MPI AND MPI_CXX_FOUND)
+    execute_process(COMMAND ${Python_EXECUTABLE} -c "import mpi4py; print(mpi4py.get_include())"
+                    OUTPUT_VARIABLE Python_mpi4py_INCLUDE_DIRS
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    RESULT_VARIABLE MPI4PY_IMPORT_RESULT)
+    if(MPI4PY_IMPORT_RESULT EQUAL 0)
+        message(STATUS "mpi4py include dirs are ${Python_mpi4py_INCLUDE_DIRS}")
+        add_definitions(-DHAVE_MPI4PY)
+    else()
+        message(WARNING "mpi4py not found. MPI communicator extraction from Python may use fallback methods.")
+        set(Python_mpi4py_INCLUDE_DIRS "")
+    endif()
+else()
+    set(Python_mpi4py_INCLUDE_DIRS "")
+endif()
+
 # Find pybind11
 execute_process(COMMAND python -m pybind11 --cmakedir
                 OUTPUT_VARIABLE pybind11_DIR
@@ -92,6 +109,22 @@ if(DEFINED ENV{CONDA_PREFIX})
 endif()
 
 find_package(OpenMP)
+
+# Find MPI (optional, for parallel interpolation)
+find_package(MPI QUIET)
+if(MPI_FOUND AND MPI_CXX_FOUND)
+    message(STATUS "MPI found: ${MPI_VERSION}")
+    message(STATUS "MPI CXX compiler: ${MPI_CXX_COMPILER}")
+    message(STATUS "MPI CXX include dirs: ${MPI_CXX_INCLUDE_DIRS}")
+    message(STATUS "MPI CXX libraries: ${MPI_CXX_LIBRARIES}")
+    set(USE_MPI TRUE)
+    add_definitions(-DUSE_MPI)
+else()
+    message(STATUS "MPI not found. MPI parallelization will be disabled.")
+    message(STATUS "To enable MPI, install MPI development libraries and ensure MPI_CXX_COMPILER is set.")
+    set(USE_MPI FALSE)
+endif()
+
 find_package(Boost 1.76.0)
 if(Boost_FOUND)
     message(STATUS "Boost version is ${Boost_VERSION_STRING}")
@@ -161,7 +194,7 @@ set_target_properties(${PROJECT_NAME}
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON)
 
-target_include_directories(${PROJECT_NAME} PRIVATE "thirdparty/xtensor/include" "thirdparty/xtensor-python/include" "thirdparty/xsimd/include" "thirdparty/xtl/include" ${Python_NumPy_INCLUDE_DIRS} "src/firm3dpp/")
+target_include_directories(${PROJECT_NAME} PRIVATE "thirdparty/xtensor/include" "thirdparty/xtensor-python/include" "thirdparty/xsimd/include" "thirdparty/xtl/include" ${Python_NumPy_INCLUDE_DIRS} ${Python_mpi4py_INCLUDE_DIRS} "src/firm3dpp/")
 
 if(NOT Boost_FOUND)
     add_dependencies(${PROJECT_NAME} ${boost_target})
@@ -170,6 +203,12 @@ set_target_properties(${PROJECT_NAME} PROPERTIES COMPILE_FLAGS "-I${Boost_INCLUD
 
 if(OpenMP_CXX_FOUND)
     target_link_libraries(${PROJECT_NAME} PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+# Link MPI if found
+if(USE_MPI AND MPI_CXX_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE MPI::MPI_CXX)
+    message(STATUS "Linking MPI libraries for parallel interpolation support")
 endif()
 
 IF (GSL_FOUND)

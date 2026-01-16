@@ -4,7 +4,9 @@
 #define _USE_MATH_DEFINES
 #include <math.h>
 #include <boost/format.hpp>
-#include <cstring>
+#ifdef USE_MPI
+#include <mpi.h>
+#endif
 
 #define _EPS_ 1e-13
 
@@ -56,75 +58,67 @@ void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, V
     }
 }
 
+#ifdef USE_MPI
 template<class Array>
-void RegularGridInterpolant3D<Array>::interpolate_from_grid_data(const Vec& grid_data) {
-    // grid_data is on DOF points: size (nx*degree+1) * (ny*degree+1) * (nz*degree+1) * value_size
-    // stored in C-order: x varies slowest, z varies fastest
+void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, Vec, Vec)> &f, MPI_Comm comm) {
+    int BATCH_SIZE = 16384;
+    int NUM_BATCHES = dofs_to_keep/BATCH_SIZE + (dofs_to_keep % BATCH_SIZE != 0);
+    int rank, size;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
+    
+    // Initialize vals array to zero (all processes need full array)
+    vals = Vec(dofs_to_keep * value_size, 0.);
+    
+    // Distribute batches across MPI processes using round-robin assignment
+    // Each process handles batches where (batch_index % size) == rank
+    for (int i = 0; i < NUM_BATCHES; ++i) {
+        if ((i % size) == rank) {
+            // This process handles batch i
+            uint32_t first = i * BATCH_SIZE;
+            uint32_t last = std::min((uint32_t)((i+1) * BATCH_SIZE), dofs_to_keep);
+            Vec xsub(xdoftensor_reduced.begin() + first, xdoftensor_reduced.begin() + last);
+            Vec ysub(ydoftensor_reduced.begin() + first, ydoftensor_reduced.begin() + last);
+            Vec zsub(zdoftensor_reduced.begin() + first, zdoftensor_reduced.begin() + last);
+            Vec fxyzsub = f(xsub, ysub, zsub);
+            
+            // Store results in local vals array
+            for (int j = 0; j < last-first; ++j) {
+                for (int l = 0; l < value_size; ++l) {
+                    vals[first * value_size + j * value_size + l] = fxyzsub[j * value_size + l];
+                }
+            }
+        }
+    }
+    
+    // Use Allreduce with SUM to combine results from all processes
+    // Since each process only contributes to specific elements and others are zero,
+    // the sum will give us the complete result on all processes
+    // Use separate send and receive buffers for maximum compatibility
+    Vec sendbuf = vals;  // Copy local contributions
+    MPI_Allreduce(sendbuf.data(), vals.data(), dofs_to_keep * value_size, 
+                  MPI_DOUBLE, MPI_SUM, comm);
+    
+    // Build all_local_vals_map (same as sequential version)
+    // All processes build the complete map since they all have the complete vals array
     int degree = rule.degree;
-    int dof_size_x = nx * degree + 1;
-    int dof_size_y = ny * degree + 1;
-    int dof_size_z = nz * degree + 1;
-    int expected_dof_size = dof_size_x * dof_size_y * dof_size_z * value_size;
-    
-    if (grid_data.size() != expected_dof_size) {
-        // Calculate what the actual grid dimensions might be
-        int actual_total_points = grid_data.size() / value_size;
-        // Try to infer dimensions (this is just for error message)
-        std::string error_msg = "Grid data size mismatch. Expected DOF grid size " + 
-                                std::to_string(expected_dof_size) + 
-                                " (DOF grid: " + std::to_string(dof_size_x) + "x" + 
-                                std::to_string(dof_size_y) + "x" + 
-                                std::to_string(dof_size_z) + " * " + 
-                                std::to_string(value_size) + ") but got " + 
-                                std::to_string(grid_data.size()) + 
-                                " (total points: " + std::to_string(actual_total_points) + ")";
-        throw std::runtime_error(error_msg);
-    }    
-    
-    // Precompute stride constants for better cache performance
-    const int stride_yz = dof_size_z * value_size;
-    const int stride_y = dof_size_y * stride_yz;
-    
     all_local_vals_map = std::unordered_map<int, AlignedPaddedVec>();
     all_local_vals_map.reserve(cells_to_keep);
 
     for (int xidx = 0; xidx < nx; ++xidx) {
-        const int global_dof_i_base = xidx * degree;
-        
         for (int yidx = 0; yidx < ny; ++yidx) {
-            const int global_dof_j_base = yidx * degree;
-            
             for (int zidx = 0; zidx < nz; ++zidx) {
                 int meshidx = idx_cell(xidx, yidx, zidx);
                 if(skip_cell[meshidx])
                     continue;
-                    
                 AlignedPaddedVec local_vals(local_vals_size, 0.);
-                const int global_dof_k_base = zidx * degree;
-                
                 for (int i = 0; i < degree+1; ++i) {
-                    const int global_dof_i = global_dof_i_base + i;
-                    const int grid_i_offset = global_dof_i * stride_y;
-                    
                     for (int j = 0; j < degree+1; ++j) {
-                        const int global_dof_j = global_dof_j_base + j;
-                        const int grid_j_offset = grid_i_offset + global_dof_j * stride_yz;
-                        
                         for (int k = 0; k < degree+1; ++k) {
-                            const int global_dof_k = global_dof_k_base + k;
-                            const int grid_data_idx = grid_j_offset + global_dof_k * value_size;
-                            
-                            // Compute local offset for this (i,j,k) combination
-                            const int offset_local = padded_value_size * idx_dof_local(i, j, k);
-                            
-                            if (value_size == 1) {
-                                local_vals[offset_local] = grid_data[grid_data_idx];
-                            } else {
-                                std::memcpy(
-                                    local_vals.data() + offset_local,
-                                    grid_data.data() + grid_data_idx,
-                                    value_size * sizeof(double)
-                                );
+                            int offset = value_size*full_to_reduced_map[idx_dof(xidx*degree+i, yidx*degree+j, zidx*degree+k)];
+                            int offset_local = padded_value_size * idx_dof_local(i, j, k);
+                            for (int l = 0; l < value_size; ++l) {
+                                local_vals[offset_local + l] = vals[offset + l];
                             }
                         }
                     }
@@ -134,6 +128,7 @@ void RegularGridInterpolant3D<Array>::interpolate_from_grid_data(const Vec& grid
         }
     }
 }
+#endif
 
 template<class Array>
 void RegularGridInterpolant3D<Array>::evaluate_batch(Array& xyz, Array& fxyz){
