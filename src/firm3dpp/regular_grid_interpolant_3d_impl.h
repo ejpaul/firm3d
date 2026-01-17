@@ -4,6 +4,9 @@
 #define _USE_MATH_DEFINES
 #include <math.h>
 #include <boost/format.hpp>
+#include <chrono>
+#include <iostream>
+#include <iomanip>
 #ifdef USE_MPI
 #include <mpi.h>
 #endif
@@ -15,8 +18,12 @@ const int RegularGridInterpolant3D<Array>::simdcount;
 
 template<class Array>
 void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, Vec, Vec)> &f) {
+    double batch_seconds = 0.0;
+    double grid_seconds = 0.0;
+
     int BATCH_SIZE = 16384;
     int NUM_BATCHES = dofs_to_keep/BATCH_SIZE + (dofs_to_keep % BATCH_SIZE != 0);
+    auto batch_loop_start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < NUM_BATCHES; ++i) {
         uint32_t first = i * BATCH_SIZE;
         uint32_t last = std::min((uint32_t)((i+1) * BATCH_SIZE), dofs_to_keep);
@@ -30,10 +37,14 @@ void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, V
             }
         }
     }
+    auto batch_loop_end = std::chrono::high_resolution_clock::now();
+    batch_seconds += std::chrono::duration<double>(batch_loop_end - batch_loop_start).count();
+
     int degree = rule.degree;
     all_local_vals_map = std::unordered_map<int, AlignedPaddedVec>();
     all_local_vals_map.reserve(cells_to_keep);
 
+    auto grid_loop_start = std::chrono::high_resolution_clock::now();
     for (int xidx = 0; xidx < nx; ++xidx) {
         for (int yidx = 0; yidx < ny; ++yidx) {
             for (int zidx = 0; zidx < nz; ++zidx) {
@@ -56,55 +67,72 @@ void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, V
             }
         }
     }
+    auto grid_loop_end = std::chrono::high_resolution_clock::now();
+    grid_seconds += std::chrono::duration<double>(grid_loop_end - grid_loop_start).count();
+
+    // std::cout << std::scientific
+    //           << "[RegularGridInterpolant3D] serial interpolate_batch batch loop took "
+    //           << batch_seconds << " s" << std::endl
+    //           << "[RegularGridInterpolant3D] serial interpolate_batch grid loop took "
+    //           << grid_seconds << " s" << std::endl;
 }
 
 #ifdef USE_MPI
 template<class Array>
 void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, Vec, Vec)> &f, MPI_Comm comm) {
     int BATCH_SIZE = 16384;
-    int NUM_BATCHES = dofs_to_keep/BATCH_SIZE + (dofs_to_keep % BATCH_SIZE != 0);
     int rank, size;
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &size);
-    
-    // Initialize vals array to zero (all processes need full array)
-    vals = Vec(dofs_to_keep * value_size, 0.);
-    
-    // Distribute batches across MPI processes using round-robin assignment
-    // Each process handles batches where (batch_index % size) == rank
-    for (int i = 0; i < NUM_BATCHES; ++i) {
-        if ((i % size) == rank) {
-            // This process handles batch i
-            uint32_t first = i * BATCH_SIZE;
-            uint32_t last = std::min((uint32_t)((i+1) * BATCH_SIZE), dofs_to_keep);
-            Vec xsub(xdoftensor_reduced.begin() + first, xdoftensor_reduced.begin() + last);
-            Vec ysub(ydoftensor_reduced.begin() + first, ydoftensor_reduced.begin() + last);
-            Vec zsub(zdoftensor_reduced.begin() + first, zdoftensor_reduced.begin() + last);
-            Vec fxyzsub = f(xsub, ysub, zsub);
-            
-            // Store results in local vals array
-            for (int j = 0; j < last-first; ++j) {
-                for (int l = 0; l < value_size; ++l) {
-                    vals[first * value_size + j * value_size + l] = fxyzsub[j * value_size + l];
-                }
+    int total_dofs = dofs_to_keep;
+    int base = total_dofs / size;
+    int rem = total_dofs % size;
+    int local_dofs = base + (rank < rem ? 1 : 0);
+    int local_first = rank * base + (rank < rem ? rank : rem);
+    int local_last = local_first + local_dofs;
+
+    Vec local_vals(local_dofs * value_size, 0.);
+    for (int first = local_first; first < local_last; first += BATCH_SIZE) {
+        int last = std::min(first + BATCH_SIZE, local_last);
+        Vec xsub(xdoftensor_reduced.begin() + first, xdoftensor_reduced.begin() + last);
+        Vec ysub(ydoftensor_reduced.begin() + first, ydoftensor_reduced.begin() + last);
+        Vec zsub(zdoftensor_reduced.begin() + first, zdoftensor_reduced.begin() + last);
+        Vec fxyzsub = f(xsub, ysub, zsub);
+
+        int local_offset = (first - local_first) * value_size;
+        for (int j = 0; j < last-first; ++j) {
+            for (int l = 0; l < value_size; ++l) {
+                local_vals[local_offset + j * value_size + l] = fxyzsub[j * value_size + l];
             }
         }
     }
-    
-    // Use Allreduce with SUM to combine results from all processes
-    // Since each process only contributes to specific elements and others are zero,
-    // the sum will give us the complete result on all processes
-    // Use separate send and receive buffers for maximum compatibility
-    Vec sendbuf = vals;  // Copy local contributions
-    MPI_Allreduce(sendbuf.data(), vals.data(), dofs_to_keep * value_size, 
-                  MPI_DOUBLE, MPI_SUM, comm);
-    
-    // Build all_local_vals_map (same as sequential version)
-    // All processes build the complete map since they all have the complete vals array
+
+    std::vector<int> recv_counts(size, 0);
+    std::vector<int> recv_displs(size, 0);
+    for (int r = 0; r < size; ++r) {
+        int r_dofs = base + (r < rem ? 1 : 0);
+        recv_counts[r] = r_dofs * value_size;
+        if (r > 0) {
+            recv_displs[r] = recv_displs[r - 1] + recv_counts[r - 1];
+        }
+    }
+
+    vals = Vec(total_dofs * value_size, 0.);
+    MPI_Allgatherv(
+        local_vals.data(),
+        local_dofs * value_size,
+        MPI_DOUBLE,
+        vals.data(),
+        recv_counts.data(),
+        recv_displs.data(),
+        MPI_DOUBLE,
+        comm
+    );
+
+    // Build all_local_vals_map (same on all ranks)
     int degree = rule.degree;
     all_local_vals_map = std::unordered_map<int, AlignedPaddedVec>();
     all_local_vals_map.reserve(cells_to_keep);
-
     for (int xidx = 0; xidx < nx; ++xidx) {
         for (int yidx = 0; yidx < ny; ++yidx) {
             for (int zidx = 0; zidx < nz; ++zidx) {

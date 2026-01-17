@@ -780,11 +780,11 @@ class TrappedPoincare:
                 except RuntimeError:
                     broken = True
                     break
-            if not broken:
-                s_all.append(s_traj)
-                chis_all.append(chis_traj)
-                etas_all.append(etas_traj)
-                t_all.append(t_traj)
+            # if not broken:
+            s_all.append(s_traj)
+            chis_all.append(chis_traj)
+            etas_all.append(etas_traj)
+            t_all.append(t_traj)
 
         if self.comm is not None:
             s_all = [i for o in self.comm.allgather(s_all) for i in o]

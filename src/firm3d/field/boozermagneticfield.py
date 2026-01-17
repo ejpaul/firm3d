@@ -3937,14 +3937,9 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
                 RuntimeWarning,
                 stacklevel=2,
             )
-
-        # Set MPI communicator if provided
-        if comm is not None:
-            if hasattr(self, 'set_mpi_comm'):
-                self.set_mpi_comm(comm)
-            else:
-                raise AttributeError("MPI support not available in this build.")
-
+        import time 
+        from ..util.functions import proc0_print
+        time1 = time.time()
         sopp.InterpolatedBoozerField.__init__(
             self,
             field,
@@ -3956,25 +3951,22 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
             nfp,
             stellsym,
             field_type,
-            # comm,
-        )
+        )   
+        time2 = time.time()
+        proc0_print(f"Time taken to initialize InterpolatedBoozerField from sopp: {time2 - time1} seconds")
+        if comm is not None:
+            self.set_mpi_comm(comm)
 
+        time1 = time.time()
         if initialize:
             for item in initialize:
+                time1_item = time.time()
+                proc0_print(f"Initializing quantity: {item}")
                 getattr(self, item)()
-
-    def set_mpi_comm(self, comm):
-        """
-        Set the MPI communicator for parallel operations.
-
-        Args:
-            comm: MPI communicator (from mpi4py) for parallelization.
-                If None, operations will be sequential.
-        """
-        self.comm = comm
-        # If the parent C++ class has set_mpi_comm, call it
-        if hasattr(sopp.InterpolatedBoozerField, 'set_mpi_comm'):
-            sopp.InterpolatedBoozerField.set_mpi_comm(self, comm)
+                time2_item = time.time()
+                proc0_print(f"Time taken to initialize quantity: {item}: {time2_item - time1_item} seconds")
+        time2 = time.time()
+        proc0_print(f"Time taken to initialize quantities: {time2 - time1} seconds")
 
     @classmethod
     def from_booz_xform(
@@ -3998,6 +3990,9 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
         extrapolate=True,
         initialize=None,
     ):
+        import time 
+        from ..util.functions import proc0_print
+        time1 = time.time()
         bsf = BoozerSplineField(
             equil,
             mpol=mpol,
@@ -4016,6 +4011,8 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
         )
         if ns is None:
             ns = bsf.ns_b
+        time2 = time.time()
+        proc0_print(f"Time taken to create BoozerSplineField: {time2 - time1} seconds")
         return cls(
             bsf,
             ns_interp=ns,

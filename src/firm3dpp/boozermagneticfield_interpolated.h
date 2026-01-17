@@ -3,7 +3,15 @@
 #include "boozermagneticfield.h"
 #include "xtensor/xlayout.hpp"
 #include "regular_grid_interpolant_3d.h"
+#ifdef USE_MPI
+#include <mpi.h>
+#endif
 #include <string>
+#ifdef USE_MPI
+#include <chrono>
+#include <iostream>
+#include <iomanip>
+#endif
 using std::string;
 
 class InterpolatedBoozerField : public BoozerMagneticField {
@@ -19,6 +27,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
           status_dKdtheta = false, status_dKdzeta = false, status_K_derivs = false, \
           status_R_derivs = false, status_Z_derivs = false, status_nu_derivs = false, \
           status_modB_derivs = false;
+#ifdef USE_MPI
+        void set_mpi_comm(MPI_Comm comm) {
+            mpi_comm = comm;
+            mpi_comm_set = true;
+        }
+#endif
     private:
         shared_ptr<RegularGridInterpolant3D<Array2>> interp_modB, interp_dmodBdtheta, \
           interp_dmodBdzeta, interp_dmodBds, interp_G, interp_iota, interp_dGds, \
@@ -31,6 +45,35 @@ class InterpolatedBoozerField : public BoozerMagneticField {
         const bool stellsym = false;
         const int nfp = 1;
         vector<bool> symmetries = vector<bool>(1, false);
+#ifdef USE_MPI
+        bool mpi_comm_set = false;
+        MPI_Comm mpi_comm = MPI_COMM_NULL;
+#endif
+
+        void interpolate_batch_with_comm(
+            const shared_ptr<RegularGridInterpolant3D<Array2>>& interp,
+            std::function<Vec(Vec, Vec, Vec)>& fbatch
+        ) {
+#ifdef USE_MPI
+            if (mpi_comm_set) {
+                auto start = std::chrono::high_resolution_clock::now();
+                interp->interpolate_batch(fbatch, mpi_comm);
+                auto end = std::chrono::high_resolution_clock::now();
+                // std::cout << "[InterpolatedBoozerField] MPI interpolate_batch took "
+                //           << std::scientific
+                //           << std::chrono::duration<double>(end - start).count()
+                //           << " s" << std::endl;
+                return;
+            }
+#endif
+            auto start = std::chrono::high_resolution_clock::now();
+            interp->interpolate_batch(fbatch);
+            auto end = std::chrono::high_resolution_clock::now();
+            // std::cout << "[InterpolatedBoozerField] serial interpolate_batch took "
+            //           << std::scientific
+            //           << std::chrono::duration<double>(end - start).count()
+            //           << " s" << std::endl;
+        }
 
     protected:
       void _psip_impl(Array2& psip) override {
@@ -42,7 +85,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
               std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                 return fbatch_scalar(s,theta,zeta,which_scalar);
               };
-              interp_psip->interpolate_batch(fbatch);
+              interpolate_batch_with_comm(interp_psip, fbatch);
               Array2 old_points_py(old_points);
               this->field->set_points(old_points_py);
               status_psip = true;
@@ -63,7 +106,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_G->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_G, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_G = true;
@@ -84,7 +127,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_I->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_I, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_I = true;
@@ -105,7 +148,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_iota->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_iota, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_iota = true;
@@ -126,7 +169,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_dGds->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_dGds, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_dGds = true;
@@ -147,7 +190,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_dIds->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_dIds, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_dIds = true;
@@ -168,7 +211,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_diotads->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_diotads, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_diotads = true;
@@ -189,7 +232,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_K->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_K, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_K = true;
@@ -213,7 +256,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_dKdtheta->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_dKdtheta, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_dKdtheta = true;
@@ -234,7 +277,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_dKdzeta->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_dKdzeta, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_dKdzeta = true;
@@ -255,7 +298,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_K_derivs->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_K_derivs, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_K_derivs = true;
@@ -276,7 +319,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_nu->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_nu, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_nu = true;
@@ -300,7 +343,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_dnudtheta->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_dnudtheta, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_dnudtheta = true;
@@ -321,7 +364,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_dnudzeta->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_dnudzeta, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_dnudzeta = true;
@@ -341,7 +384,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_dnuds->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_dnuds, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_dnuds = true;
@@ -364,7 +407,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_nu_derivs->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_nu_derivs, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_nu_derivs = true;
@@ -387,7 +430,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_R->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_R, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_R = true;
@@ -407,7 +450,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_dRdtheta->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_dRdtheta, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_dRdtheta = true;
@@ -430,7 +473,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_dRdzeta->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_dRdzeta, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_dRdzeta = true;
@@ -453,7 +496,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_dRds->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_dRds, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_dRds = true;
@@ -473,7 +516,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_R_derivs->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_R_derivs, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_R_derivs = true;
@@ -496,7 +539,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_Z->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_Z, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_Z = true;
@@ -519,7 +562,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_dZdtheta->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_dZdtheta, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_dZdtheta = true;
@@ -539,7 +582,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_dZdzeta->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_dZdzeta, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_dZdzeta = true;
@@ -559,7 +602,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_dZds->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_dZds, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_dZds = true;
@@ -582,7 +625,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_Z_derivs->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_Z_derivs, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_Z_derivs = true;
@@ -605,7 +648,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_modB->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_modB, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_modB = true;
@@ -625,7 +668,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_dmodBdtheta->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_dmodBdtheta, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_dmodBdtheta = true;
@@ -648,7 +691,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_dmodBdzeta->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_dmodBdzeta, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_dmodBdzeta = true;
@@ -671,7 +714,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_dmodBds->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_dmodBds, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_dmodBds = true;
@@ -691,7 +734,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
                   return fbatch_scalar(s,theta,zeta,which_scalar);
                 };
-                interp_modB_derivs->interpolate_batch(fbatch);
+                interpolate_batch_with_comm(interp_modB_derivs, fbatch);
                 Array2 old_points_py(old_points);
                 this->field->set_points(old_points_py);
                 status_modB_derivs = true;
@@ -903,7 +946,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                     };
                     if(!status_modB) {
                         Array2 old_points = this->field->get_points();
-                        interp_modB->interpolate_batch(fbatch);
+                        interpolate_batch_with_comm(interp_modB, fbatch);
                         Array2 old_points_py(old_points);
                         this->field->set_points(old_points_py);
                         status_modB = true;
@@ -920,7 +963,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                     };
                     if(!status_K) {
                         Array2 old_points = this->field->get_points();
-                        interp_K->interpolate_batch(fbatch);
+                        interpolate_batch_with_comm(interp_K, fbatch);
                         Array2 old_points_py(old_points);
                         this->field->set_points(old_points_py);
                         status_K = true;
@@ -937,7 +980,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                     };
                     if(!status_R) {
                         Array2 old_points = this->field->get_points();
-                        interp_R->interpolate_batch(fbatch);
+                        interpolate_batch_with_comm(interp_R, fbatch);
                         Array2 old_points_py(old_points);
                         this->field->set_points(old_points_py);
                         status_R = true;
@@ -954,7 +997,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                     };
                     if(!status_Z) {
                         Array2 old_points = this->field->get_points();
-                        interp_Z->interpolate_batch(fbatch);
+                        interpolate_batch_with_comm(interp_Z, fbatch);
                         Array2 old_points_py(old_points);
                         this->field->set_points(old_points_py);
                         status_Z = true;
@@ -971,7 +1014,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                     };
                     if(!status_nu) {
                         Array2 old_points = this->field->get_points();
-                        interp_nu->interpolate_batch(fbatch);
+                        interpolate_batch_with_comm(interp_nu, fbatch);
                         Array2 old_points_py(old_points);
                         this->field->set_points(old_points_py);
                         status_nu = true;
@@ -988,7 +1031,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                     };
                     if(!status_G) {
                         Array2 old_points = this->field->get_points();
-                        interp_G->interpolate_batch(fbatch);
+                        interpolate_batch_with_comm(interp_G, fbatch);
                         Array2 old_points_py(old_points);
                         this->field->set_points(old_points_py);
                         status_G = true;
@@ -1005,7 +1048,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                     };
                     if(!status_I) {
                         Array2 old_points = this->field->get_points();
-                        interp_I->interpolate_batch(fbatch);
+                        interpolate_batch_with_comm(interp_I, fbatch);
                         Array2 old_points_py(old_points);
                         this->field->set_points(old_points_py);
                         status_I = true;
@@ -1022,7 +1065,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                     };
                     if(!status_iota) {
                         Array2 old_points = this->field->get_points();
-                        interp_iota->interpolate_batch(fbatch);
+                        interpolate_batch_with_comm(interp_iota, fbatch);
                         Array2 old_points_py(old_points);
                         this->field->set_points(old_points_py);
                         status_iota = true;
