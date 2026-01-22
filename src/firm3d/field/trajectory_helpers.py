@@ -498,7 +498,10 @@ class TrappedPoincare:
                            when lam is provided, the default value of chi = pi/2 is
                            used as an initial guess for the mirror point.
             lam : Pitch-angle variable :math:`\lambda = v_\perp^2/(v^2 B)`.
-                  Used if s_mirror, theta_mirror, zeta_mirror are not provided.
+                  If s_mirror, theta_mirror, zeta_mirror and lam are all provided,
+                  then lam is used to find the mirror point, but s_mirror,
+                  theta_mirror, zeta_mirror are still used to specify an initial
+                  guess for the root solve to find the mirror point.
             ns_poinc : Number of initial conditions in s for Poincare plot
                        (default: 120).
             neta_poinc : Number of initial conditions in eta for Poincare plot
@@ -531,6 +534,8 @@ class TrappedPoincare:
             self.helicity_Np = self.field.nfp
 
         if lam is not None:
+            if lam <= 0:
+                raise ValueError("lam must be positive.")
             self.lam = lam
             self.modBcrit = 1 / self.lam
             if theta_mirror is None or zeta_mirror is None:
