@@ -117,7 +117,7 @@ class PassingPoincare:
         tmax=1e-2,
         solver_options=None,
     ):
-        """
+        r"""
         Initialize and compute the passing Poincare map, evaluated by
         integrating the guiding center equations until the trajectory returns
         to the zeta = 0 plane.
@@ -482,15 +482,23 @@ class TrappedPoincare:
 
         Args:
             field : The :class:`BoozerMagneticField` instance.
-            helicity_M : Approximate poloidal helicity of the field strength for classifying ripple and barely-trapped particles.
-            helicity_N : Approximate toroidal helicity of the field strength for classifying ripple and barely-trapped particles.
+            helicity_M : Approximate poloidal helicity of the field strength for
+                         classifying ripple and barely-trapped particles.
+            helicity_N : Approximate toroidal helicity of the field strength for
+                         classifying ripple and barely-trapped particles.
             mass : Particle mass.
             charge : Particle charge.
             Ekin : Particle total energy.
-            s_mirror : Initial s coordinate for the mirror point. If None, the pitch-angle variable lam is used to find the mirror point.
-            theta_mirror : Initial theta coordinate for the mirror point. If None when lam is provided, the default value of chi = pi/2 is used as an initial guess for the mirror point.
-            zeta_mirror : Initial zeta coordinate for the mirror point. If None when lam is provided, the default value of chi = pi/2 is used as an initial guess for the mirror point.
-            lam : Pitch-angle variable :math:`\lambda = v_\perp^2/(v^2 B)`. Used if s_mirror, theta_mirror, zeta_mirror are not provided.
+            s_mirror : Initial s coordinate for the mirror point. If None, the
+                       pitch-angle variable lam is used to find the mirror point.
+            theta_mirror : Initial theta coordinate for the mirror point. If None
+                           when lam is provided, the default value of chi = pi/2 is
+                           used as an initial guess for the mirror point.
+            zeta_mirror : Initial zeta coordinate for the mirror point. If None
+                           when lam is provided, the default value of chi = pi/2 is
+                           used as an initial guess for the mirror point.
+            lam : Pitch-angle variable :math:`\lambda = v_\perp^2/(v^2 B)`.
+                  Used if s_mirror, theta_mirror, zeta_mirror are not provided.
             ns_poinc : Number of initial conditions in s for Poincare plot
                        (default: 120).
             neta_poinc : Number of initial conditions in eta for Poincare plot
@@ -526,17 +534,24 @@ class TrappedPoincare:
             self.lam = lam
             self.modBcrit = 1 / self.lam
             if theta_mirror is None or zeta_mirror is None:
-                self.chi_mirror = np.pi / 2 # Default value for mirror point initial guess
+                # Default value for mirror point initial guess
+                self.chi_mirror = np.pi / 2
             else:
                 self.chi_mirror = self.chi(theta_mirror, zeta_mirror)
-        elif s_mirror is not None and theta_mirror is not None and zeta_mirror is not None:
+        elif (
+            s_mirror is not None
+            and theta_mirror is not None
+            and zeta_mirror is not None
+        ):
             field.set_points(np.array([[s_mirror], [theta_mirror], [zeta_mirror]]).T)
             self.modBcrit = field.modB()[0, 0]  # Magnetic field at mirror point
             self.lam = 1 / self.modBcrit  # lambda = v_perp^2/(v^2 B) = 1/modBcrit
             self.chi_mirror = self.chi(theta_mirror, zeta_mirror)
         else:
-            raise ValueError("Either lam or s_mirror, theta_mirror, zeta_mirror must be provided.")
-        
+            raise ValueError(
+                "Either lam or s_mirror, theta_mirror, zeta_mirror must be provided."
+            )
+
         self.mass = mass
         self.charge = charge
         self.Ekin = Ekin
