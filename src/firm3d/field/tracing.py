@@ -517,13 +517,16 @@ def trace_particles_boozer(
     res_hits = []
     first, last = parallel_loop_bounds(comm, nparticles)
     for i in range(first, last):
+        # Convert to Python scalars to ensure compatibility with C++ bindings
+        vtotal = np.asarray(speed_total[i]).item()
+        vpar = np.asarray(speed_par[i]).item()
         res_ty, res_hit = sopp.particle_guiding_center_boozer_tracing(
             field,
             stz_inits[i, :],
             m,
             charge,
-            float(speed_total[i]),
-            float(speed_par[i]),
+            vtotal,
+            vpar,
             tmax,
             vacuum=(mode == "gc_vac"),
             noK=(mode == "gc_nok"),
