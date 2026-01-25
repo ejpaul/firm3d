@@ -2,7 +2,7 @@
 
 #include "simdhelpers.h"
 #include <unordered_map>
-#include <map>
+#include <map>  // Required for get_interpolant_data() return type
 #include <algorithm>
 #include <functional>
 #include <iostream>
@@ -237,7 +237,7 @@ class RegularGridInterpolant3D {
                     }
                 }
             }
-            // Now we need to figure out which of these dofs we keep, and which
+            // We need to figure out which of these dofs we keep, and which
             // to discard.  To do this, we loop over the cells, and for each
             // cell that shouldn't be skipped, we mark all dofs in that cell.
 
@@ -286,8 +286,6 @@ class RegularGridInterpolant3D {
                 ydoftensor_reduced[i] = ydoftensor[reduced_to_full_map[i]];
                 zdoftensor_reduced[i] = zdoftensor[reduced_to_full_map[i]];
             }
-            
-            
             vals = Vec(dofs_to_keep * value_size, 0.);
 
             // round up value_size to nearest multiple of simdcount
@@ -307,29 +305,12 @@ class RegularGridInterpolant3D {
 
         std::pair<double, double> estimate_error(std::function<Vec(Vec, Vec, Vec)> &f, int samples);
         
-        // ========================================================================
-        // SAVE/LOAD CAPABILITY: Serialize interpolant data to avoid recomputation
-        // 
-        // PROBLEM: InterpolatedBoozerField computation takes 10+ minutes for large grids.
-        // SOLUTION: Save interpolant data to JSON, reload instantly on subsequent runs.
-        // 
-        // get_interpolant_data(): Extracts vals array and grid parameters for saving
-        // set_interpolant_data(): Reconstructs all_local_vals_map from saved vals array
-        // ========================================================================
+        // Serialization for InterpolatedBoozerField save/load.
+        // get_interpolant_data(): exports vals array and grid params for JSON.
+        // set_interpolant_data(): restores vals and rebuilds all_local_vals_map
+        //                         (the cell-indexed lookup table for evaluation).
         std::map<std::string, std::vector<double>> get_interpolant_data() const;
         void set_interpolant_data(const std::map<std::string, std::vector<double>>& data);
-        bool is_computed() const { return !vals.empty(); }
-        
-        // LOAD MODE CONTROL: Prevent expensive computation during data loading
-        // 
-        // PROBLEM: When loading from JSON, interpolate_batch() would be called by
-        //          _impl methods, causing expensive recomputation of already-saved data.
-        // SOLUTION: set_load_mode(true) causes interpolate_batch() to return immediately.
-        //          After loading, set_load_mode(false) restores normal operation.
-        static void set_load_mode(bool load_mode);
-        static bool get_load_mode();
-    private:
-        static bool& get_load_mode_flag();
 };
 
 class UniformInterpolationRule : public InterpolationRule {
