@@ -147,16 +147,31 @@ def test_boozer_vacuum_vs_finite_beta():
 
     # Near the s=0 axis, theta is ill-defined, and the tracing is generally less
     # accurate, so don't try to compare points there:
-    mask = np.logical_and(particle_data_vacuum["s_end"] > 0.1, particle_data_finite_beta["s_end"] > 0.1)
+    mask = np.logical_and(
+        particle_data_vacuum["s_end"] > 0.15, particle_data_finite_beta["s_end"] > 0.15
+    )
 
+    x_end_vacuum = (
+        np.sqrt(particle_data_vacuum["s_end"]) * np.cos(particle_data_vacuum["t_end"])
+    )[mask]
+    y_end_vacuum = (
+        np.sqrt(particle_data_vacuum["s_end"]) * np.sin(particle_data_vacuum["t_end"])
+    )[mask]
+    x_end_finite_beta = (
+        np.sqrt(particle_data_finite_beta["s_end"])
+        * np.cos(particle_data_finite_beta["t_end"])
+    )[mask]
+    y_end_finite_beta = (
+        np.sqrt(particle_data_finite_beta["s_end"])
+        * np.sin(particle_data_finite_beta["t_end"])
+    )[mask]
+
+    np.testing.assert_allclose(x_end_vacuum, x_end_finite_beta, atol=0.002)
+    np.testing.assert_allclose(y_end_vacuum, y_end_finite_beta, atol=0.002)
     np.testing.assert_allclose(
-        particle_data_vacuum["s_end"][mask], particle_data_finite_beta["s_end"][mask], atol=1e-3
-    )
-    np.testing.assert_allclose(
-        particle_data_vacuum["t_end"][mask], particle_data_finite_beta["t_end"][mask], atol=0.08
-    )
-    np.testing.assert_allclose(
-        particle_data_vacuum["z_end"][mask], particle_data_finite_beta["z_end"][mask], atol=0.06
+        particle_data_vacuum["z_end"][mask],
+        particle_data_finite_beta["z_end"][mask],
+        atol=0.004,
     )
     np.testing.assert_allclose(
         particle_data_vacuum["vpar_end"][mask],
