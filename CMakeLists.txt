@@ -161,14 +161,8 @@ set_target_properties(${PROJECT_NAME}
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON)
 
-# ============================================================================
-# SAVE/LOAD CAPABILITY: nlohmann-json dependency for JSON serialization
-#
-# ADDRESSES PR COMMENT (Line 8): "If you are adding an additional dependency, 
-#          you need to add to the install scripts."
-# ANSWER: nlohmann-json is provided via the Python nlohmann_json package.
-#         setup.py finds the include path and passes it to CMake.
-# ============================================================================
+# nlohmann-json is provided via the Python nlohmann_json package.
+# setup.py finds the include path and passes it to CMake.
 if(nlohmann_json_INCLUDE_DIR)
     target_include_directories(${PROJECT_NAME} PRIVATE "thirdparty/xtensor/include" "thirdparty/xtensor-python/include" "thirdparty/xsimd/include" "thirdparty/xtl/include" ${Python_NumPy_INCLUDE_DIRS} "src/firm3dpp/" ${nlohmann_json_INCLUDE_DIR})
 else()

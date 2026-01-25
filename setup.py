@@ -48,14 +48,9 @@ class CMakeBuild(build_ext):
         # EXAMPLE_VERSION_INFO shows you how to pass a value into the C++ code
         # from Python.
 
-        # ====================================================================
-        # SAVE/LOAD CAPABILITY: Find nlohmann-json for JSON serialization
-        #
-        # ADDRESSES PR COMMENT: "If you are adding an additional dependency,
-        #          you need to add to the install scripts."
-        # ANSWER: nlohmann-json is required for InterpolatedBoozerField save/load.
-        #         Install via: pip install nlohmann_json
-        # ====================================================================
+        # nlohmann-json is required for InterpolatedBoozerField save/load.
+        # Install via: pip install nlohmann_json
+
         nlohmann_json_include = None
         try:
             import nlohmann_json
