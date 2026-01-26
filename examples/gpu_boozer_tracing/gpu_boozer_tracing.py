@@ -1,6 +1,6 @@
 #!/usr/bin/env python
-from math import sqrt
 
+from math import sqrt
 import numpy as np
 import pandas as pd
 
@@ -9,16 +9,17 @@ from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
 )
-from firm3d.util.constants import ALPHA_PARTICLE_CHARGE as CHARGE
-from firm3d.util.constants import ALPHA_PARTICLE_MASS as MASS
-from firm3d.util.constants import FUSION_ALPHA_PARTICLE_ENERGY as ENERGY
+from firm3d.util.constants import (
+    ALPHA_PARTICLE_CHARGE as CHARGE,
+    ALPHA_PARTICLE_MASS as MASS,
+    FUSION_ALPHA_PARTICLE_ENERGY as ENERGY,
+)
 from firm3d.util.gpu_utils import boozer_interpolant
 from firm3d.util.sampling import sample_stz
 
 ### CREATE A FIELD FOR TRACING
 boozmn_filename = "examples/inputs/boozmn_aten_rescaled.nc"
 bri = BoozerRadialInterpolant(boozmn_filename, 3, no_K=True)
-
 
 nfp = bri.nfp
 degree = 3
@@ -34,8 +35,9 @@ field = InterpolatedBoozerField(
     nzeta_interp=n_metagrid_pts,
 )
 
-srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, nfp, 15)
-
+srange, trange, zrange, quad_info, maxJ = boozer_interpolant(
+    field, nfp, n_metagrid_pts, vacuum=True
+)
 
 # set seed for consistency
 np.random.seed(8)
@@ -50,7 +52,8 @@ vpar_inits = vpar * np.random.uniform(low=-1, high=1, size=nparticles)
 
 print("tracing particles")
 
-# trace on GPU
+
+# trace on GPU using vacuum approximation (gc_vac ODEs)
 last_time = firm3dpp.boozer_gpu_tracing(
     quad_pts=quad_info,
     srange=srange,
@@ -65,6 +68,7 @@ last_time = firm3dpp.boozer_gpu_tracing(
     tol=1e-9,
     psi0=field.psi0,
     nparticles=nparticles,
+	vacuum=True
 )
 
 last_time = np.reshape(last_time, (nparticles, 5))

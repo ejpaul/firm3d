@@ -3,7 +3,7 @@ import numpy as np
 __all__ = ["boozer_interpolant", "cartesian_interpolant"]
 
 
-def boozer_interpolant(field, nfp, n_metagrid_pts):
+def boozer_interpolant(field, nfp, n_metagrid_pts, vacuum=False):
     r"""
     Set up a Boozer vacuum interpolant for tracing.
 
@@ -43,13 +43,23 @@ def boozer_interpolant(field, nfp, n_metagrid_pts):
 
     # Quantities to interpolate
     G = field.G()
+    I = field.I()
     iota = field.iota()
     modB = field.modB()
     modB_derivs = field.modB_derivs()
-    quad_info = np.hstack((modB, modB_derivs, G, iota))
+    
+    if vacuum:
+        # Vacuum approximation: G=const, I=0, K=0
+        quad_info = np.hstack((modB, modB_derivs, G, iota))
+    else:
+        # Full guiding center equations: include I and K
+        dGds = field.dGds()
+        dIds = field.dIds()
+        K = field.K()
+        K_derivs = field.K_derivs()
+        quad_info = np.hstack((modB, modB_derivs, G, dGds, I, dIds, iota, K, K_derivs))
 
     # calculate max J for sampling
-    I = field.I()
     J = (G + iota * I) / (modB**2)
 
     # reorder for device memory acceesses

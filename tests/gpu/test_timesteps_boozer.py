@@ -1,3 +1,4 @@
+import time
 import numpy as np
 
 import firm3dpp
@@ -9,15 +10,17 @@ from firm3d.field.tracing import (
     IterationStoppingCriterion,
     trace_particles_boozer,
 )
-from firm3d.util.constants import ALPHA_PARTICLE_CHARGE as CHARGE
-from firm3d.util.constants import ALPHA_PARTICLE_MASS as MASS
-from firm3d.util.constants import FUSION_ALPHA_PARTICLE_ENERGY as ENERGY
+from firm3d.util.constants import (
+    ALPHA_PARTICLE_MASS as MASS,
+    FUSION_ALPHA_PARTICLE_ENERGY as ENERGY,
+    ALPHA_PARTICLE_CHARGE as CHARGE
+)
 from firm3d.util.gpu_utils import boozer_interpolant
 
 np.random.seed(1800)
 
 
-def test_derivs(field, nfp, n_metagrid_pts, n_test_pts):
+def test_derivs(field, nfp, n_metagrid_pts, n_test_pts, vacuum):
     # generate test points
     s = np.random.uniform(low=0, high=1, size=(n_test_pts, 1))
     t = np.random.uniform(low=0, high=2 * np.pi, size=(n_test_pts, 1))
@@ -29,20 +32,25 @@ def test_derivs(field, nfp, n_metagrid_pts, n_test_pts):
 
     # print("computing simsopt derivatives")
     old_derivs = np.empty((n_test_pts, 4))
+    start_time = time.time()
     for i in range(n_test_pts):
         old_derivs[i, :] = firm3dpp.simsopt_derivs_boozer(
-            field, stz[i, :], MASS, CHARGE, VELOCITY, vpar_init[i]
+            field, stz[i, :], MASS, CHARGE, VELOCITY, vpar_init[i], vacuum
         )
+    print(f"Time to compute simsopt derivatives: {time.time() - start_time} seconds")
 
     ### NEW INTERPOLANT
+    start_time = time.time()
     srange, trange, zrange, quad_info, maxJ = boozer_interpolant(
-        field, nfp, n_metagrid_pts
+        field, nfp, n_metagrid_pts, vacuum=vacuum
     )
+    print(f"Time to call boozer_interpolant: {time.time() - start_time} seconds")
     stz = np.ascontiguousarray(stz)
 
     psi0 = field.psi0
 
     # print("calculating new derivatives")
+    start_time = time.time()
     new_derivs = firm3dpp.test_derivatives_boozer(
         quad_info,
         srange,
@@ -55,7 +63,9 @@ def test_derivs(field, nfp, n_metagrid_pts, n_test_pts):
         CHARGE,
         psi0,
         stz.shape[0],
+        vacuum,
     )
+    print(f"Time to compute new derivatives: {time.time() - start_time} seconds")
     new_derivs = np.reshape(new_derivs, (stz.shape[0], 4))
 
     rel_err = np.abs((old_derivs - new_derivs) / old_derivs)
@@ -63,9 +73,9 @@ def test_derivs(field, nfp, n_metagrid_pts, n_test_pts):
     # print(np.abs(old_derivs - new_derivs) / old_derivs)
 
     print(f"Maximum relative error in derivative values on {n_test_pts} points: {diff}")
-
+    beta_string = "VACUUM" if vacuum else "FINITE BETA"
     if diff > 1e-8:
-        print("BOOZER RHS TEST FAILED")
+        print(f"BOOZER RHS {beta_string} TEST FAILED")
 
         print("culprit particle:")
         row_index = np.argmax(rel_err) // rel_err.shape[1]
@@ -75,10 +85,10 @@ def test_derivs(field, nfp, n_metagrid_pts, n_test_pts):
         print("new", new_derivs[row_index, :])
         print(rel_err[row_index, :])
     else:
-        print("BOOZER RHS TEST SUCCESS")
+        print(f"BOOZER RHS {beta_string} TEST SUCCESS")
 
 
-def test_timestep(field, nfp, n_metagrid_pts, n_test_pts):
+def test_timestep(field, nfp, n_metagrid_pts, n_test_pts, vacuum):
     # generate test points
     s = np.random.uniform(low=0, high=0.95, size=(n_test_pts, 1))
     t = np.random.uniform(low=0, high=2 * np.pi, size=(n_test_pts, 1))
@@ -111,9 +121,8 @@ def test_timestep(field, nfp, n_metagrid_pts, n_test_pts):
         ]
     )
 
-    # print("computing new timesteps")
     srange, trange, zrange, quad_info, maxJ = boozer_interpolant(
-        field, nfp, n_metagrid_pts
+        field, nfp, n_metagrid_pts, vacuum=vacuum
     )
     stz = np.ascontiguousarray(stz)
     psi0 = field.psi0
@@ -130,8 +139,8 @@ def test_timestep(field, nfp, n_metagrid_pts, n_test_pts):
         tol=1e-9,
         psi0=psi0,
         nparticles=n_test_pts,
+        vacuum=vacuum,
     )
-
     last_time = np.reshape(last_time, (n_test_pts, 5))
 
     # map to pseudo-cylindrical coordinates
@@ -149,8 +158,9 @@ def test_timestep(field, nfp, n_metagrid_pts, n_test_pts):
     # print(np.abs(final_positions - new_final_positions) / final_positions)
 
     print(f"Maximum absolute error in final positions on {n_test_pts} points: {diff}")
+    beta_string = "VACUUM" if vacuum else "FINITE BETA"
     if diff > 1e-6:
-        print("BOOZER TIMESTEP TEST FAILED")
+        print(f"BOOZER TIMESTEP {beta_string} TEST FAILED")
 
         print("culprit particle:")
         row_index = np.argmax(abs_err) // abs_err.shape[1]
@@ -160,20 +170,16 @@ def test_timestep(field, nfp, n_metagrid_pts, n_test_pts):
         print("new", new_final_positions[row_index, :])
         print(abs_err[row_index, :])
     else:
-        print("BOOZER TIMESTEP TEST SUCCESS")
+        print(f"BOOZER TIMESTEP {beta_string} TEST SUCCESS")
 
 
-if __name__ == "__main__":
-    ### CREATE A FIELD FOR TRACING
-    boozmn_filename = "examples/inputs/boozmn_aten_rescaled.nc"
-    bri = BoozerRadialInterpolant(boozmn_filename, 3, enforce_vacuum=True)
-
+def get_field(boozmn_filename, n_metagrid_pts, vacuum):
+    start_time = time.time()
+    bri = BoozerRadialInterpolant(boozmn_filename, 3, enforce_vacuum=vacuum)
+    print(f"Time to initialize BoozerRadialInterpolant: {time.time() - start_time} seconds")
     nfp = bri.nfp
     degree = 3
-    n_metagrid_pts = 15
-    srange = (0, 1, n_metagrid_pts)
-    thetarange = (0, np.pi, n_metagrid_pts)
-    zetarange = (0, 2 * np.pi / nfp, n_metagrid_pts)
+    start_time = time.time()
     field = InterpolatedBoozerField(
         bri,
         degree,
@@ -181,6 +187,33 @@ if __name__ == "__main__":
         ntheta_interp=n_metagrid_pts,
         nzeta_interp=n_metagrid_pts,
     )
-    test_derivs(field, nfp, 15, 10000)
+    print(f"Time to initialize InterpolatedBoozerField: {time.time() - start_time} seconds")
+    # Even though bri isn't used further in this script, we need to return it,
+    # or else it is garbage-collected, resuliting in an error.
+    return bri, field, nfp
 
-    test_timestep(field, nfp, 15, 10000)
+
+if __name__ == "__main__":
+    np.set_printoptions(linewidth=300)
+    n_metagrid_pts = 15
+
+    ### Vacuum case
+    linewidth = 80
+    print("\n" + "=" * linewidth)
+    print("TESTING VACUUM CASE")
+    print("=" * linewidth)
+    boozmn_filename = "examples/inputs/boozmn_aten_rescaled_low_res.nc"
+    vacuum = True
+    bri, field, nfp = get_field(boozmn_filename, n_metagrid_pts, vacuum)
+    test_derivs(field, nfp, n_metagrid_pts, 10000, vacuum)
+    test_timestep(field, nfp, n_metagrid_pts, 10000, vacuum)
+
+    ### Finite-beta case
+    print("\n" + "=" * linewidth)
+    print("TESTING FINITE-BETA CASE")
+    print("=" * linewidth)
+    boozmn_filename = "examples/inputs/boozmn_ariescs_low_res.nc"
+    vacuum = False
+    bri, field, nfp = get_field(boozmn_filename, n_metagrid_pts, vacuum)
+    test_derivs(field, nfp, n_metagrid_pts, 10000, vacuum)
+    test_timestep(field, nfp, n_metagrid_pts, 10000, vacuum)
