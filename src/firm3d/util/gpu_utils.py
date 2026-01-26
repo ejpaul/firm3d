@@ -55,10 +55,9 @@ def boozer_interpolant(field, nfp, n_metagrid_pts, vacuum=False):
         # Full guiding center equations: include I and K
         dGds = field.dGds()
         dIds = field.dIds()
-        diotads = field.diotads()
         K = field.K()
         K_derivs = field.K_derivs()
-        quad_info = np.hstack((modB, modB_derivs, G, dGds, I, dIds, iota, diotads, K, K_derivs))
+        quad_info = np.hstack((modB, modB_derivs, G, dGds, I, dIds, iota, K, K_derivs))
 
     # calculate max J for sampling
     J = (G + iota * I) / (modB**2)

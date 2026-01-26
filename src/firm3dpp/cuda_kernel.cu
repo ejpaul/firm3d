@@ -272,10 +272,10 @@ __device__ void calc_derivs<RHS::GC_Boozer>(double* derivs, int deriv_id, double
                                     int* index_i, int* index_j, int* index_k, double* x1_shape, double* x2_shape, double* x3_shape,
                                     double* mu, int nparticles_blk){
 
-   __shared__ double block_interpolants[13*PARTICLES_PER_BLOCK];
+   __shared__ double block_interpolants[12*PARTICLES_PER_BLOCK];
 
     __syncthreads();
-    interpolate<13>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
+    interpolate<12>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
     __syncthreads();
 
     if(threadIdx.x < nparticles_blk){
@@ -296,10 +296,9 @@ __device__ void calc_derivs<RHS::GC_Boozer>(double* derivs, int deriv_id, double
         double I = block_interpolants[6*PARTICLES_PER_BLOCK + threadIdx.x];
         double dIdpsi = block_interpolants[7*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
         double iota = block_interpolants[8*PARTICLES_PER_BLOCK + threadIdx.x];
-        double diotadpsi = block_interpolants[9*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
-        double K = block_interpolants[10*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dKdtheta = block_interpolants[11*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dKdzeta = block_interpolants[12*PARTICLES_PER_BLOCK + threadIdx.x];
+        double K = block_interpolants[9*PARTICLES_PER_BLOCK + threadIdx.x];
+        double dKdtheta = block_interpolants[10*PARTICLES_PER_BLOCK + threadIdx.x];
+        double dKdzeta = block_interpolants[11*PARTICLES_PER_BLOCK + threadIdx.x];
 
         double mu_val = mu[threadIdx.x];
 
@@ -1258,11 +1257,11 @@ __device__ void account_for_symmetry_rhs(double* interpolants, bool* symmetry_ex
         interpolants[2] *= -1.0;
         interpolants[3] *= -1.0;
     } else if constexpr (id == RHS::GC_Boozer){
-        // 13-field ordering: flip dB/dtheta, dB/dzeta, and K
+        // 12-field ordering: flip dB/dtheta, dB/dzeta, and K
         interpolants[2] *= -1.0;  // d|B|/dtheta
         interpolants[3] *= -1.0;  // d|B|/dzeta
-        if constexpr (n >= 13) {
-            interpolants[10] *= -1.0; // K
+        if constexpr (n >= 12) {
+            interpolants[9] *= -1.0; // K
         }
     }
 }
@@ -1372,7 +1371,7 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
     } else if(rhs == "boozer_saw_vacuum"){
         n = 10;
     } else if(rhs == "boozer"){
-        n = 13;
+        n = 12;
     }
 
     // allocate and copy to device memory
@@ -1422,7 +1421,7 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
     } else if(rhs == "boozer_saw_vacuum") {
         test_gpu_interpolation_kernel<RHS::GC_BoozerVacuumSAW, 10><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
     } else if(rhs == "boozer") {
-        test_gpu_interpolation_kernel<RHS::GC_Boozer, 13><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
+        test_gpu_interpolation_kernel<RHS::GC_Boozer, 12><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
     }
     double out[n*n_points];
     gpuErrchk( cudaMemcpy(&out, out_d, n*n_points * sizeof(double), cudaMemcpyDeviceToHost) );

@@ -31,12 +31,11 @@ def test_interpolant_bfield(field, nfp, n_metagrid_pts, n_test_pts, vacuum):
         dGds = field.dGds()
         I = field.I()
         dIds = field.dIds()
-        diotads = field.diotads()
         K = field.K()
         K_derivs = field.K_derivs()
-        simsopt_interpolation = np.hstack((modB, modB_derivs, G, dGds, I, dIds, iota, diotads, K, K_derivs))
+        simsopt_interpolation = np.hstack((modB, modB_derivs, G, dGds, I, dIds, iota, K, K_derivs))
         interpolation_type = "boozer"
-        n_quantities = 13
+        n_quantities = 12
 
     ## NEW INTERPOLANT
     srange, trange, zrange, quad_info, maxJ = boozer_interpolant(
