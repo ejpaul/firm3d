@@ -18,11 +18,9 @@ const int RegularGridInterpolant3D<Array>::simdcount;
 
 template<class Array>
 void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, Vec, Vec)> &f) {
-    double batch_seconds = 0.0;
-    double grid_seconds = 0.0;
-
     int BATCH_SIZE = 16384;
     int NUM_BATCHES = dofs_to_keep/BATCH_SIZE + (dofs_to_keep % BATCH_SIZE != 0);
+    
     auto batch_loop_start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < NUM_BATCHES; ++i) {
         uint32_t first = i * BATCH_SIZE;
@@ -38,7 +36,11 @@ void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, V
         }
     }
     auto batch_loop_end = std::chrono::high_resolution_clock::now();
-    batch_seconds += std::chrono::duration<double>(batch_loop_end - batch_loop_start).count();
+    double batch_seconds = std::chrono::duration<double>(batch_loop_end - batch_loop_start).count();
+    
+    std::cout << std::scientific
+              << "[RegularGridInterpolant3D] serial interpolate_batch batch loop took "
+              << batch_seconds << " s" << std::endl;
 
     int degree = rule.degree;
     all_local_vals_map = std::unordered_map<int, AlignedPaddedVec>();
@@ -67,8 +69,8 @@ void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, V
             }
         }
     }
-    auto grid_loop_end = std::chrono::high_resolution_clock::now();
-    grid_seconds += std::chrono::duration<double>(grid_loop_end - grid_loop_start).count();
+    // auto grid_loop_end = std::chrono::high_resolution_clock::now();
+    // grid_seconds += std::chrono::duration<double>(grid_loop_end - grid_loop_start).count();
 
     // std::cout << std::scientific
     //           << "[RegularGridInterpolant3D] serial interpolate_batch batch loop took "
@@ -80,7 +82,6 @@ void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, V
 #ifdef USE_MPI
 template<class Array>
 void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, Vec, Vec)> &f, MPI_Comm comm) {
-    int BATCH_SIZE = 16384;
     int rank, size;
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &size);
@@ -91,7 +92,10 @@ void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, V
     int local_first = rank * base + (rank < rem ? rank : rem);
     int local_last = local_first + local_dofs;
 
+    int BATCH_SIZE = 16384;
     Vec local_vals(local_dofs * value_size, 0.);
+    
+    auto batch_loop_start = std::chrono::high_resolution_clock::now();
     for (int first = local_first; first < local_last; first += BATCH_SIZE) {
         int last = std::min(first + BATCH_SIZE, local_last);
         Vec xsub(xdoftensor_reduced.begin() + first, xdoftensor_reduced.begin() + last);
@@ -106,6 +110,8 @@ void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, V
             }
         }
     }
+    auto batch_loop_end = std::chrono::high_resolution_clock::now();
+    double batch_seconds = std::chrono::duration<double>(batch_loop_end - batch_loop_start).count();
 
     std::vector<int> recv_counts(size, 0);
     std::vector<int> recv_displs(size, 0);
@@ -118,6 +124,7 @@ void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, V
     }
 
     vals = Vec(total_dofs * value_size, 0.);
+    auto comm_start = std::chrono::high_resolution_clock::now();
     MPI_Allgatherv(
         local_vals.data(),
         local_dofs * value_size,
@@ -128,6 +135,16 @@ void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, V
         MPI_DOUBLE,
         comm
     );
+    auto comm_end = std::chrono::high_resolution_clock::now();
+    double comm_seconds = std::chrono::duration<double>(comm_end - comm_start).count();
+
+    if (rank == 0) {
+        std::cout << std::scientific
+                  << "[RegularGridInterpolant3D] MPI interpolate_batch batch loop took "
+                  << batch_seconds << " s" << std::endl
+                  << "[RegularGridInterpolant3D] MPI interpolate_batch communication took "
+                  << comm_seconds << " s" << std::endl;
+    }
 
     // Build all_local_vals_map (same on all ranks)
     int degree = rule.degree;
@@ -157,6 +174,182 @@ void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, V
     }
 }
 #endif
+
+// #ifdef USE_MPI
+// template<class Array>
+// void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, Vec, Vec)> &f, MPI_Comm comm) {
+//     int BATCH_SIZE = 16384;
+//     int rank, size;
+//     MPI_Comm_rank(comm, &rank);
+//     MPI_Comm_size(comm, &size);
+    
+//     // === Step 1: Parallel DOF evaluation (already good) ===
+//     int total_dofs = dofs_to_keep;
+//     int base = total_dofs / size;
+//     int rem = total_dofs % size;
+//     int local_dofs = base + (rank < rem ? 1 : 0);
+//     int local_first = rank * base + (rank < rem ? rank : rem);
+//     int local_last = local_first + local_dofs;
+
+//     Vec local_vals(local_dofs * value_size, 0.);
+//     for (int first = local_first; first < local_last; first += BATCH_SIZE) {
+//         int last = std::min(first + BATCH_SIZE, local_last);
+//         Vec xsub(xdoftensor_reduced.begin() + first, xdoftensor_reduced.begin() + last);
+//         Vec ysub(ydoftensor_reduced.begin() + first, ydoftensor_reduced.begin() + last);
+//         Vec zsub(zdoftensor_reduced.begin() + first, zdoftensor_reduced.begin() + last);
+//         Vec fxyzsub = f(xsub, ysub, zsub);
+
+//         int local_offset = (first - local_first) * value_size;
+//         for (int j = 0; j < last-first; ++j) {
+//             for (int l = 0; l < value_size; ++l) {
+//                 local_vals[local_offset + j * value_size + l] = fxyzsub[j * value_size + l];
+//             }
+//         }
+//     }
+
+//     std::vector<int> recv_counts(size, 0);
+//     std::vector<int> recv_displs(size, 0);
+//     for (int r = 0; r < size; ++r) {
+//         int r_dofs = base + (r < rem ? 1 : 0);
+//         recv_counts[r] = r_dofs * value_size;
+//         if (r > 0) {
+//             recv_displs[r] = recv_displs[r - 1] + recv_counts[r - 1];
+//         }
+//     }
+
+//     vals = Vec(total_dofs * value_size, 0.);
+//     MPI_Allgatherv(
+//         local_vals.data(),
+//         local_dofs * value_size,
+//         MPI_DOUBLE,
+//         vals.data(),
+//         recv_counts.data(),
+//         recv_displs.data(),
+//         MPI_DOUBLE,
+//         comm
+//     );
+
+//     // === Step 2: Parallel grid loop construction (NEW) ===
+//     int degree = rule.degree;
+    
+//     // Distribute cells across ranks
+//     int total_cells_with_work = 0;
+//     for (int xidx = 0; xidx < nx; ++xidx) {
+//         for (int yidx = 0; yidx < ny; ++yidx) {
+//             for (int zidx = 0; zidx < nz; ++zidx) {
+//                 int meshidx = idx_cell(xidx, yidx, zidx);
+//                 if (!skip_cell[meshidx])
+//                     total_cells_with_work++;
+//             }
+//         }
+//     }
+    
+//     int cells_base = total_cells_with_work / size;
+//     int cells_rem = total_cells_with_work % size;
+//     int my_cells_count = cells_base + (rank < cells_rem ? 1 : 0);
+//     int my_cells_start = rank * cells_base + (rank < cells_rem ? rank : cells_rem);
+//     int my_cells_end = my_cells_start + my_cells_count;
+    
+//     // Build only my portion of all_local_vals_map
+//     std::unordered_map<int, AlignedPaddedVec> local_map;
+//     local_map.reserve(my_cells_count);
+    
+//     int cell_counter = 0;
+//     for (int xidx = 0; xidx < nx; ++xidx) {
+//         for (int yidx = 0; yidx < ny; ++yidx) {
+//             for (int zidx = 0; zidx < nz; ++zidx) {
+//                 int meshidx = idx_cell(xidx, yidx, zidx);
+//                 if (skip_cell[meshidx])
+//                     continue;
+                
+//                 // Only process if this cell belongs to this rank
+//                 if (cell_counter >= my_cells_start && cell_counter < my_cells_end) {
+//                     AlignedPaddedVec local_vals(local_vals_size, 0.);
+//                     for (int i = 0; i < degree+1; ++i) {
+//                         for (int j = 0; j < degree+1; ++j) {
+//                             for (int k = 0; k < degree+1; ++k) {
+//                                 int offset = value_size*full_to_reduced_map[idx_dof(xidx*degree+i, yidx*degree+j, zidx*degree+k)];
+//                                 int offset_local = padded_value_size * idx_dof_local(i, j, k);
+//                                 for (int l = 0; l < value_size; ++l) {
+//                                     local_vals[offset_local + l] = vals[offset + l];
+//                                 }
+//                             }
+//                         }
+//                     }
+//                     local_map.insert({meshidx, local_vals});
+//                 }
+//                 cell_counter++;
+//             }
+//         }
+//     }
+    
+//     // === Step 3: Gather all maps (if needed for evaluation) ===
+//     // Option A: If all ranks need all data for evaluation
+//     all_local_vals_map = gather_all_maps(local_map, comm);
+    
+//     // Option B: If evaluation is always local, just use:
+//     // all_local_vals_map = std::move(local_map);
+// }
+// #endif
+
+// #ifdef USE_MPI
+// template<class Array>
+// std::unordered_map<int, AlignedPaddedVec> 
+// RegularGridInterpolant3D<Array>::gather_all_maps(
+//     const std::unordered_map<int, AlignedPaddedVec>& local_map, 
+//     MPI_Comm comm) 
+// {
+//     int rank, size;
+//     MPI_Comm_rank(comm, &rank);
+//     MPI_Comm_size(comm, &size);
+    
+//     // Serialize local map: [meshidx1, data1..., meshidx2, data2..., ...]
+//     std::vector<int> local_keys;
+//     std::vector<double> local_data;
+//     for (const auto& [meshidx, vals] : local_map) {
+//         local_keys.push_back(meshidx);
+//         local_data.insert(local_data.end(), vals.begin(), vals.end());
+//     }
+    
+//     int local_count = local_keys.size();
+//     std::vector<int> all_counts(size);
+//     MPI_Allgather(&local_count, 1, MPI_INT, all_counts.data(), 1, MPI_INT, comm);
+    
+//     std::vector<int> displs(size, 0);
+//     int total_cells = 0;
+//     for (int r = 0; r < size; ++r) {
+//         if (r > 0) displs[r] = displs[r-1] + all_counts[r-1];
+//         total_cells += all_counts[r];
+//     }
+    
+//     std::vector<int> all_keys(total_cells);
+//     MPI_Allgatherv(local_keys.data(), local_count, MPI_INT,
+//                    all_keys.data(), all_counts.data(), displs.data(), MPI_INT, comm);
+    
+//     // Gather data (each cell has local_vals_size doubles)
+//     for (int r = 0; r < size; ++r) {
+//         all_counts[r] *= local_vals_size;
+//         displs[r] *= local_vals_size;
+//     }
+    
+//     std::vector<double> all_data(total_cells * local_vals_size);
+//     MPI_Allgatherv(local_data.data(), local_count * local_vals_size, MPI_DOUBLE,
+//                    all_data.data(), all_counts.data(), displs.data(), MPI_DOUBLE, comm);
+    
+//     // Reconstruct map
+//     std::unordered_map<int, AlignedPaddedVec> result;
+//     result.reserve(total_cells);
+//     for (int i = 0; i < total_cells; ++i) {
+//         AlignedPaddedVec vals(local_vals_size);
+//         std::copy(all_data.begin() + i * local_vals_size,
+//                   all_data.begin() + (i + 1) * local_vals_size,
+//                   vals.begin());
+//         result.insert({all_keys[i], vals});
+//     }
+    
+//     return result;
+// }
+// #endif
 
 template<class Array>
 void RegularGridInterpolant3D<Array>::evaluate_batch(Array& xyz, Array& fxyz){

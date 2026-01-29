@@ -27,25 +27,8 @@ else()
     set(Python_NumPy_INCLUDE_DIRS "${Python_INCLUDE_DIRS}")
 endif()
 
-# Find mpi4py include directory for MPI communicator support
-if(USE_MPI AND MPI_CXX_FOUND)
-    execute_process(COMMAND ${Python_EXECUTABLE} -c "import mpi4py; print(mpi4py.get_include())"
-                    OUTPUT_VARIABLE Python_mpi4py_INCLUDE_DIRS
-                    OUTPUT_STRIP_TRAILING_WHITESPACE
-                    RESULT_VARIABLE MPI4PY_IMPORT_RESULT)
-    if(MPI4PY_IMPORT_RESULT EQUAL 0)
-        message(STATUS "mpi4py include dirs are ${Python_mpi4py_INCLUDE_DIRS}")
-        add_definitions(-DHAVE_MPI4PY)
-    else()
-        message(WARNING "mpi4py not found. MPI communicator extraction from Python may use fallback methods.")
-        set(Python_mpi4py_INCLUDE_DIRS "")
-    endif()
-else()
-    set(Python_mpi4py_INCLUDE_DIRS "")
-endif()
-
 # Find pybind11
-execute_process(COMMAND python -m pybind11 --cmakedir
+execute_process(COMMAND ${Python_EXECUTABLE} -m pybind11 --cmakedir
                 OUTPUT_VARIABLE pybind11_DIR
                 OUTPUT_STRIP_TRAILING_WHITESPACE)
 message("Result of python -m pybind11 --cmakedir: ${pybind11_DIR}")
@@ -194,7 +177,7 @@ set_target_properties(${PROJECT_NAME}
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON)
 
-target_include_directories(${PROJECT_NAME} PRIVATE "thirdparty/xtensor/include" "thirdparty/xtensor-python/include" "thirdparty/xsimd/include" "thirdparty/xtl/include" ${Python_NumPy_INCLUDE_DIRS} ${Python_mpi4py_INCLUDE_DIRS} "src/firm3dpp/")
+target_include_directories(${PROJECT_NAME} PRIVATE "thirdparty/xtensor/include" "thirdparty/xtensor-python/include" "thirdparty/xsimd/include" "thirdparty/xtl/include" ${Python_NumPy_INCLUDE_DIRS} "src/firm3dpp/")
 
 if(NOT Boost_FOUND)
     add_dependencies(${PROJECT_NAME} ${boost_target})
