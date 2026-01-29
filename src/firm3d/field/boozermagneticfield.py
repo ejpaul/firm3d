@@ -5,7 +5,7 @@ from typing import Union
 import numpy as np
 from booz_xform import Booz_xform
 from multispline.spline import CubicSpline, TricubicSpline
-from scipy.interpolate import make_interp_spline
+from scipy.interpolate import RegularGridInterpolator, make_interp_spline
 
 import firm3dpp as sopp
 
@@ -38,6 +38,30 @@ try:
     from mpi4py import MPI
 except ImportError:
     MPI = None
+
+
+class _RegularGridInterpolatorWrapper:
+    def __init__(self, s_grid, theta_grid, zeta_grid, field_grid):
+        self._rgi = RegularGridInterpolator(
+            (s_grid, theta_grid, zeta_grid),
+            field_grid,
+            bounds_error=False,
+            fill_value=None,
+        )
+
+    def __call__(self, s, theta=None, zeta=None):
+        if theta is None and zeta is None:
+            points = np.asarray(s)
+            return self._rgi(points)
+
+        s_arr = np.asarray(s)
+        theta_arr = np.asarray(theta)
+        zeta_arr = np.asarray(zeta)
+        points = np.column_stack(
+            (s_arr.ravel(), theta_arr.ravel(), zeta_arr.ravel())
+        )
+        values = self._rgi(points)
+        return values.reshape(s_arr.shape)
 
 
 class BoozerMetric:
@@ -911,11 +935,13 @@ class BoozerSplineField(BoozerMagneticField):
         field_type=None,
         comm=None,
         spline_deriv=True,
+        interp_method="multispline",
     ):
         r"""
         Initialize a BoozerSplineField object. The field is interpolated on the
         VMEC half grid, with the number of angular grid points specified by ntheta
-        and nzeta, using :class:`TricubicSpline` for 3D fields and
+        and nzeta, using :class:`TricubicSpline` (default) or
+        :class:`scipy.interpolate.RegularGridInterpolator` for 3D fields and
         :class:`CubicSpline` for 1D flux functions.
 
         Args:
@@ -963,15 +989,34 @@ class BoozerSplineField(BoozerMagneticField):
                 evaluated for the angles, and centered differences are used for the
                 radial derivative. While ``False`` is more accurate, ``True`` is faster
                 due to a reduction in the number of spline evaluations.
+            interp_method: (string) Interpolation backend to use for 3D fields.
+                Options are ``"multispline"`` (default) or ``"regulargrid"`` to use
+                :class:`scipy.interpolate.RegularGridInterpolator`. When using
+                ``"regulargrid"``, spline derivatives are disabled and derivative
+                fields are interpolated directly.
 
         Returns:
             :class:`BoozerSplineField` object.
         """
 
-        self.spline_deriv = spline_deriv
-
         self.comm = comm
         self.verbose = self.comm is None or self.comm.rank == 0
+        interp_method = interp_method.lower()
+        if interp_method not in ["multispline", "regulargrid"]:
+            raise ValueError("interp_method must be 'multispline' or 'regulargrid'")
+        self.interp_method = interp_method
+
+        if self.interp_method == "regulargrid" and spline_deriv:
+            if self.verbose:
+                warnings.warn(
+                    "RegularGridInterpolator does not provide spline derivatives. "
+                    "Disabling spline_deriv and interpolating derivative fields.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            spline_deriv = False
+
+        self.spline_deriv = spline_deriv
 
         if field_type is not None:
             field_type = field_type.lower()
@@ -1314,6 +1359,9 @@ class BoozerSplineField(BoozerMagneticField):
             self.s_full, self.theta_grid, self.zeta_grid, indexing="ij"
         )
 
+        import time
+        time1 = time.time()
+        
         if not self.asym:
             self.modB_spline = self.compute_spline(self.bmnc, "even", "half", "modB")
             if not self.spline_deriv:
@@ -1457,6 +1505,10 @@ class BoozerSplineField(BoozerMagneticField):
         self.iota_spline = self.compute_spline(self.iota_grid, "flux", "half", "iota")
         self.psip_spline = self.compute_spline(self.psip_grid, "flux", "full", "psip")
 
+        time2 = time.time()
+        from firm3d.util.functions import proc0_print
+        # proc0_print(f"Time taken to compute splines: {time2 - time1} seconds")
+
         BoozerMagneticField.__init__(
             self, self.psi0, self.field_type, self.nfp, self.asym == 0
         )
@@ -1466,9 +1518,26 @@ class BoozerSplineField(BoozerMagneticField):
                 (len(self.s_full), len(self.theta_grid), len(self.zeta_grid))
             )
             self.compute_K(self.K_grid)
-            self.K_spline = TricubicSpline(
-                self.s_full, self.theta_grid, self.zeta_grid, self.K_grid
-            )
+            self.K_spline = self._build_3d_interpolator(self.s_full, self.K_grid)
+            if self.interp_method == "regulargrid":
+                dtheta = self.theta_grid[1] - self.theta_grid[0]
+                dzeta = self.zeta_grid[1] - self.zeta_grid[0]
+                dKdtheta_grid, dKdzeta_grid = np.gradient(
+                    self.K_grid, dtheta, dzeta, axis=(1, 2), edge_order=2
+                )
+                self.dKdtheta_spline = self._build_3d_interpolator(
+                    self.s_full, dKdtheta_grid
+                )
+                self.dKdzeta_spline = self._build_3d_interpolator(
+                    self.s_full, dKdzeta_grid
+                )
+            else:
+                self.dKdtheta_spline = None
+                self.dKdzeta_spline = None
+        else:
+            self.K_spline = None
+            self.dKdtheta_spline = None
+            self.dKdzeta_spline = None
 
     def compute_spline(self, harmonics, even_odd, half_full="half", field_name=None):
         r"""
@@ -1488,8 +1557,9 @@ class BoozerSplineField(BoozerMagneticField):
             field_name: string, optional. If provided, the grid data will be saved
                 for later use in direct interpolation.
         Returns:
-            spline: :class:`TricubicSpline` object for 3D fields or
-                :class:`CubicSpline` object for flux functions.
+            spline: :class:`TricubicSpline` or
+                :class:`scipy.interpolate.RegularGridInterpolator` wrapper for
+                3D fields, or :class:`CubicSpline` object for flux functions.
         """
         if half_full == "half":
             s_grid = self.s_half
@@ -1500,6 +1570,9 @@ class BoozerSplineField(BoozerMagneticField):
         else:
             raise ValueError("half_full must be 'half', 'full', or 'full_reduced'")
 
+        import time
+
+        time1 = time.time()
         if even_odd == "flux":
             field_grid = harmonics
         else:
@@ -1513,12 +1586,28 @@ class BoozerSplineField(BoozerMagneticField):
                 self.compute_full_grid_IFT(harmonics_odd, "odd", field_grid, half_full)
             else:
                 self.compute_full_grid_IFT(harmonics, even_odd, field_grid, half_full)
+        time2 = time.time()
+        from firm3d.util.functions import proc0_print
+        proc0_print(f"Time taken to compute full grid IFT for {field_name}: {time2 - time1} seconds")
 
+        time1 = time.time()
         if even_odd == "flux":
             spline = CubicSpline(s_grid, harmonics)
         else:
-            spline = TricubicSpline(s_grid, self.theta_grid, self.zeta_grid, field_grid)
+            spline = self._build_3d_interpolator(s_grid, field_grid)
+        time2 = time.time()
+        from firm3d.util.functions import proc0_print
+        proc0_print(
+            f"Time taken to compute interpolator for {field_name}: {time2 - time1} seconds"
+        )
         return spline
+
+    def _build_3d_interpolator(self, s_grid, field_grid):
+        if self.interp_method == "regulargrid":
+            return _RegularGridInterpolatorWrapper(
+                s_grid, self.theta_grid, self.zeta_grid, field_grid
+            )
+        return TricubicSpline(s_grid, self.theta_grid, self.zeta_grid, field_grid)
 
     def compute_full_grid_IFT(self, harmonics, even_odd, field_grid, half_full="half"):
         r"""
@@ -1561,6 +1650,8 @@ class BoozerSplineField(BoozerMagneticField):
         nzeta = self.nzeta_ext
         npoints = ntheta * nzeta
 
+        import time
+        time1 = time.time()
         # Pre-allocate aligned buffer and prepare aligned arrays for C++ function
         # Align arrays once outside the loop for better performance
         buffer = allocate_aligned_and_padded_array((npoints,))
@@ -1595,7 +1686,11 @@ class BoozerSplineField(BoozerMagneticField):
             field_grid[isurf, :, :] += buffer[:npoints].reshape(
                 (ntheta, nzeta), order="C"
             )
+        time2 = time.time()
+        from firm3d.util.functions import proc0_print
+        proc0_print(f"Time taken to compute inverse Fourier transform: {time2 - time1} seconds")
 
+        time1 = time.time()
         # Accumulate all field_grid data to all processes
         if self.comm is not None:
             # Ensure field_grid is contiguous for MPI operations
@@ -1609,6 +1704,9 @@ class BoozerSplineField(BoozerMagneticField):
                 [field_grid_contig, MPI.DOUBLE], recv_buffer, op=MPI.SUM
             )
             field_grid[:, :, :] = recv_buffer
+        time2 = time.time()
+        from firm3d.util.functions import proc0_print
+        proc0_print(f"Time taken to accumulate field_grid data: {time2 - time1} seconds")
 
     def _modB_impl(self, modB):
         points = self.get_points_ref()
@@ -1830,16 +1928,26 @@ class BoozerSplineField(BoozerMagneticField):
     def _dKdtheta_impl(self, dKdtheta):
         points = self.get_points_ref()
         points_sym, flip = self.map_points_symmetries(points)
-        dKdtheta[:, 0] = self.K_spline.deriv_y(
-            points_sym[:, 0], points_sym[:, 1], points_sym[:, 2]
-        )
+        if self.dKdtheta_spline is not None:
+            dKdtheta[:, 0] = self.dKdtheta_spline(
+                points_sym[:, 0], points_sym[:, 1], points_sym[:, 2]
+            )
+        else:
+            dKdtheta[:, 0] = self.K_spline.deriv_y(
+                points_sym[:, 0], points_sym[:, 1], points_sym[:, 2]
+            )
 
     def _dKdzeta_impl(self, dKdzeta):
         points = self.get_points_ref()
         points_sym, flip = self.map_points_symmetries(points)
-        dKdzeta[:, 0] = self.K_spline.deriv_z(
-            points_sym[:, 0], points_sym[:, 1], points_sym[:, 2]
-        )
+        if self.dKdzeta_spline is not None:
+            dKdzeta[:, 0] = self.dKdzeta_spline(
+                points_sym[:, 0], points_sym[:, 1], points_sym[:, 2]
+            )
+        else:
+            dKdzeta[:, 0] = self.K_spline.deriv_z(
+                points_sym[:, 0], points_sym[:, 1], points_sym[:, 2]
+            )
 
     def map_points_symmetries(self, points):
         points_sym = points.copy()
@@ -3376,6 +3484,7 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
         spline_deriv=True,
         extrapolate=True,
         initialize=None,
+        interp_method="multispline",
     ):
         r"""
         Create an InterpolatedBoozerField from a Booz_xform equilibrium.
@@ -3479,6 +3588,7 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
             field_type=field_type,
             comm=comm,
             spline_deriv=spline_deriv,
+            interp_method=interp_method,
         )
         if ns is None:
             ns = bsf.ns_b
