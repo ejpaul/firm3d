@@ -10,7 +10,7 @@ typedef xt::pyarray<double> Array;
 #include <xsimd/xsimd.hpp>
 
 namespace xs = xsimd;
-#define ANGLE_RECOMPUTE 5
+#define ANGLE_RECOMPUTE 10
 
 void compute_kmnc_kmns(Array& kmnc, Array& kmns, Array& rmnc, Array& drmncds, Array& zmns, Array& dzmnsds,\
     Array& numns, Array& dnumnsds, Array& bmnc,\
@@ -300,52 +300,138 @@ void inverse_fourier_transform_odd(Array& K, Array& kmns, Array& xm, Array& xn,
     // std::size_t modes_s = (xm(0) || xn(0)) ? 0 : 1;
 
     if (num_points > 1) {
-        #pragma omp parallel for
-        for (int ip=0; ip < num_points; ip += simd_size){
-            xs::batch<double, simd_size> b_kmns, b_thetas, b_zetas, b_K;
-            b_thetas = xs::load_aligned(&thetas_array[ip]);
-            b_zetas = xs::load_aligned(&zetas_array[ip]);
-            b_K = xs::load_aligned(&K_array[ip]);
+        int simd_points = num_points - (num_points % static_cast<int>(simd_size));
+        if (surf) {
+            #pragma omp parallel for
+            for (int ip=0; ip < simd_points; ip += simd_size){
+                xs::batch<double, simd_size> b_kmns, b_thetas, b_zetas, b_K;
+                b_thetas = xs::load_unaligned(&thetas_array[ip]);
+                b_zetas = xs::load_unaligned(&zetas_array[ip]);
+                b_K = xs::load_unaligned(&K_array[ip]);
 
-            simd_t sin_nfpzetas, cos_nfpzetas;
-            simd_t sinterm, costerm;
-            xs::sincos(-nfp*b_zetas, sin_nfpzetas, cos_nfpzetas);
+                simd_t sin_nfpzetas, cos_nfpzetas;
+                simd_t sinterm, costerm;
+                xs::sincos(-nfp*b_zetas, sin_nfpzetas, cos_nfpzetas);
 
+                int m = xm(0);
+                int n = xn(0);
+                int step_count = 0;
+                for (int im=0; im < num_modes; ++im) {
+                    b_kmns = xs::batch<double, simd_size>(kmns_array[im]);
+
+                    // recompute the angle from scratch every so often, to
+                    // avoid accumulating floating point error
+                    if(step_count == 0) {
+                        xs::sincos(m*b_thetas-n*b_zetas, sinterm, costerm);
+                    }
+
+                    b_K = xs::fma(b_kmns, sinterm, b_K);
+
+                    if(step_count != ANGLE_RECOMPUTE - 1){
+                        simd_t sinterm_old = sinterm;
+                        simd_t costerm_old = costerm;
+                        sinterm = cos_nfpzetas * sinterm_old + costerm_old * sin_nfpzetas;
+                        costerm = costerm_old * cos_nfpzetas - sinterm_old * sin_nfpzetas;
+                    }
+
+                    n += nfp;
+                    ++step_count;
+                    if (step_count == ANGLE_RECOMPUTE) {
+                        step_count = 0;
+                    }
+                    if (n > ntor * nfp) {
+                        n = - ntor * nfp;
+                        ++m;
+                        step_count = 0;
+                    }
+                }
+                b_K.store_unaligned(&K_array[ip]);
+            }
+        } else {
+            #pragma omp parallel for
+            for (int ip=0; ip < simd_points; ip += simd_size){
+                xs::batch<double, simd_size> b_kmns, b_thetas, b_zetas, b_K;
+                b_thetas = xs::load_unaligned(&thetas_array[ip]);
+                b_zetas = xs::load_unaligned(&zetas_array[ip]);
+                b_K = xs::load_unaligned(&K_array[ip]);
+
+                simd_t sin_nfpzetas, cos_nfpzetas;
+                simd_t sinterm, costerm;
+                xs::sincos(-nfp*b_zetas, sin_nfpzetas, cos_nfpzetas);
+
+                int m = xm(0);
+                int n = xn(0);
+                int step_count = 0;
+                for (int im=0; im < num_modes; ++im) {
+                    b_kmns = xs::load_unaligned(&kmns_array[im*num_points+ip]);
+
+                    // recompute the angle from scratch every so often, to
+                    // avoid accumulating floating point error
+                    if(step_count == 0) {
+                        xs::sincos(m*b_thetas-n*b_zetas, sinterm, costerm);
+                    }
+
+                    b_K = xs::fma(b_kmns, sinterm, b_K);
+
+                    if(step_count != ANGLE_RECOMPUTE - 1){
+                        simd_t sinterm_old = sinterm;
+                        simd_t costerm_old = costerm;
+                        sinterm = cos_nfpzetas * sinterm_old + costerm_old * sin_nfpzetas;
+                        costerm = costerm_old * cos_nfpzetas - sinterm_old * sin_nfpzetas;
+                    }
+
+                    n += nfp;
+                    ++step_count;
+                    if (step_count == ANGLE_RECOMPUTE) {
+                        step_count = 0;
+                    }
+                    if (n > ntor * nfp) {
+                        n = - ntor * nfp;
+                        ++m;
+                        step_count = 0;
+                    }
+                }
+                b_K.store_unaligned(&K_array[ip]);
+            }
+        }
+
+        for (int ip = simd_points; ip < num_points; ++ip) {
+            double theta = thetas_array[ip];
+            double zeta = zetas_array[ip];
+            double sin_nfpzetas = ::sin(-nfp * zeta);
+            double cos_nfpzetas = ::cos(-nfp * zeta);
+            double sinterm = 0.;
+            double costerm = 0.;
             int m = xm(0);
             int n = xn(0);
-            int i = 0;
+            int step_count = 0;
+            double k_accum = K_array[ip];
             for (int im=0; im < num_modes; ++im) {
-                if (surf) {
-                    // When surf=true, kmns is 1D array (num_modes,), broadcast scalar to SIMD batch
-                    b_kmns = xs::batch<double, simd_size>(kmns_array[im]);
-                } else {
-                    b_kmns = xs::load_aligned(&kmns_array[im*num_points+ip]);
+                double kmn = surf ? kmns_array[im] : kmns_array[im*num_points+ip];
+                if (step_count == 0) {
+                    double angle = m * theta - n * zeta;
+                    sinterm = ::sin(angle);
+                    costerm = ::cos(angle);
                 }
-
-                // recompute the angle from scratch every so often, to
-                // avoid accumulating floating point error
-                if(i % ANGLE_RECOMPUTE == 0) {
-                    xs::sincos(m*b_thetas-n*b_zetas, sinterm, costerm);
-                }
-
-                b_K = xs::fma(b_kmns, sinterm, b_K);
-
-                if(i % ANGLE_RECOMPUTE != ANGLE_RECOMPUTE - 1){
-                    simd_t sinterm_old = sinterm;
-                    simd_t costerm_old = costerm;
+                k_accum += kmn * sinterm;
+                if (step_count != ANGLE_RECOMPUTE - 1) {
+                    double sinterm_old = sinterm;
+                    double costerm_old = costerm;
                     sinterm = cos_nfpzetas * sinterm_old + costerm_old * sin_nfpzetas;
                     costerm = costerm_old * cos_nfpzetas - sinterm_old * sin_nfpzetas;
                 }
-
                 n += nfp;
-                ++i;
+                ++step_count;
+                if (step_count == ANGLE_RECOMPUTE) {
+                    step_count = 0;
+                }
                 if (n > ntor * nfp) {
                     n = - ntor * nfp;
                     ++m;
-                    i=0;
+                    step_count = 0;
                 }
             }
-            b_K.store_aligned(&K_array[ip]);
+            K_array[ip] = k_accum;
         }
         // for (std::size_t im=modes_s; im < num_modes; ++im) {
         //     simd_t b_xm(xm(im));
@@ -404,51 +490,132 @@ void inverse_fourier_transform_even(Array& K, Array& kmns, Array& xm, Array& xn,
     double* zetas_array = zetas.data();
 
     if (num_points > 1){
-        #pragma omp parallel for
-        for (int ip=0; ip < num_points; ip += simd_size){
-            xs::batch<double, simd_size> b_kmns, b_thetas, b_zetas, b_K;
-            b_thetas = xs::load_aligned(&thetas_array[ip]);
-            b_zetas = xs::load_aligned(&zetas_array[ip]);
-            b_K = xs::load_aligned(&K_array[ip]);
+        int simd_points = num_points - (num_points % static_cast<int>(simd_size));
+        if (surf) {
+            #pragma omp parallel for
+            for (int ip=0; ip < simd_points; ip += simd_size){
+                xs::batch<double, simd_size> b_kmns, b_thetas, b_zetas, b_K;
+                b_thetas = xs::load_unaligned(&thetas_array[ip]);
+                b_zetas = xs::load_unaligned(&zetas_array[ip]);
+                b_K = xs::load_unaligned(&K_array[ip]);
 
-            simd_t sin_nfpzetas, cos_nfpzetas;
-            simd_t sinterm, costerm;
-            xs::sincos(-nfp*b_zetas, sin_nfpzetas, cos_nfpzetas);
+                simd_t sin_nfpzetas, cos_nfpzetas;
+                simd_t sinterm, costerm;
+                xs::sincos(-nfp*b_zetas, sin_nfpzetas, cos_nfpzetas);
 
+                int m = xm(0);
+                int n = xn(0);
+                int step_count = 0;
+                for (int im=0; im < num_modes; ++im) {
+                    b_kmns = xs::batch<double, simd_size>(kmns_array[im]);
+                    if(step_count == 0) {
+                        xs::sincos(m*b_thetas-n*b_zetas, sinterm, costerm);
+                    }
+
+                    b_K = xs::fma(b_kmns, costerm, b_K);
+
+                    if(step_count != ANGLE_RECOMPUTE - 1){
+                        simd_t sinterm_old = sinterm;
+                        simd_t costerm_old = costerm;
+                        sinterm = cos_nfpzetas * sinterm_old + costerm_old * sin_nfpzetas;
+                        costerm = costerm_old * cos_nfpzetas - sinterm_old * sin_nfpzetas;
+                    }
+
+                    n += nfp;
+                    ++step_count;
+                    if (step_count == ANGLE_RECOMPUTE) {
+                        step_count = 0;
+                    }
+                    if (n > ntor * nfp) {
+                        n = - ntor * nfp;
+                        ++m;
+                        step_count = 0;
+                    }
+                }
+                b_K.store_unaligned(&K_array[ip]);
+            }
+        } else {
+            #pragma omp parallel for
+            for (int ip=0; ip < simd_points; ip += simd_size){
+                xs::batch<double, simd_size> b_kmns, b_thetas, b_zetas, b_K;
+                b_thetas = xs::load_unaligned(&thetas_array[ip]);
+                b_zetas = xs::load_unaligned(&zetas_array[ip]);
+                b_K = xs::load_unaligned(&K_array[ip]);
+
+                simd_t sin_nfpzetas, cos_nfpzetas;
+                simd_t sinterm, costerm;
+                xs::sincos(-nfp*b_zetas, sin_nfpzetas, cos_nfpzetas);
+
+                int m = xm(0);
+                int n = xn(0);
+                int step_count = 0;
+                for (int im=0; im < num_modes; ++im) {
+                    b_kmns = xs::load_unaligned(&kmns_array[im*num_points+ip]);
+                    if(step_count == 0) {
+                        xs::sincos(m*b_thetas-n*b_zetas, sinterm, costerm);
+                    }
+
+                    b_K = xs::fma(b_kmns, costerm, b_K);
+
+                    if(step_count != ANGLE_RECOMPUTE - 1){
+                        simd_t sinterm_old = sinterm;
+                        simd_t costerm_old = costerm;
+                        sinterm = cos_nfpzetas * sinterm_old + costerm_old * sin_nfpzetas;
+                        costerm = costerm_old * cos_nfpzetas - sinterm_old * sin_nfpzetas;
+                    }
+
+                    n += nfp;
+                    ++step_count;
+                    if (step_count == ANGLE_RECOMPUTE) {
+                        step_count = 0;
+                    }
+                    if (n > ntor * nfp) {
+                        n = - ntor * nfp;
+                        ++m;
+                        step_count = 0;
+                    }
+                }
+                b_K.store_unaligned(&K_array[ip]);
+            }
+        }
+
+        for (int ip = simd_points; ip < num_points; ++ip) {
+            double theta = thetas_array[ip];
+            double zeta = zetas_array[ip];
+            double sin_nfpzetas = ::sin(-nfp * zeta);
+            double cos_nfpzetas = ::cos(-nfp * zeta);
+            double sinterm = 0.;
+            double costerm = 0.;
             int m = xm(0);
             int n = xn(0);
-            int i = 0;
+            int step_count = 0;
+            double k_accum = K_array[ip];
             for (int im=0; im < num_modes; ++im) {
-                if (surf) {
-                    // When surf=true, kmns is 1D array (num_modes,), broadcast scalar to SIMD batch
-                    b_kmns = xs::batch<double, simd_size>(kmns_array[im]);
-                } else {
-                    b_kmns = xs::load_aligned(&kmns_array[im*num_points+ip]);
+                double kmn = surf ? kmns_array[im] : kmns_array[im*num_points+ip];
+                if (step_count == 0) {
+                    double angle = m * theta - n * zeta;
+                    sinterm = ::sin(angle);
+                    costerm = ::cos(angle);
                 }
-                // recompute the angle from scratch every so often, to
-                // avoid accumulating floating point error
-                if(i % ANGLE_RECOMPUTE == 0) {
-                    xs::sincos(m*b_thetas-n*b_zetas, sinterm, costerm);
-                }
-
-                b_K = xs::fma(b_kmns, costerm, b_K);
-
-                if(i % ANGLE_RECOMPUTE != ANGLE_RECOMPUTE - 1){
-                    simd_t sinterm_old = sinterm;
-                    simd_t costerm_old = costerm;
+                k_accum += kmn * costerm;
+                if (step_count != ANGLE_RECOMPUTE - 1) {
+                    double sinterm_old = sinterm;
+                    double costerm_old = costerm;
                     sinterm = cos_nfpzetas * sinterm_old + costerm_old * sin_nfpzetas;
                     costerm = costerm_old * cos_nfpzetas - sinterm_old * sin_nfpzetas;
                 }
-
                 n += nfp;
-                ++i;
+                ++step_count;
+                if (step_count == ANGLE_RECOMPUTE) {
+                    step_count = 0;
+                }
                 if (n > ntor * nfp) {
                     n = - ntor * nfp;
                     ++m;
-                    i=0;
+                    step_count = 0;
                 }
             }
-            b_K.store_aligned(&K_array[ip]);
+            K_array[ip] = k_accum;
         }
         // for (std::size_t im=0; im < num_modes; ++im) {
         //     simd_t b_xm(xm(im));

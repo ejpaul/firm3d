@@ -34,6 +34,8 @@ void init_interpolant(py::module_ &m){
     py::class_<ChebyshevInterpolationRule, shared_ptr<ChebyshevInterpolationRule>, InterpolationRule>(m, "ChebyshevInterpolationRule", "Polynomial interpolation using chebychev points.")
         .def(py::init<int>())
         .def_readonly("degree", &ChebyshevInterpolationRule::degree, "The degree of the polynomial. The number of interpolation points in `degree+1`.");
+    py::class_<CubicBSplineInterpolationRule, shared_ptr<CubicBSplineInterpolationRule>, InterpolationRule>(m, "CubicBSplineInterpolationRule", "Cubic B-spline interpolation rule.")
+        .def(py::init<>());
 
     py::class_<RegularGridInterpolant3D<Array2>, shared_ptr<RegularGridInterpolant3D<Array2>>>(m, "RegularGridInterpolant3D",
             R"pbdoc(
@@ -54,5 +56,7 @@ void init_interpolant(py::module_ &m){
              "Interpolate a function with MPI parallelization. 'comm_fortran' should be a Fortran MPI communicator handle (obtained from comm.py2f() in Python).")
 #endif
         .def("evaluate", &RegularGridInterpolant3D<Array2>::evaluate, "Evaluate the interpolant at a point.")
-        .def("evaluate_batch", &RegularGridInterpolant3D<Array2>::evaluate_batch, "Evaluate the interpolant at multiple points (faster than `evaluate` as it uses prefetching).");
+        .def("evaluate_batch", &RegularGridInterpolant3D<Array2>::evaluate_batch, "Evaluate the interpolant at multiple points (faster than `evaluate` as it uses prefetching).")
+        .def("evaluate_batch_derivs", &RegularGridInterpolant3D<Array2>::evaluate_batch_derivs,
+             "Evaluate the interpolant and first derivatives at multiple points.");
 }

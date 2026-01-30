@@ -40,11 +40,83 @@ except ImportError:
     MPI = None
 
 
+class _NDSplineWrapper:
+    def __init__(self, s_grid, theta_grid, zeta_grid, field_grid, degrees=3):
+        import ndsplines as nds
+
+        self._spline = nds.make_interp_spline(
+            [s_grid, theta_grid, zeta_grid], field_grid, degrees=degrees
+        )
+
+    def __call__(self, s, theta=None, zeta=None):
+        if theta is None and zeta is None:
+            points = np.asarray(s)
+            return self._spline(points)
+
+        s_arr = np.asarray(s)
+        theta_arr = np.asarray(theta)
+        zeta_arr = np.asarray(zeta)
+        points = np.column_stack(
+            (s_arr.ravel(), theta_arr.ravel(), zeta_arr.ravel())
+        )
+        values = self._spline(points)
+        return values.reshape(s_arr.shape)
+
+    def deriv_x(self, s, theta, zeta):
+        return self._eval_derivative(s, theta, zeta, (1, 0, 0))
+
+    def deriv_y(self, s, theta, zeta):
+        return self._eval_derivative(s, theta, zeta, (0, 1, 0))
+
+    def deriv_z(self, s, theta, zeta):
+        return self._eval_derivative(s, theta, zeta, (0, 0, 1))
+
+    def _eval_derivative(self, s, theta, zeta, nus):
+        s_arr = np.asarray(s)
+        theta_arr = np.asarray(theta)
+        zeta_arr = np.asarray(zeta)
+        points = np.column_stack((s_arr.ravel(), theta_arr.ravel(), zeta_arr.ravel()))
+        nus_arr = np.asarray(nus, dtype=int)
+        values = self._spline(points, nus=nus_arr)
+        return values.reshape(s_arr.shape)
+
+
+class _PyinterpWrapper:
+    def __init__(self, s_grid, theta_grid, zeta_grid, field_grid, method="c_spline"):
+        import xarray as xr
+        from pyinterp.backends.xarray import RegularGridInterpolator
+
+        data = xr.DataArray(
+            field_grid,
+            coords={"s": s_grid, "theta": theta_grid, "zeta": zeta_grid},
+            dims=("s", "theta", "zeta"),
+        )
+        self._method = method
+        self._interp = RegularGridInterpolator(data)
+
+    def __call__(self, s, theta=None, zeta=None):
+        if theta is None and zeta is None:
+            points = np.asarray(s)
+            if points.shape[-1] != 3:
+                raise ValueError("Expected (n, 3) points for pyinterp.")
+            s_vals = points[..., 0]
+            theta_vals = points[..., 1]
+            zeta_vals = points[..., 2]
+        else:
+            s_vals = np.asarray(s)
+            theta_vals = np.asarray(theta)
+            zeta_vals = np.asarray(zeta)
+
+        coords = {"s": s_vals, "theta": theta_vals, "zeta": zeta_vals}
+        return self._interp(coords, method=self._method)
+
+
 class _RegularGridInterpolatorWrapper:
-    def __init__(self, s_grid, theta_grid, zeta_grid, field_grid):
+    def __init__(self, s_grid, theta_grid, zeta_grid, field_grid, method="cubic"):
         self._rgi = RegularGridInterpolator(
             (s_grid, theta_grid, zeta_grid),
             field_grid,
+            method=method,
             bounds_error=False,
             fill_value=None,
         )
@@ -62,6 +134,145 @@ class _RegularGridInterpolatorWrapper:
         )
         values = self._rgi(points)
         return values.reshape(s_arr.shape)
+
+    def deriv_x(self, s, theta, zeta):
+        return self._eval_derivative(s, theta, zeta, (1, 0, 0))
+
+    def deriv_y(self, s, theta, zeta):
+        return self._eval_derivative(s, theta, zeta, (0, 1, 0))
+
+    def deriv_z(self, s, theta, zeta):
+        return self._eval_derivative(s, theta, zeta, (0, 0, 1))
+
+    def _eval_derivative(self, s, theta, zeta, nu):
+        s_arr = np.asarray(s)
+        theta_arr = np.asarray(theta)
+        zeta_arr = np.asarray(zeta)
+        points = np.column_stack((s_arr.ravel(), theta_arr.ravel(), zeta_arr.ravel()))
+        try:
+            values = self._rgi(points, nu=nu)
+        except TypeError as exc:
+            raise RuntimeError(
+                "RegularGridInterpolator derivative evaluation requires SciPy >= 1.13 "
+                "with method='cubic' (or 'slinear'/'quintic')."
+            ) from exc
+        return values.reshape(s_arr.shape)
+
+
+class _Firm3dRegularGridWrapper:
+    def __init__(self, s_grid, theta_grid, zeta_grid, field_grid, degree=3):
+        rule = sopp.UniformInterpolationRule(degree)
+        s_range = (float(s_grid[0]), float(s_grid[-1]), len(s_grid) - 1)
+        theta_range = (float(theta_grid[0]), float(theta_grid[-1]), len(theta_grid) - 1)
+        zeta_range = (float(zeta_grid[0]), float(zeta_grid[-1]), len(zeta_grid) - 1)
+        self._interp = sopp.RegularGridInterpolant3D(
+            rule, s_range, theta_range, zeta_range, 1, True
+        )
+        base_spline = TricubicSpline(s_grid, theta_grid, zeta_grid, field_grid)
+
+        def fbatch(s_vals, theta_vals, zeta_vals):
+            vals = base_spline(
+                np.asarray(s_vals), np.asarray(theta_vals), np.asarray(zeta_vals)
+            )
+            return np.ascontiguousarray(vals).ravel()
+
+        self._interp.interpolate_batch(fbatch)
+
+    def __call__(self, s, theta=None, zeta=None):
+        if theta is None and zeta is None:
+            points = np.asarray(s)
+            if points.shape[-1] != 3:
+                raise ValueError("Expected (n, 3) points for firm3d regular grid.")
+            xyz = points.reshape(-1, 3).copy()
+            out = np.empty((xyz.shape[0], 1))
+            self._interp.evaluate_batch(xyz, out)
+            return out.reshape(points.shape[:-1])
+
+        s_arr = np.asarray(s)
+        theta_arr = np.asarray(theta)
+        zeta_arr = np.asarray(zeta)
+        xyz = np.column_stack((s_arr.ravel(), theta_arr.ravel(), zeta_arr.ravel()))
+        out = np.empty((xyz.shape[0], 1))
+        self._interp.evaluate_batch(xyz, out)
+        return out.reshape(s_arr.shape)
+
+    def deriv_x(self, s, theta, zeta):
+        raise NotImplementedError(
+            "firm3d RegularGridInterpolant3D does not provide derivatives."
+        )
+
+    def deriv_y(self, s, theta, zeta):
+        raise NotImplementedError(
+            "firm3d RegularGridInterpolant3D does not provide derivatives."
+        )
+
+    def deriv_z(self, s, theta, zeta):
+        raise NotImplementedError(
+            "firm3d RegularGridInterpolant3D does not provide derivatives."
+        )
+
+
+class _Firm3dBSplineWrapper:
+    def __init__(self, s_grid, theta_grid, zeta_grid, field_grid):
+        rule = sopp.CubicBSplineInterpolationRule()
+        s_range = (float(s_grid[0]), float(s_grid[-1]), len(s_grid) - 1)
+        theta_range = (float(theta_grid[0]), float(theta_grid[-1]), len(theta_grid) - 1)
+        zeta_range = (float(zeta_grid[0]), float(zeta_grid[-1]), len(zeta_grid) - 1)
+        self._interp = sopp.RegularGridInterpolant3D(
+            rule, s_range, theta_range, zeta_range, 1, True
+        )
+        base_spline = TricubicSpline(s_grid, theta_grid, zeta_grid, field_grid)
+
+        def fbatch(s_vals, theta_vals, zeta_vals):
+            vals = base_spline(
+                np.asarray(s_vals), np.asarray(theta_vals), np.asarray(zeta_vals)
+            )
+            return np.ascontiguousarray(vals).ravel()
+
+        self._interp.interpolate_batch(fbatch)
+
+    def __call__(self, s, theta=None, zeta=None):
+        if theta is None and zeta is None:
+            points = np.asarray(s)
+            if points.shape[-1] != 3:
+                raise ValueError("Expected (n, 3) points for firm3d B-spline.")
+            xyz = points.reshape(-1, 3).copy()
+            out = np.empty((xyz.shape[0], 1))
+            self._interp.evaluate_batch(xyz, out)
+            return out.reshape(points.shape[:-1])
+
+        s_arr = np.asarray(s)
+        theta_arr = np.asarray(theta)
+        zeta_arr = np.asarray(zeta)
+        xyz = np.column_stack((s_arr.ravel(), theta_arr.ravel(), zeta_arr.ravel()))
+        out = np.empty((xyz.shape[0], 1))
+        self._interp.evaluate_batch(xyz, out)
+        return out.reshape(s_arr.shape)
+
+    def deriv_x(self, s, theta, zeta):
+        return self._eval_deriv(s, theta, zeta, axis=0)
+
+    def deriv_y(self, s, theta, zeta):
+        return self._eval_deriv(s, theta, zeta, axis=1)
+
+    def deriv_z(self, s, theta, zeta):
+        return self._eval_deriv(s, theta, zeta, axis=2)
+
+    def _eval_deriv(self, s, theta, zeta, axis):
+        s_arr = np.asarray(s)
+        theta_arr = np.asarray(theta)
+        zeta_arr = np.asarray(zeta)
+        xyz = np.column_stack((s_arr.ravel(), theta_arr.ravel(), zeta_arr.ravel()))
+        out = np.empty((xyz.shape[0], 1))
+        dfdx = np.empty((xyz.shape[0], 1))
+        dfdy = np.empty((xyz.shape[0], 1))
+        dfdz = np.empty((xyz.shape[0], 1))
+        self._interp.evaluate_batch_derivs(xyz, out, dfdx, dfdy, dfdz)
+        if axis == 0:
+            return dfdx.reshape(s_arr.shape)
+        if axis == 1:
+            return dfdy.reshape(s_arr.shape)
+        return dfdz.reshape(s_arr.shape)
 
 
 class BoozerMetric:
@@ -940,8 +1151,9 @@ class BoozerSplineField(BoozerMagneticField):
         r"""
         Initialize a BoozerSplineField object. The field is interpolated on the
         VMEC half grid, with the number of angular grid points specified by ntheta
-        and nzeta, using :class:`TricubicSpline` (default) or
-        :class:`scipy.interpolate.RegularGridInterpolator` for 3D fields and
+        and nzeta, using :class:`TricubicSpline` for 3D fields by default (or
+        :mod:`ndsplines`, :mod:`pyinterp`, :class:`RegularGridInterpolator`, or
+        :class:`firm3dpp.RegularGridInterpolant3D` backends) and
         :class:`CubicSpline` for 1D flux functions.
 
         Args:
@@ -989,11 +1201,13 @@ class BoozerSplineField(BoozerMagneticField):
                 evaluated for the angles, and centered differences are used for the
                 radial derivative. While ``False`` is more accurate, ``True`` is faster
                 due to a reduction in the number of spline evaluations.
-            interp_method: (string) Interpolation backend to use for 3D fields.
-                Options are ``"multispline"`` (default) or ``"regulargrid"`` to use
-                :class:`scipy.interpolate.RegularGridInterpolator`. When using
-                ``"regulargrid"``, spline derivatives are disabled and derivative
-                fields are interpolated directly.
+            interp_method: (string) Interpolation backend for 3D fields. Options are
+                ``"multispline"`` (default), ``"ndsplines"``, ``"pyinterp"``,
+                ``"regulargrid"`` (SciPy :class:`RegularGridInterpolator`),
+                ``"firm3d_regulargrid"`` (sopp :class:`RegularGridInterpolant3D`),
+                or ``"firm3d_bspline"`` (sopp cubic B-spline rule).
+                ``"pyinterp"`` and ``"firm3d_regulargrid"`` require
+                ``spline_deriv=False``.
 
         Returns:
             :class:`BoozerSplineField` object.
@@ -1002,20 +1216,24 @@ class BoozerSplineField(BoozerMagneticField):
         self.comm = comm
         self.verbose = self.comm is None or self.comm.rank == 0
         interp_method = interp_method.lower()
-        if interp_method not in ["multispline", "regulargrid"]:
-            raise ValueError("interp_method must be 'multispline' or 'regulargrid'")
+        if interp_method not in [
+            "multispline",
+            "ndsplines",
+            "pyinterp",
+            "regulargrid",
+            "firm3d_regulargrid",
+            "firm3d_bspline",
+        ]:
+            raise ValueError(
+                "interp_method must be 'multispline', 'ndsplines', 'pyinterp', "
+                "'regulargrid', 'firm3d_regulargrid', or 'firm3d_bspline'"
+            )
+        if interp_method in ["pyinterp", "firm3d_regulargrid"] and spline_deriv:
+            raise ValueError(
+                "pyinterp and firm3d_regulargrid backends do not provide spline "
+                "derivatives. Set spline_deriv=False."
+            )
         self.interp_method = interp_method
-
-        if self.interp_method == "regulargrid" and spline_deriv:
-            if self.verbose:
-                warnings.warn(
-                    "RegularGridInterpolator does not provide spline derivatives. "
-                    "Disabling spline_deriv and interpolating derivative fields.",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
-            spline_deriv = False
-
         self.spline_deriv = spline_deriv
 
         if field_type is not None:
@@ -1359,9 +1577,6 @@ class BoozerSplineField(BoozerMagneticField):
             self.s_full, self.theta_grid, self.zeta_grid, indexing="ij"
         )
 
-        import time
-        time1 = time.time()
-        
         if not self.asym:
             self.modB_spline = self.compute_spline(self.bmnc, "even", "half", "modB")
             if not self.spline_deriv:
@@ -1505,10 +1720,6 @@ class BoozerSplineField(BoozerMagneticField):
         self.iota_spline = self.compute_spline(self.iota_grid, "flux", "half", "iota")
         self.psip_spline = self.compute_spline(self.psip_grid, "flux", "full", "psip")
 
-        time2 = time.time()
-        from firm3d.util.functions import proc0_print
-        # proc0_print(f"Time taken to compute splines: {time2 - time1} seconds")
-
         BoozerMagneticField.__init__(
             self, self.psi0, self.field_type, self.nfp, self.asym == 0
         )
@@ -1519,25 +1730,6 @@ class BoozerSplineField(BoozerMagneticField):
             )
             self.compute_K(self.K_grid)
             self.K_spline = self._build_3d_interpolator(self.s_full, self.K_grid)
-            if self.interp_method == "regulargrid":
-                dtheta = self.theta_grid[1] - self.theta_grid[0]
-                dzeta = self.zeta_grid[1] - self.zeta_grid[0]
-                dKdtheta_grid, dKdzeta_grid = np.gradient(
-                    self.K_grid, dtheta, dzeta, axis=(1, 2), edge_order=2
-                )
-                self.dKdtheta_spline = self._build_3d_interpolator(
-                    self.s_full, dKdtheta_grid
-                )
-                self.dKdzeta_spline = self._build_3d_interpolator(
-                    self.s_full, dKdzeta_grid
-                )
-            else:
-                self.dKdtheta_spline = None
-                self.dKdzeta_spline = None
-        else:
-            self.K_spline = None
-            self.dKdtheta_spline = None
-            self.dKdzeta_spline = None
 
     def compute_spline(self, harmonics, even_odd, half_full="half", field_name=None):
         r"""
@@ -1557,9 +1749,8 @@ class BoozerSplineField(BoozerMagneticField):
             field_name: string, optional. If provided, the grid data will be saved
                 for later use in direct interpolation.
         Returns:
-            spline: :class:`TricubicSpline` or
-                :class:`scipy.interpolate.RegularGridInterpolator` wrapper for
-                3D fields, or :class:`CubicSpline` object for flux functions.
+            spline: :class:`TricubicSpline` object for 3D fields or
+                :class:`CubicSpline` object for flux functions.
         """
         if half_full == "half":
             s_grid = self.s_half
@@ -1597,14 +1788,25 @@ class BoozerSplineField(BoozerMagneticField):
             spline = self._build_3d_interpolator(s_grid, field_grid)
         time2 = time.time()
         from firm3d.util.functions import proc0_print
-        proc0_print(
-            f"Time taken to compute interpolator for {field_name}: {time2 - time1} seconds"
-        )
+        proc0_print(f"Time taken to compute CubicSpline for {field_name}: {time2 - time1} seconds")
+
         return spline
 
     def _build_3d_interpolator(self, s_grid, field_grid):
+        if self.interp_method == "ndsplines":
+            return _NDSplineWrapper(s_grid, self.theta_grid, self.zeta_grid, field_grid)
+        if self.interp_method == "pyinterp":
+            return _PyinterpWrapper(s_grid, self.theta_grid, self.zeta_grid, field_grid)
         if self.interp_method == "regulargrid":
             return _RegularGridInterpolatorWrapper(
+                s_grid, self.theta_grid, self.zeta_grid, field_grid
+            )
+        if self.interp_method == "firm3d_regulargrid":
+            return _Firm3dRegularGridWrapper(
+                s_grid, self.theta_grid, self.zeta_grid, field_grid
+            )
+        if self.interp_method == "firm3d_bspline":
+            return _Firm3dBSplineWrapper(
                 s_grid, self.theta_grid, self.zeta_grid, field_grid
             )
         return TricubicSpline(s_grid, self.theta_grid, self.zeta_grid, field_grid)
@@ -1650,8 +1852,6 @@ class BoozerSplineField(BoozerMagneticField):
         nzeta = self.nzeta_ext
         npoints = ntheta * nzeta
 
-        import time
-        time1 = time.time()
         # Pre-allocate aligned buffer and prepare aligned arrays for C++ function
         # Align arrays once outside the loop for better performance
         buffer = allocate_aligned_and_padded_array((npoints,))
@@ -1686,11 +1886,6 @@ class BoozerSplineField(BoozerMagneticField):
             field_grid[isurf, :, :] += buffer[:npoints].reshape(
                 (ntheta, nzeta), order="C"
             )
-        time2 = time.time()
-        from firm3d.util.functions import proc0_print
-        proc0_print(f"Time taken to compute inverse Fourier transform: {time2 - time1} seconds")
-
-        time1 = time.time()
         # Accumulate all field_grid data to all processes
         if self.comm is not None:
             # Ensure field_grid is contiguous for MPI operations
@@ -1704,9 +1899,6 @@ class BoozerSplineField(BoozerMagneticField):
                 [field_grid_contig, MPI.DOUBLE], recv_buffer, op=MPI.SUM
             )
             field_grid[:, :, :] = recv_buffer
-        time2 = time.time()
-        from firm3d.util.functions import proc0_print
-        proc0_print(f"Time taken to accumulate field_grid data: {time2 - time1} seconds")
 
     def _modB_impl(self, modB):
         points = self.get_points_ref()
@@ -1928,26 +2120,16 @@ class BoozerSplineField(BoozerMagneticField):
     def _dKdtheta_impl(self, dKdtheta):
         points = self.get_points_ref()
         points_sym, flip = self.map_points_symmetries(points)
-        if self.dKdtheta_spline is not None:
-            dKdtheta[:, 0] = self.dKdtheta_spline(
-                points_sym[:, 0], points_sym[:, 1], points_sym[:, 2]
-            )
-        else:
-            dKdtheta[:, 0] = self.K_spline.deriv_y(
-                points_sym[:, 0], points_sym[:, 1], points_sym[:, 2]
-            )
+        dKdtheta[:, 0] = self.K_spline.deriv_y(
+            points_sym[:, 0], points_sym[:, 1], points_sym[:, 2]
+        )
 
     def _dKdzeta_impl(self, dKdzeta):
         points = self.get_points_ref()
         points_sym, flip = self.map_points_symmetries(points)
-        if self.dKdzeta_spline is not None:
-            dKdzeta[:, 0] = self.dKdzeta_spline(
-                points_sym[:, 0], points_sym[:, 1], points_sym[:, 2]
-            )
-        else:
-            dKdzeta[:, 0] = self.K_spline.deriv_z(
-                points_sym[:, 0], points_sym[:, 1], points_sym[:, 2]
-            )
+        dKdzeta[:, 0] = self.K_spline.deriv_z(
+            points_sym[:, 0], points_sym[:, 1], points_sym[:, 2]
+        )
 
     def map_points_symmetries(self, points):
         points_sym = points.copy()
@@ -3430,9 +3612,7 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
                 RuntimeWarning,
                 stacklevel=2,
             )
-        import time 
-        from ..util.functions import proc0_print
-        time1 = time.time()
+
         sopp.InterpolatedBoozerField.__init__(
             self,
             field,
@@ -3445,23 +3625,15 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
             stellsym,
             field_type,
         )   
-        time2 = time.time()
-        proc0_print(f"Time taken to initialize InterpolatedBoozerField from sopp: {time2 - time1} seconds")
+        
         if comm is not None:
             # Convert mpi4py communicator to Fortran handle using py2f()
             comm_fortran = comm.py2f()
             self.set_mpi_comm(comm_fortran)
 
-        time1 = time.time()
         if initialize:
             for item in initialize:
-                time1_item = time.time()
-                # proc0_print(f"Initializing quantity: {item}")
                 getattr(self, item)()
-                time2_item = time.time()
-                # proc0_print(f"Time taken to initialize quantity: {item}: {time2_item - time1_item} seconds")
-        time2 = time.time()
-        proc0_print(f"Time taken to initialize quantities: {time2 - time1} seconds")
 
     @classmethod
     def from_booz_xform(
@@ -3539,6 +3711,11 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
                 evaluated for the angles, and centered differences are used for the
                 radial derivative. While False is more accurate, True is faster
                 due to a reduction in the number of spline evaluations (default: True).
+            interp_method: Interpolation backend for 3D fields passed to
+                :class:`BoozerSplineField`. Options are ``"multispline"``,
+                ``"ndsplines"``, ``"pyinterp"``, ``"regulargrid"``,
+                ``"firm3d_regulargrid"``, or ``"firm3d_bspline"``
+                (default: ``"multispline"``).
             extrapolate: Whether to extrapolate the field when evaluating outside
                 the interpolation domain or to throw an error (default: True).
             initialize: List of strings, each of which is the name of a field
@@ -3570,9 +3747,6 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
                     comm=comm
                 )
         """
-        import time 
-        from ..util.functions import proc0_print
-        time1 = time.time()
         bsf = BoozerSplineField(
             equil,
             mpol=mpol,
@@ -3592,8 +3766,6 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
         )
         if ns is None:
             ns = bsf.ns_b
-        time2 = time.time()
-        proc0_print(f"Time taken to create BoozerSplineField: {time2 - time1} seconds")
         return cls(
             bsf,
             ns_interp=ns,
