@@ -73,7 +73,7 @@ for i in range(len(resolutions)):
     ## Setup field interpolation with quasisymmetry explicitly enforced
     field = InterpolatedBoozerField.from_booz_xform(
         boozmn_filename,
-        order=order,
+        degree=order,
         ns=ns_interp,
         ntheta=ntheta_interp,
         nzeta=nzeta_interp,

@@ -2,7 +2,12 @@ import time
 
 import numpy as np
 
+# Ensure mpi4py is imported and initialized before firm3d modules
+# This ensures the mpi4py C API is available for C++ bindings
+from mpi4py import MPI  # noqa: F401
+
 from firm3d.field.boozermagneticfield import (
+    BoozerRadialInterpolant,
     InterpolatedBoozerField,
 )
 from firm3d.field.tracing import (
@@ -21,32 +26,43 @@ from firm3d.util.constants import (
 from firm3d.util.functions import proc0_print, setup_logging
 from firm3d.util.mpi import comm_size, comm_world, verbose
 
-time1 = time.time()
-
 resolution = 48  # Resolution for field interpolation
 nParticles = 5000  # Number of particles to trace
 reltol = 1e-8  # Relative tolerance for the ODE solver
 abstol = 1e-8  # Absolute tolerance for the ODE solver
-order = 3  # Order for radial interpolation
 degree = 3  # Degree for 3d interpolation
+order = 3
 boozmn_filename = "../inputs/boozmn_aten_rescaled.nc"
 tmax = 1e-2  # Time for integration
 ns_interp = resolution
 ntheta_interp = resolution
 nzeta_interp = resolution
+interp = True
 
 # Setup logging to redirect output to file
-setup_logging(f"stdout_{nParticles}_{resolution}_{comm_size}.txt")
+setup_logging(f"stdout_{nParticles}_{resolution}_{comm_size}_{interp}.txt")
 
+time1 = time.time()
 ## Setup field interpolation
-field = InterpolatedBoozerField.from_booz_xform(
-    boozmn_filename,
-    order=order,
-    ns=ns_interp,
-    ntheta=ntheta_interp,
-    nzeta=nzeta_interp,
-    comm=comm_world,
-)
+if interp:
+    field = InterpolatedBoozerField.from_booz_xform(
+        boozmn_filename,
+        degree=degree,
+        ns=ns_interp,
+        ntheta=ntheta_interp,
+        nzeta=nzeta_interp,
+        spline_deriv=False,
+        comm=comm_world)
+else:
+    bri =  BoozerRadialInterpolant(boozmn_filename, order, no_K=False, comm=comm_world)
+    field = InterpolatedBoozerField(
+            bri,
+            degree=degree,
+            ns_interp=ns_interp,
+            ntheta_interp=ntheta_interp,
+            nzeta_interp=nzeta_interp)
+time2 = time.time()
+proc0_print("Total elapsed time for field interpolation setup = ", time2 - time1)
 
 # Define fusion birth distribution
 # Bader, A., et al. "Modeling of energetic particle transport in optimized
@@ -76,6 +92,7 @@ charge = ALPHA_PARTICLE_CHARGE
 vpar0 = np.sqrt(2 * Ekin / mass)
 vpar_init = initialize_velocity_uniform(vpar0, nParticles, comm=comm_world)
 
+time1 = time.time()
 ## Trace alpha particles in Boozer coordinates until they hit the s = 1 surface
 res_tys, res_zeta_hits = trace_particles_boozer(
     field,

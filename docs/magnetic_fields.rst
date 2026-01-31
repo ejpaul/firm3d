@@ -109,7 +109,7 @@ Equilibria produced with the `STELLOPT implementation <https://github.com/Prince
 BoozerSplineField
 -----------------
 
-``BoozerSplineField`` interpolates the magnetic field on the VMEC grid using spline interpolation. It uses :class:`TricubicSpline` for 3D fields and :class:`CubicSpline` for 1D flux functions. This class is typically used internally by ``InterpolatedBoozerField.from_booz_xform()`` to handle the Boozer coordinate transformation and initial interpolation.
+``BoozerSplineField`` interpolates the magnetic field on the VMEC grid using spline interpolation. It uses :mod:`ndsplines` for 3D fields and :class:`scipy.interpolate.CubicSpline` for 1D flux functions. This class is typically used internally by ``InterpolatedBoozerField.from_booz_xform()`` to handle the Boozer coordinate transformation and initial interpolation.
 
 The field can be created directly from a VMEC output file (``wout_*.nc``), a ``booz_xform`` output file (``boozmn_*.nc``), or a ``Booz_xform`` instance. When given a VMEC file, it automatically performs the Boozer coordinate transformation using ``booz_xform``.
 
@@ -186,7 +186,7 @@ Usage Example (Recommended)
    # Create the interpolated field directly from booz_xform output
    field = InterpolatedBoozerField.from_booz_xform(
        "boozmn_file.nc",
-       order=3,  # order for radial interpolation
+       degree=3,  # degree of piecewise polynomial interpolant
        ns=48,  # number of radial points
        ntheta=48,  # number of poloidal points
        nzeta=48,  # number of toroidal points
@@ -196,7 +196,7 @@ Usage Example (Recommended)
    # With quasisymmetry explicitly enforced
    field = InterpolatedBoozerField.from_booz_xform(
        "boozmn_file.nc",
-       order=3,
+       degree=3,
        ns=48,
        ntheta=48,
        nzeta=48,

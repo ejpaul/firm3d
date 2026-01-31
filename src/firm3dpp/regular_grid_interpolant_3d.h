@@ -21,11 +21,6 @@ using RangeTriplet = std::tuple<double, double, int>;
 
 Vec linspace(double min, double max, int n, bool endpoint);
 
-enum class InterpolationRuleType {
-    Lagrange,
-    CubicBSpline,
-};
-
 class InterpolationRule {
     /* An InterpolationRule consists of a list of interpolation nodes and then
      * uses standard Lagrange interpolation, that is for each node x_i we get a
@@ -47,13 +42,8 @@ class InterpolationRule {
     public:
         Vec nodes;
         Vec scalings;
-        const InterpolationRuleType rule_type;
         const int degree;
-        InterpolationRule(int degree, InterpolationRuleType rule_type = InterpolationRuleType::Lagrange)
-            : nodes(degree+1, 0.),
-              scalings(degree+1, 1.0),
-              rule_type(rule_type),
-              degree(degree) { }
+        InterpolationRule(int degree) : degree(degree), nodes(degree+1, 0.), scalings(degree+1, 1.0) { }
 
         double basis_fun(int idx, double x) const {
             // evaluate the basisfunction p_idx at location x
@@ -126,15 +116,6 @@ class RegularGridInterpolant3D {
         uint32_t cells_to_skip, cells_to_keep, dofs_to_skip, dofs_to_keep; // which cells and dofs we skip and keep
         int local_vals_size;
         Vec pkxs, pkys, pkzs;
-        Vec dpkxs, dpkys, dpkzs;
-
-        Vec xknots, yknots, zknots;
-        int nx_coeff = 0;
-        int ny_coeff = 0;
-        int nz_coeff = 0;
-        bool periodic_y = false;
-        bool periodic_z = false;
-        std::vector<int> xbase_cell, ybase_cell, zbase_cell;
 
         static const int simdcount = xsimd::simd_type<double>::size; // vector width for simd instructions
         int padded_value_size; // smallest multiple of simdcount that is larger than value_size
@@ -162,8 +143,6 @@ class RegularGridInterpolant3D {
         void evaluate_inplace(double x, double *res);
         void evaluate_local(double x, double y, double z, int cell_idx, double *res);
         void evaluate_local(double x, int cell_idx, double *res);
-        void evaluate_local_derivs(double x, double y, double z, int cell_idx, double *res,
-                                   double *dx, double *dy, double *dz);
 
     public:
 
@@ -178,17 +157,9 @@ class RegularGridInterpolant3D {
             pkxs = Vec(degree+1, 0.);
             pkys = Vec(degree+1, 0.);
             pkzs = Vec(degree+1, 0.);
-            dpkxs = Vec(degree+1, 0.);
-            dpkys = Vec(degree+1, 0.);
-            dpkzs = Vec(degree+1, 0.);
             hx = (xmax-xmin)/nx;
             hy = (ymax-ymin)/ny;
             hz = (zmax-zmin)/nz;
-
-            if (rule.rule_type == InterpolationRuleType::CubicBSpline) {
-                periodic_y = true;
-                periodic_z = true;
-            }
 
             // build a regular mesh on [xmin, xmax] x [ymin, ymax] x [zmin, zmax]
             xmesh = linspace(xmin, xmax, nx+1, true);
@@ -338,7 +309,6 @@ class RegularGridInterpolant3D {
         Vec evaluate(double x, double y, double z); // evaluate the interpolant at one location
         void evaluate_batch(Array& xyz, Array& fxyz); // evluate the interpolant at multiple locations
         void evaluate_batch_1D(Array &xyz, Array &fxyz);
-        void evaluate_batch_derivs(Array& xyz, Array& fxyz, Array& dfdx, Array& dfdy, Array& dfdz);
 
         std::pair<double, double> estimate_error(std::function<Vec(Vec, Vec, Vec)> &f, int samples);
 };
@@ -350,7 +320,7 @@ class UniformInterpolationRule : public InterpolationRule {
         using InterpolationRule::nodes;
         using InterpolationRule::scalings;
         using InterpolationRule::degree;
-        UniformInterpolationRule(int degree) : InterpolationRule(degree, InterpolationRuleType::Lagrange) {
+        UniformInterpolationRule(int degree) : InterpolationRule(degree) {
             double degreeinv = double(1.)/degree;
             for (int i = 0; i < degree+1; ++i) {
                 nodes[i] = i*degreeinv;
@@ -367,16 +337,11 @@ class ChebyshevInterpolationRule : public InterpolationRule {
         using InterpolationRule::nodes;
         using InterpolationRule::scalings;
         using InterpolationRule::degree;
-        ChebyshevInterpolationRule(int degree) : InterpolationRule(degree, InterpolationRuleType::Lagrange) {
+        ChebyshevInterpolationRule(int degree) : InterpolationRule(degree) {
             double degreeinv = double(1.)/degree;
             for (int i = 0; i < degree+1; ++i) {
                 nodes[i] = (-0.5)*std::cos(i*M_PI*degreeinv) + 0.5;
             }
             build_scalings();
         }
-};
-
-class CubicBSplineInterpolationRule : public InterpolationRule {
-    public:
-        CubicBSplineInterpolationRule() : InterpolationRule(3, InterpolationRuleType::CubicBSpline) {}
 };
