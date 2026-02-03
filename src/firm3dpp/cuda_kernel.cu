@@ -60,7 +60,7 @@ __constant__ double dp5_wgts[7][7] = {
 };
 // position weights for Dormand-Prince 5 timesteps
 __constant__ double dp5_t_wgts[7] = {
-    0.0, 1.0/5.0, 3.0/1.0, 4.0/5.0, 8.0/9.0, 1.0, 1.0
+    0.0, 1.0/5.0, 3.0/10.0, 4.0/5.0, 8.0/9.0, 1.0, 1.0
 };
 
 // each RHS has an associated 3 dimensional coordinates system (x1, x2, x3)
@@ -431,6 +431,7 @@ __device__ void calc_derivs<RHS::GC_BoozerVacuumSAW>(double* derivs, int deriv_i
         }
 
         double fak1 = mass_d*v_par*v_par/modB + mass_d*mu_val;
+
         double sdot = (-dmodBdtheta*fak1/charge_d + dalphadtheta*modB*v_par - dphidtheta) / psi0_d;
         double tdot = (dmodBdpsi*fak1 / charge_d) + (iota - dalphadpsi*G)*v_par*modB / G + dphidpsi;
 
@@ -443,7 +444,7 @@ __device__ void calc_derivs<RHS::GC_BoozerVacuumSAW>(double* derivs, int deriv_i
                     + v_par/modB * (dmodBdtheta*dphidpsi - dmodBdpsi*dphidtheta);
         derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = modB; // modB for setting mu
         derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = G;
-        // derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = // no boundary dist fn
+
     }
 
 };
@@ -764,8 +765,7 @@ __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax,
         double v_perp2 = v_total_d*v_total_d - v_par*v_par;
         
         double modB = derivs[4*PARTICLES_PER_BLOCK + threadIdx.x];
-        double denom = 1 / (2*modB);
-        mu[threadIdx.x] = v_perp2 * denom;
+        mu[threadIdx.x] = v_perp2 / (2*modB);
 
         constexpr CoordSys coord = map_rhs_to_coord<id>();
         calc_max_timestep_size<coord>(dtmax, x_temp, derivs);
@@ -826,15 +826,23 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
     }
 
     // Compute new step size
-    double dt_new = dt[threadIdx.x]*0.9*pow(max_err, -1.0/3.0);
-    dt_new = fmax(dt_new, 0.2 * dt[threadIdx.x]);  // Limit step size reduction
-    dt_new = fmin(dt_new, 5.0 * dt[threadIdx.x]);  // Limit step size increase
-    dt_new = fmin(dtmax[threadIdx.x], dt_new);
-    if ((0.5 < max_err) & (max_err < 1.0)){
-        dt_new = dt[threadIdx.x];
+    double dt_new = dt[threadIdx.x]*0.9;
+    double exponent = 0.0;
+    if(max_err > 1.0){
+        exponent = -1.0/3.0;
+    } 
+    if(max_err < 0.5) {
+        exponent = -1.0/5.0;
     }
+    dt_new *= pow(max_err, exponent);
+    dt_new = fmax(dt_new, 0.2 * dt[threadIdx.x]);
+    dt_new = fmin(dt_new, 5.0 * dt[threadIdx.x]);   
 
     if(max_err <= 1.0) {
+        // if the error is moderate, don't use a new step size
+        if (0.5 < max_err){
+            dt_new = dt[threadIdx.x];
+        }
         // Accept the step
         t[threadIdx.x] += dt[threadIdx.x];
         dt[threadIdx.x] = fmin(dt_new, tmax_d - t[threadIdx.x]);
@@ -1017,7 +1025,7 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     int nthreads = THREADS_PER_BLOCK;
 
     int nblks = nparticles  / PARTICLES_PER_BLOCK + 1;
-    std::cout << "starting particle tracing kernel\n";
+    // std::cout << "starting particle tracing kernel\n";
 
        
     cudaEvent_t start, stop;
@@ -1104,16 +1112,16 @@ extern "C" vector<double> boozer_saw_gpu_tracing(py::array_t<double> quad_pts, p
     double* saw_phihats_arr = static_cast<double*>(saw_phihats_buf.ptr);
 
     int* saw_m_d;
-    cudaMalloc((void**)&saw_m_d, saw_m.size() * sizeof(int));
-    cudaMemcpy(saw_m_d, saw_m_arr, saw_m.size() * sizeof(int), cudaMemcpyHostToDevice);
+    gpuErrchk( cudaMalloc((void**)&saw_m_d, saw_m.size() * sizeof(int)) );
+    gpuErrchk( cudaMemcpy(saw_m_d, saw_m_arr, saw_m.size() * sizeof(int), cudaMemcpyHostToDevice) );
 
     int* saw_n_d;
-    cudaMalloc((void**)&saw_n_d, saw_n.size() * sizeof(int));
-    cudaMemcpy(saw_n_d, saw_n_arr, saw_n.size() * sizeof(int), cudaMemcpyHostToDevice);
+    gpuErrchk( cudaMalloc((void**)&saw_n_d, saw_n.size() * sizeof(int)) );
+    gpuErrchk( cudaMemcpy(saw_n_d, saw_n_arr, saw_n.size() * sizeof(int), cudaMemcpyHostToDevice) );
 
     double* saw_phihats_d;
-    cudaMalloc((void**)&saw_phihats_d, saw_phihats.size() * sizeof(double));
-    cudaMemcpy(saw_phihats_d, saw_phihats_arr, saw_phihats.size() * sizeof(double), cudaMemcpyHostToDevice);
+    gpuErrchk( cudaMalloc((void**)&saw_phihats_d, saw_phihats.size() * sizeof(double)) );
+    gpuErrchk( cudaMemcpy(saw_phihats_d, saw_phihats_arr, saw_phihats.size() * sizeof(double), cudaMemcpyHostToDevice) );
     
     for(int i=0; i<nparticles; ++i){
         double s = stz_init_arr[3*i];
@@ -1579,18 +1587,18 @@ py::array_t<double> test_gpu_derivatives(py::array_t<double> quad_pts, py::array
     int nthreads = THREADS_PER_BLOCK;
     int nblks = n_points / PARTICLES_PER_BLOCK + 1;
 
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    cudaEventRecord(start);
+    // cudaEvent_t start, stop;
+    // cudaEventCreate(&start);
+    // cudaEventCreate(&stop);
+    // cudaEventRecord(start);
         
     test_gpu_derivs_kernel<id><<<nblks, nthreads>>>(quadpts_d, loc_d, vpar_d, time_d, out_d, n_points, args...);
     
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
-    float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    std::cout << "derivatives kernel time (ms): " << milliseconds<< "\n";
+    // cudaEventRecord(stop);
+    // cudaEventSynchronize(stop);
+    // float milliseconds = 0;
+    // cudaEventElapsedTime(&milliseconds, start, stop);
+    // std::cout << "derivatives kernel time (ms): " << milliseconds<< "\n";
     
     double out[4*n_points];
     gpuErrchk( cudaMemcpy(&out, out_d, 4*n_points * sizeof(double), cudaMemcpyDeviceToHost) );
@@ -1781,7 +1789,6 @@ __global__ void test_gpu_timestep_kernel(double* out, double* init_pos, double* 
     }
     __syncthreads();
     if(is_valid){
-        // printf("tracing particle %d finished at t=%.15e\n", idx, particles[idx].t);
         out[5*idx] = t[threadIdx.x];
         for(int i=0; i<4; ++i){
             out[5*idx + i + 1] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
@@ -1876,11 +1883,11 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
     int nthreads = THREADS_PER_BLOCK;
     int nblks = nparticles / PARTICLES_PER_BLOCK + 1;
 
-    std::cout << "starting particle tracing kernel\n";
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    cudaEventRecord(start);
+    // std::cout << "starting particle tracing kernel\n";
+    // cudaEvent_t start, stop;
+    // cudaEventCreate(&start);
+    // cudaEventCreate(&stop);
+    // cudaEventRecord(start);
     test_gpu_timestep_kernel<id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, nparticles, args...);
 
     gpuErrchk( cudaPeekAtLastError() );
@@ -1889,11 +1896,11 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
     double out[5*nparticles];
     gpuErrchk( cudaMemcpy(out, out_d, 5 * nparticles * sizeof(double), cudaMemcpyDeviceToHost) );
 
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
-    float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    std::cout << "tracing kernels time (ms): " << milliseconds<< "\n";
+    // cudaEventRecord(stop);
+    // cudaEventSynchronize(stop);
+    // float milliseconds = 0;
+    // cudaEventElapsedTime(&milliseconds, start, stop);
+    // std::cout << "tracing kernels time (ms): " << milliseconds<< "\n";
     
     vector<double> particle_output(5*nparticles);
     for(int i=0; i<5*nparticles; ++i){
