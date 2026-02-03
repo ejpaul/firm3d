@@ -3,7 +3,7 @@ import numpy as np
 __all__ = ["boozer_interpolant", "cartesian_interpolant"]
 
 
-def boozer_interpolant(field, nfp, n_metagrid_pts, vacuum=False):
+def boozer_interpolant(field, nfp, ns, ntheta, nzeta, vacuum=False):
     r"""
     Set up a Boozer vacuum interpolant for tracing.
 
@@ -21,9 +21,9 @@ def boozer_interpolant(field, nfp, n_metagrid_pts, vacuum=False):
             data is stored in columns modB, dmodBds, dmodBdtheta, dmodBdzeta, G, iota
         maximum observed J at grid points, useful for rejection sampling
     """
-    srange = (0, 1.0, 3 * n_metagrid_pts + 1)
-    trange = (0, np.pi, 3 * n_metagrid_pts + 1)
-    zrange = (0, 2 * np.pi / nfp, 3 * n_metagrid_pts + 1)
+    srange = (0, 1.0, 3 * ns + 1)
+    trange = (0, np.pi, 3 * ntheta + 1)
+    zrange = (0, 2 * np.pi / nfp, 3 * nzeta + 1)
 
     s_grid = np.linspace(srange[0], srange[1], srange[2])
     theta_grid = np.linspace(trange[0], trange[1], trange[2])
