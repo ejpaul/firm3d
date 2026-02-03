@@ -10,7 +10,7 @@ on:
 
 jobs:
   tests:
-    if: contains(github.event.pull_request.labels.*.name, 'GPU CI')
+    # if: contains(github.event.pull_request.labels.*.name, 'GPU CI')
     runs-on:
       group: GPU-runner
     steps:
