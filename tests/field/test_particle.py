@@ -583,7 +583,7 @@ class BoozerGuidingCenterTracingTesting(unittest.TestCase):
 
         np.random.seed(1)
         stz_inits = np.random.uniform(size=(1, 3))
-        vpar_inits = vpar * np.ones((1, 1))
+        vpar_inits = vpar * np.ones((1,))
         smin = 0.2
         smax = 0.6
         thetamin = 0
