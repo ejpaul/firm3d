@@ -2,7 +2,7 @@ name: NVIDIA GPU workflow
 on:
   pull_request:
     types:
-      - labeled
+      - [labeled, synchronize]
 
 jobs:
   tests:
