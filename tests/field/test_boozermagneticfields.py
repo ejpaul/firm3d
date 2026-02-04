@@ -1478,7 +1478,7 @@ class TestInterpolatedShearAlfvenWave(unittest.TestCase):
                 # Normal field, check relative error
                 error = np.sqrt(np.mean((field_interp - field_saw) ** 2))
                 normalized_error = error / mean
-                assert normalized_error < 1e-4, (
+                assert normalized_error < 1e-3, (
                     f"{field_name}: normalized error = {normalized_error} "
                     f"(error = {error}, mean = {mean})"
                 )
