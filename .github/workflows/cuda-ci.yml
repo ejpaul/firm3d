@@ -23,9 +23,12 @@ jobs:
 
       - name: Configure CUDA Environment
         run: |
-          echo "/usr/local/cuda/bin" >> $GITHUB_PATH
           echo "CUDA_HOME=/usr/local/cuda" >> $GITHUB_ENV
+          echo "CUDACXX=/usr/local/cuda/bin/nvcc" >> $GITHUB_ENV
+          echo "/usr/local/cuda/bin" >> $GITHUB_PATH
           echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+        env:
+          CUDA_HOME: /usr/local/cuda
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v4
