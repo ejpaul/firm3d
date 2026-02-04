@@ -44,7 +44,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install netCDF4
-          pip install -e -v ".[dev]"
+          pip install -v -e ".[dev]"
           pip install coverage
         env:
           NETCDF_DIR: /usr
