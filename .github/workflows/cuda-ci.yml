@@ -41,4 +41,17 @@ jobs:
           NETCDF_DIR: /usr
           HDF5_DIR: /usr
           GSL_DIR: /usr
+            
+      - name: Run tests
+        run: |
+          python -m coverage run -m unittest discover tests/
+          python -m coverage xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+
 
