@@ -894,6 +894,7 @@ class BoozerAnalytic(BoozerMagneticField):
         r = np.sqrt(np.abs(2 * psi / self.Bbar))
         dKdzeta[:, 0] = -self.N * self.K1 * r * np.cos(thetas - self.N * zetas)
 
+
 class BoozerSplineField(BoozerMagneticField):
     def __init__(
         self,
@@ -1653,9 +1654,7 @@ class BoozerSplineField(BoozerMagneticField):
         points = self.get_points_ref()
         points_sym, flip = self.map_points_symmetries(points)
         if not self.spline_deriv:
-            dmodBdzeta[:, 0] = self._eval_3d_spline(
-                self.dmodBdzeta_spline, points_sym
-            )
+            dmodBdzeta[:, 0] = self._eval_3d_spline(self.dmodBdzeta_spline, points_sym)
         else:
             dmodBdzeta[:, 0] = self._eval_3d_spline_deriv(
                 self.modB_spline, points_sym, (0, 0, 1)
@@ -1826,9 +1825,7 @@ class BoozerSplineField(BoozerMagneticField):
     def _dKdzeta_impl(self, dKdzeta):
         points = self.get_points_ref()
         points_sym, flip = self.map_points_symmetries(points)
-        dKdzeta[:, 0] = self._eval_3d_spline_deriv(
-            self.K_spline, points_sym, (0, 0, 1)
-        )
+        dKdzeta[:, 0] = self._eval_3d_spline_deriv(self.K_spline, points_sym, (0, 0, 1))
 
     def map_points_symmetries(self, points):
         points_sym = points.copy()
@@ -1895,6 +1892,8 @@ class BoozerSplineField(BoozerMagneticField):
         K[:, :, :] = K_flat.reshape(
             (len(self.s_full), len(self.theta_grid), len(self.zeta_grid))
         )
+
+
 class BoozerRadialInterpolant(BoozerMagneticField):
     r"""
      The magnetic field can be computed at any point in Boozer coordinates
@@ -3161,6 +3160,7 @@ class BoozerRadialInterpolant(BoozerMagneticField):
         output[0] = padded_buffer[0, 0]
         return output
 
+
 class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField):
     r"""
     This field takes an existing :class:`BoozerMagneticField` and interpolates it on a
@@ -3563,10 +3563,11 @@ class ShearAlfvenWave(sopp.ShearAlfvenWave):
         super().__init__(B0)
 
         # Initialize additional field attributes for perturbed tracing
-        if self.B0.field_type == 'nok':
+        if self.B0.field_type == "nok":
             initialize = ["diotads"]
             for item in initialize:
                 getattr(self.B0, item)()
+
 
 class ShearAlfvenHarmonic(sopp.ShearAlfvenHarmonic, ShearAlfvenWave):
     r"""
@@ -4265,6 +4266,7 @@ class ShearAlfvenWavesSuperposition(
 
         return dE_energy, dB_energy, B0_energy
 
+
 class InterpolatedShearAlfvenWave(ShearAlfvenWave):
     r"""
     This class takes an existing :class:`ShearAlfvenWave` and interpolates it on a
@@ -4326,7 +4328,7 @@ class InterpolatedShearAlfvenWave(ShearAlfvenWave):
 
         # Determine field_type from the underlying B0 field
         field_type = None
-        if hasattr(field, 'B0') and hasattr(field.B0, 'field_type'):
+        if hasattr(field, "B0") and hasattr(field.B0, "field_type"):
             field_type = field.B0.field_type.lower()
             assert field_type in ["", "vac", "nok"]
 
@@ -4419,10 +4421,13 @@ class InterpolatedShearAlfvenWave(ShearAlfvenWave):
 
         # Try to extract omega from the field if it's a ShearAlfvenHarmonic
         self.omega = None
-        if hasattr(field, 'omega'):
+        if hasattr(field, "omega"):
             self.omega = field.omega
-        elif (hasattr(field, 'waves') and len(field.waves) > 0 and
-              hasattr(field.waves[0], 'omega')):
+        elif (
+            hasattr(field, "waves")
+            and len(field.waves) > 0
+            and hasattr(field.waves[0], "omega")
+        ):
             # For superposition, use omega from first wave (assuming same omega)
             self.omega = field.waves[0].omega
 

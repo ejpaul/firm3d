@@ -61,7 +61,7 @@ saw = ShearAlfvenWavesSuperposition.from_far3d(
 # Define fusion birth distribution
 # Bader, A., et al. "Modeling of energetic particle transport in optimized
 # stellarators." Nuclear Fusion 61.11 (2021): 116060.
-nD = lambda s: (1 - s**5)  # Normalized density
+nD = lambda s: 1 - s**5  # Normalized density
 nT = nD
 T = lambda s: 11.5 * (1 - s)  # Temperature in keV
 
@@ -112,7 +112,7 @@ proc0_print("Elapsed time for tracing = ", time2 - time1)
 
 ## Post-process results to obtain lost particles
 if verbose:
-    from simsopt.field.trajectory_helpers import compute_loss_fraction
+    from firm3d.field.trajectory_helpers import compute_loss_fraction
 
     times, loss_frac = compute_loss_fraction(res_tys, tmin=1e-5, tmax=1e-2)
     import matplotlib

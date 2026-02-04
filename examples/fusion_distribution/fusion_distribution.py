@@ -52,22 +52,24 @@ if interp:
         ntheta=ntheta_interp,
         nzeta=nzeta_interp,
         spline_deriv=False,
-        comm=comm_world)
+        comm=comm_world,
+    )
 else:
-    bri =  BoozerRadialInterpolant(boozmn_filename, order, no_K=False, comm=comm_world)
+    bri = BoozerRadialInterpolant(boozmn_filename, order, no_K=False, comm=comm_world)
     field = InterpolatedBoozerField(
-            bri,
-            degree=degree,
-            ns_interp=ns_interp,
-            ntheta_interp=ntheta_interp,
-            nzeta_interp=nzeta_interp)
+        bri,
+        degree=degree,
+        ns_interp=ns_interp,
+        ntheta_interp=ntheta_interp,
+        nzeta_interp=nzeta_interp,
+    )
 time2 = time.time()
 proc0_print("Total elapsed time for field interpolation setup = ", time2 - time1)
 
 # Define fusion birth distribution
 # Bader, A., et al. "Modeling of energetic particle transport in optimized
 # stellarators." Nuclear Fusion 61.11 (2021): 116060.
-nD = lambda s: (1 - s**5)  # Normalized density
+nD = lambda s: 1 - s**5  # Normalized density
 nT = nD
 T = lambda s: 11.5 * (1 - s)  # Temperature in keV
 

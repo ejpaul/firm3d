@@ -13,7 +13,10 @@ from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     BoozerSplineField,
     InterpolatedBoozerField,
+    InterpolatedShearAlfvenWave,
+    ShearAlfvenWavesSuperposition,
 )
+from firm3d.saw.ae3d import AE3DEigenvector
 from firm3dpp import inverse_fourier_transform_even, inverse_fourier_transform_odd
 
 TEST_DIR = (Path(__file__).parent / ".." / "test_files").resolve()
@@ -1363,6 +1366,122 @@ class TestingBoozerSplineField(unittest.TestCase):
         assert np.allclose(nu_derivs[:, 0], bsf.dnuds()[:, 0])
         assert np.allclose(nu_derivs[:, 1], bsf.dnudtheta()[:, 0])
         assert np.allclose(nu_derivs[:, 2], bsf.dnudzeta()[:, 0])
+
+
+class TestInterpolatedShearAlfvenWave(unittest.TestCase):
+    """
+    Test InterpolatedShearAlfvenWave against original ShearAlfvenWavesSuperposition.
+
+    This test compares all field quantities from InterpolatedShearAlfvenWave
+    with the original ShearAlfvenWavesSuperposition to ensure interpolation
+    accuracy.
+    """
+
+    def test_interpolated_shear_alfven_wave_accuracy(self):
+        """Test that InterpolatedShearAlfvenWave matches original SAW."""
+        # Test parameters
+        resolution = 32  # Lower resolution for faster tests
+        degree = 3
+        boozmn_filename = str((TEST_DIR / "boozmn_beta2.5_QA.nc").resolve())
+        ns_interp = resolution
+        ntheta_interp = resolution
+        nzeta_interp = resolution
+
+        # Check if ae.npy exists in examples directory, otherwise skip test
+        example_dir = (
+            Path(__file__).parent / ".." / ".." / "examples" / "tracing_with_AE"
+        )
+        saw_filename = example_dir / "ae.npy"
+        if not saw_filename.exists():
+            self.skipTest(f"Test data file {saw_filename} not found")
+
+        # Setup radial interpolation
+        bri = BoozerRadialInterpolant(boozmn_filename, order=3, no_K=True, comm=comm)
+
+        # Setup 3D interpolation for equilibrium field
+        field = InterpolatedBoozerField(
+            bri,
+            degree,
+            ns_interp=ns_interp,
+            ntheta_interp=ntheta_interp,
+            nzeta_interp=nzeta_interp,
+        )
+
+        # Load and setup original shear alfven wave
+        saw = ShearAlfvenWavesSuperposition.from_ae3d(
+            eigenvector=AE3DEigenvector.load_from_numpy(
+                filename=str(saw_filename),
+            ),
+            B0=field,
+            max_dB_normal_by_B0=5e-3,
+            minor_radius_meters=1.7,
+        )
+
+        # Create interpolated version
+        saw_interp = InterpolatedShearAlfvenWave(
+            saw,
+            degree,
+            ns_interp=ns_interp,
+            ntheta_interp=ntheta_interp,
+            nzeta_interp=nzeta_interp,
+            comm=comm,
+        )
+
+        # Create evaluation grid
+        theta_grid = np.linspace(0, 2 * np.pi, 50)
+        zeta_grid = np.linspace(0, 2 * np.pi, 50)
+        THETA, ZETA = np.meshgrid(theta_grid, zeta_grid, indexing="ij")
+        Npoints = THETA.shape[0] * THETA.shape[1]
+        point = np.zeros((Npoints, 4))
+        point[:, 0] = 0.5  # s = 0.5
+        point[:, 1] = THETA.flatten()
+        point[:, 2] = ZETA.flatten()
+        # Random times
+        np.random.seed(42)  # For reproducibility
+        point[:, 3] = np.random.uniform(0, 1, Npoints)
+
+        # Set points for both original and interpolated
+        saw.set_points(point)
+        saw_interp.set_points(point)
+
+        # Test all field quantities
+        field_names = [
+            "Phi",
+            "dPhidpsi",
+            "dPhidtheta",
+            "dPhidzeta",
+            "Phidot",
+            "alpha",
+            "alphadot",
+            "dalphadtheta",
+            "dalphadpsi",
+            "dalphadzeta",
+        ]
+
+        for field_name in field_names:
+            # Evaluate interpolated version
+            field_interp = getattr(saw_interp, field_name)()
+
+            # Evaluate original version
+            field_saw = getattr(saw, field_name)()
+
+            # Compute normalized error
+            mean = np.sqrt(np.mean(field_interp**2))
+            if mean < 1e-12:
+                # Field is essentially zero, check absolute error
+                error = np.sqrt(np.mean((field_interp - field_saw) ** 2))
+                assert error < 1e-6, (
+                    f"{field_name}: absolute error = {error} "
+                    f"(field is near zero, mean = {mean})"
+                )
+            else:
+                # Normal field, check relative error
+                error = np.sqrt(np.mean((field_interp - field_saw) ** 2))
+                normalized_error = error / mean
+                assert normalized_error < 1e-4, (
+                    f"{field_name}: normalized error = {normalized_error} "
+                    f"(error = {error}, mean = {mean})"
+                )
 
 
 if __name__ == "__main__":
