@@ -416,7 +416,8 @@ void init_boozermagneticfields(py::module_ &m){
           bool,
           int,
           bool,
-          string>()
+          string>(),
+          py::keep_alive<1, 2>()
       )
       .def(
           py::init<shared_ptr<BoozerMagneticField>,
@@ -427,7 +428,8 @@ void init_boozermagneticfields(py::module_ &m){
           bool,
           int,
           bool,
-          string>()
+          string>(),
+          py::keep_alive<1, 2>()
       )
 #ifdef USE_MPI
       .def(
@@ -591,7 +593,13 @@ void init_boozermagneticfields(py::module_ &m){
         .def("dalphadzeta_ref", &ShearAlfvenWave::dalphadzeta_ref)
 
         .def("set_points", &ShearAlfvenWave::set_points)
-        .def("get_points", &ShearAlfvenWave::get_points);
+        .def("get_points", &ShearAlfvenWave::get_points)
+        .def_property(
+            "B0",
+            &ShearAlfvenWave::get_B0,
+            &ShearAlfvenWave::set_B0,
+            "Equilibrium field"
+        );
 
     // Phihat:
     py::class_<Phihat>(m, "Phihat")
@@ -614,7 +622,11 @@ void init_boozermagneticfields(py::module_ &m){
         .def_readwrite("Phin", &ShearAlfvenHarmonic::Phin)
         .def_readwrite("omega", &ShearAlfvenHarmonic::omega)
         .def_readwrite("phase", &ShearAlfvenHarmonic::phase)
-        .def_property_readonly("B0", &ShearAlfvenHarmonic::get_B0)
+        .def_property(
+            "B0",
+            &ShearAlfvenHarmonic::get_B0,
+            &ShearAlfvenWave::set_B0
+        )
         .def_property_readonly("phihat", &ShearAlfvenHarmonic::get_phihat);
 
     // ShearAlfvenWavesSuperposition:

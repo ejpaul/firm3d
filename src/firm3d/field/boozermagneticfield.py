@@ -31,6 +31,7 @@ __all__ = [
     "ShearAlfvenWave",
     "ShearAlfvenHarmonic",
     "ShearAlfvenWavesSuperposition",
+    "InterpolatedShearAlfvenWave",
 ]
 
 try:
@@ -3553,13 +3554,19 @@ class ShearAlfvenWave(sopp.ShearAlfvenWave):
 
     """
 
-    def __init__(self, B0):
+    def __init__(self, B0, omega):
         if not isinstance(B0, sopp.BoozerMagneticField):
             raise TypeError("B0 must be an instance of BoozerMagneticField.")
 
+        self.omega = omega
         # Call the constructor of the base C++ class
         super().__init__(B0)
 
+        # Initialize additional field attributes for perturbed tracing
+        if self.B0.field_type == 'nok':
+            initialize = ["diotads"]
+            for item in initialize:
+                getattr(self.B0, item)()
 
 class ShearAlfvenHarmonic(sopp.ShearAlfvenHarmonic, ShearAlfvenWave):
     r"""
@@ -3693,7 +3700,7 @@ class ShearAlfvenHarmonic(sopp.ShearAlfvenHarmonic, ShearAlfvenWave):
         sopp.ShearAlfvenHarmonic.__init__(
             self, phihat_object, Phim, Phin, omega, phase, B0
         )
-        ShearAlfvenWave.__init__(self, B0)
+        ShearAlfvenWave.__init__(self, B0, omega)
 
     def get_energy(self, grid_factor=10):
         r"""
@@ -3829,7 +3836,7 @@ class ShearAlfvenWavesSuperposition(
 
         # Initialize the base C++ class with the first wave as the base wave
         sopp.ShearAlfvenWavesSuperposition.__init__(self, SAWs[0])
-        ShearAlfvenWave.__init__(self, SAWs[0].B0)
+        ShearAlfvenWave.__init__(self, SAWs[0].B0, SAWs[0].omega)
 
         # Add subsequent waves to the superposition
         for SAW in SAWs[1:]:
@@ -4257,3 +4264,371 @@ class ShearAlfvenWavesSuperposition(
         self.set_points(original_points)
 
         return dE_energy, dB_energy, B0_energy
+
+class InterpolatedShearAlfvenWave(ShearAlfvenWave):
+    r"""
+    This class takes an existing :class:`ShearAlfvenWave` and interpolates it on a
+    regular grid in :math:`s, \theta, \zeta` using the C++
+    :class:`RegularGridInterpolant3D`.
+    The field is represented as a piecewise polynomial in (s, theta, zeta) of a given
+    degree. The number of nodes in each direction are defined by ns_interp,
+    ntheta_interp, and nzeta_interp. All quantities are time-dependent; the
+    interpolation is performed at t=0. When evaluating at t≠0, the underlying field
+    is used to get the correct time dependence. Note that waves generally break
+    rotational symmetry (nfp) and stellarator symmetry (stellsym), so these are not
+    automatically inherited from the field. It is recommended to use this field
+    representation in the tracing loop due to its speed in comparison to computing
+    the wave quantities directly from the underlying :class:`ShearAlfvenWave`.
+
+    This class implements all the methods of :class:`ShearAlfvenWave`:
+    `Phi`, `dPhidpsi`, `Phidot`, `dPhidtheta`, `dPhidzeta`, `alpha`, `alphadot`,
+    `dalphadtheta`, `dalphadpsi`, and `dalphadzeta`.
+    """
+
+    def __init__(
+        self,
+        field,
+        degree,
+        srange=None,
+        thetarange=None,
+        zetarange=None,
+        ns_interp=48,
+        ntheta_interp=48,
+        nzeta_interp=48,
+        extrapolate=True,
+        initialize=None,
+        comm=None,
+    ):
+        r"""
+        Args:
+            field: the underlying :class:`ShearAlfvenWave` to be interpolated.
+            degree: the degree of the piecewise polynomial interpolant.
+            ns_interp: number of grid points in the :math:`s` direction.
+            ntheta_interp: number of grid points in the :math:`\theta` direction.
+            nzeta_interp: number of grid points in the :math:`\zeta` direction.
+            srange: a 3-tuple of the form ``(smin, smax, ns)``. This means that
+                the interval ``[smin, smax]`` is split into ``ns`` many
+                subintervals.
+            thetarange: a 3-tuple of the form ``(thetamin, thetamax, ntheta)``.
+                thetamin must be >= 0, and thetamax must be <=2*pi.
+            zetarange: a 3-tuple of the form ``(zetamin, zetamax, nzeta)``.
+                zetamin must be >= 0, and zetamax must be <=2*pi.
+            extrapolate: whether to extrapolate the field when evaluated outside
+                         the integration domain or to throw an error.
+            initialize: A list of strings, each of which is the name of a
+                field quantity, e.g., `Phi`, to be initialized when the
+                interpolant is created. By default, all quantities are initialized.
+            comm: MPI communicator for parallelizing grid evaluation.
+                If None, evaluation is done serially.
+        """
+        if not isinstance(field, ShearAlfvenWave):
+            raise TypeError("field must be an instance of ShearAlfvenWave.")
+
+        # Determine field_type from the underlying B0 field
+        field_type = None
+        if hasattr(field, 'B0') and hasattr(field.B0, 'field_type'):
+            field_type = field.B0.field_type.lower()
+            assert field_type in ["", "vac", "nok"]
+
+        # Set default initialize list based on field_type if not provided
+        if initialize is None:
+            if field_type == "nok":
+                # For noK: dPhidpsi, dPhidtheta, dPhidzeta, alpha, alphadot,
+                #          dalphadpsi, dalphadtheta, dalphadzeta
+                initialize = [
+                    "dPhidpsi",
+                    "dPhidtheta",
+                    "dPhidzeta",
+                    "alpha",
+                    "alphadot",
+                    "dalphadpsi",
+                    "dalphadtheta",
+                    "dalphadzeta",
+                ]
+            elif field_type == "vac":
+                # For vacuum: dPhidpsi, dPhidtheta, dPhidzeta, alphadot,
+                #             dalphadpsi, dalphadtheta
+                initialize = [
+                    "dPhidpsi",
+                    "dPhidtheta",
+                    "dPhidzeta",
+                    "alphadot",
+                    "dalphadpsi",
+                    "dalphadtheta",
+                ]
+            else:
+                # Default: initialize all quantities (for general field_type)
+                initialize = [
+                    "Phi",
+                    "dPhidpsi",
+                    "Phidot",
+                    "dPhidtheta",
+                    "dPhidzeta",
+                    "alpha",
+                    "alphadot",
+                    "dalphadtheta",
+                    "dalphadpsi",
+                    "dalphadzeta",
+                ]
+
+        self.field = field
+        self.field_type = field_type
+        self.degree = degree
+        self.extrapolate = extrapolate
+        self.comm = comm
+
+        # Set up grid ranges
+        # Note: Waves generally break rotational and stellarator symmetry,
+        # so use explicit ranges rather than relying on symmetry.
+        if srange is None:
+            srange = (0, 1, ns_interp)
+        if thetarange is None:
+            # Default to full theta range [0, 2*pi] since waves break stellarator
+            # symmetry
+            thetarange = (0, 2 * np.pi, ntheta_interp)
+        if zetarange is None:
+            # Default to full zeta range for one field period
+            zetarange = (0, 2 * np.pi, nzeta_interp)
+
+        self.srange = srange
+        self.thetarange = thetarange
+        self.zetarange = zetarange
+
+        # Validate ranges
+        if np.any(np.asarray(thetarange[0:2]) < 0) or np.any(
+            np.asarray(thetarange[0:2]) > 2 * np.pi
+        ):
+            raise ValueError("thetamin and thetamax must be in [0,2*pi]")
+        if np.any(np.asarray(zetarange[0:2]) < 0) or np.any(
+            np.asarray(zetarange[0:2]) > 2 * np.pi
+        ):
+            raise ValueError("zetamin and zetamax must be in [0,2*pi]")
+
+        # Initialize the base class
+        ShearAlfvenWave.__init__(self, field.B0, field.omega)
+
+        # Create interpolation rule
+        self.rule = sopp.UniformInterpolationRule(degree)
+        self.B0 = field.B0
+        # Initialize interpolants dictionary
+        # For each quantity, we store two interpolants: one for the cos(omega*t)
+        # coefficient and one for the sin(omega*t) coefficient
+        self._interpolants_cos = {}  # Coefficient of cos(omega*t)
+        self._interpolants_sin = {}  # Coefficient of sin(omega*t)
+        self._status = {}
+
+        # Try to extract omega from the field if it's a ShearAlfvenHarmonic
+        self.omega = None
+        if hasattr(field, 'omega'):
+            self.omega = field.omega
+        elif (hasattr(field, 'waves') and len(field.waves) > 0 and
+              hasattr(field.waves[0], 'omega')):
+            # For superposition, use omega from first wave (assuming same omega)
+            self.omega = field.waves[0].omega
+
+        # Initialize requested quantities
+        if initialize:
+            for item in initialize:
+                self._initialize_quantity(item, srange, thetarange, zetarange)
+
+    def _initialize_quantity(self, quantity_name, srange, thetarange, zetarange):
+        """Initialize interpolation for a specific quantity using C++ 3D interpolant.
+
+        Different quantities have different parities with respect to the phase:
+        - sin-like: Phi, dPhidpsi, alpha, dalphadpsi
+          Q = Q_spatial * sin(m*theta - n*zeta + omega*t + phase)
+          At t=0: Q(0) = Q_spatial * sin(phase) = Q_sin_coeff
+          At t=pi/(2*omega): Q(pi/(2*omega)) = Q_spatial * cos(phase) = Q_cos_coeff
+
+        - cos-like: Phidot, dPhidtheta, dPhidzeta, alphadot, dalphadtheta, dalphadzeta
+          Q = Q_spatial * cos(m*theta - n*zeta + omega*t + phase)
+          At t=0: Q(0) = Q_spatial * cos(phase) = Q_cos_coeff
+          At t=pi/(2*omega): Q(pi/(2*omega)) = -Q_spatial * sin(phase) = -Q_sin_coeff
+
+        The time dependence is restored using:
+        Q(t) = Q_cos_coeff * cos(omega*t) + Q_sin_coeff * sin(omega*t)
+        """
+        if quantity_name in self._status and self._status[quantity_name]:
+            return
+
+        # Determine parity: sin-like or cos-like quantities
+        sin_like_quantities = ["Phi", "dPhidpsi", "alpha", "dalphadpsi"]
+        is_sin_like = quantity_name in sin_like_quantities
+
+        # Store original points
+        original_points = self.field.get_points()
+
+        # Create two interpolants: one for cos coefficient, one for sin
+        interpolant_cos = sopp.RegularGridInterpolant3D(
+            self.rule, srange, thetarange, zetarange, 1, self.extrapolate
+        )
+        interpolant_sin = sopp.RegularGridInterpolant3D(
+            self.rule, srange, thetarange, zetarange, 1, self.extrapolate
+        )
+
+        t_quarter_period = np.pi / (2.0 * self.omega)
+
+        def _fbatch(time_value, sign=1.0):
+            def fbatch(s_vals, theta_vals, zeta_vals):
+                pts = np.column_stack(
+                    (
+                        np.asarray(s_vals),
+                        np.asarray(theta_vals),
+                        np.asarray(zeta_vals),
+                        np.full_like(s_vals, time_value, dtype=float),
+                    )
+                )
+                self.field.set_points(pts)
+                values = getattr(self.field, quantity_name)()[:, 0]
+                return (sign * np.ascontiguousarray(values)).ravel()
+
+            return fbatch
+
+        if is_sin_like:
+            f_sin = _fbatch(0.0, 1.0)
+            f_cos = _fbatch(t_quarter_period, 1.0)
+        else:
+            f_cos = _fbatch(0.0, 1.0)
+            f_sin = _fbatch(t_quarter_period, -1.0)
+
+        if self.comm is not None:
+            comm_handle = self.comm.py2f()
+            interpolant_sin.interpolate_batch(f_sin, comm_handle)
+            interpolant_cos.interpolate_batch(f_cos, comm_handle)
+        else:
+            interpolant_sin.interpolate_batch(f_sin)
+            interpolant_cos.interpolate_batch(f_cos)
+
+        # Store both interpolants
+        self._interpolants_cos[quantity_name] = interpolant_cos
+        self._interpolants_sin[quantity_name] = interpolant_sin
+
+        self._status[quantity_name] = True
+
+        # Restore original points
+        self.field.set_points(original_points)
+
+    def _map_points_to_interpolation_range(self, stz):
+        """Map points to fall within [0, 2*pi] using periodic wrapping.
+
+        Since waves break rotational and stellarator symmetries, we only do
+        periodic wrapping to map theta and zeta to [0, 2*pi], which is their
+        natural periodic range.
+
+        Args:
+            stz: Array of shape (npoints, 3) with (s, theta, zeta) coordinates.
+
+        Returns:
+            stz_mapped: Array of shape (npoints, 3) with mapped coordinates.
+        """
+        stz_mapped = stz.copy()
+        theta = stz[:, 1]
+        zeta = stz[:, 2]
+
+        # Map theta to [0, 2*pi] using periodic wrapping
+        theta = np.mod(theta, 2 * np.pi)
+        stz_mapped[:, 1] = theta
+
+        # Map zeta to [0, 2*pi] using periodic wrapping
+        zeta = np.mod(zeta, 2 * np.pi)
+        stz_mapped[:, 2] = zeta
+
+        return stz_mapped
+
+    def _evaluate_interpolant(self, quantity_name):
+        """Evaluate an interpolated quantity at the current points.
+
+        Uses angle sum identities to restore time dependence, accounting for parity:
+        - For sin-like quantities (Phi, dPhidpsi, alpha, dalphadpsi):
+          Q = Q_spatial * sin(φ + omega*t) where φ = m*theta - n*zeta + phase
+          Using sin(α+β) = sin(α)cos(β) + cos(α)sin(β):
+          Q(t) = Q_sin_coeff * cos(omega*t) + Q_cos_coeff * sin(omega*t)
+        - For cos-like quantities (Phidot, dPhidtheta, dPhidzeta,
+          alphadot, dalphadtheta, dalphadzeta):
+          Q = Q_spatial * cos(φ + omega*t) where φ = m*theta - n*zeta + phase
+          Using cos(α+β) = cos(α)cos(β) - sin(α)sin(β):
+          Q(t) = Q_cos_coeff * cos(omega*t) - Q_sin_coeff * sin(omega*t)
+        """
+        if quantity_name not in self._status or not self._status[quantity_name]:
+            # Need to initialize this quantity
+            self._initialize_quantity(
+                quantity_name, self.srange, self.thetarange, self.zetarange
+            )
+
+        # Get current points
+        points = np.asarray(self.get_points())
+        npoints = points.shape[0]
+
+        # Extract s, theta, zeta coordinates and times
+        stz = points[:, [0, 1, 2]]
+        current_times = points[:, 3]
+
+        # Map points to interpolation range using periodic wrapping
+        stz_mapped = self._map_points_to_interpolation_range(stz)
+
+        # Evaluate cos and sin coefficients
+        result_cos = np.zeros((npoints, 1))
+        result_sin = np.zeros((npoints, 1))
+        self._interpolants_cos[quantity_name].evaluate_batch(stz_mapped, result_cos)
+        self._interpolants_sin[quantity_name].evaluate_batch(stz_mapped, result_sin)
+        # Determine parity and restore time dependence accordingly
+        sin_like_quantities = ["Phi", "dPhidpsi", "alpha", "dalphadpsi"]
+        is_sin_like = quantity_name in sin_like_quantities
+
+        cos_omega_t = np.cos(self.omega * current_times)[:, np.newaxis]
+        sin_omega_t = np.sin(self.omega * current_times)[:, np.newaxis]
+
+        if is_sin_like:
+            # For sin-like: Q(t) = Q_sin_coeff * cos(omega*t) +
+            # Q_cos_coeff * sin(omega*t)
+            # where Q_sin_coeff = Q_spatial * sin(φ) and
+            # Q_cos_coeff = Q_spatial * cos(φ)
+            result = result_sin * cos_omega_t + result_cos * sin_omega_t
+        else:
+            # For cos-like: Q(t) = Q_cos_coeff * cos(omega*t) -
+            # Q_sin_coeff * sin(omega*t)
+            # where Q_cos_coeff = Q_spatial * cos(φ) and
+            # Q_sin_coeff = Q_spatial * sin(φ)
+            result = result_cos * cos_omega_t - result_sin * sin_omega_t
+
+        return result
+
+    def _Phi_impl(self, Phi):
+        """Implementation of Phi using interpolation."""
+        Phi[:] = self._evaluate_interpolant("Phi")
+
+    def _dPhidpsi_impl(self, dPhidpsi):
+        """Implementation of dPhidpsi using interpolation."""
+        dPhidpsi[:] = self._evaluate_interpolant("dPhidpsi")
+
+    def _Phidot_impl(self, Phidot):
+        """Implementation of Phidot using interpolation."""
+        Phidot[:] = self._evaluate_interpolant("Phidot")
+
+    def _dPhidtheta_impl(self, dPhidtheta):
+        """Implementation of dPhidtheta using interpolation."""
+        dPhidtheta[:] = self._evaluate_interpolant("dPhidtheta")
+
+    def _dPhidzeta_impl(self, dPhidzeta):
+        """Implementation of dPhidzeta using interpolation."""
+        dPhidzeta[:] = self._evaluate_interpolant("dPhidzeta")
+
+    def _alpha_impl(self, alpha):
+        """Implementation of alpha using interpolation."""
+        alpha[:] = self._evaluate_interpolant("alpha")
+
+    def _alphadot_impl(self, alphadot):
+        """Implementation of alphadot using interpolation."""
+        alphadot[:] = self._evaluate_interpolant("alphadot")
+
+    def _dalphadtheta_impl(self, dalphadtheta):
+        """Implementation of dalphadtheta using interpolation."""
+        dalphadtheta[:] = self._evaluate_interpolant("dalphadtheta")
+
+    def _dalphadpsi_impl(self, dalphadpsi):
+        """Implementation of dalphadpsi using interpolation."""
+        dalphadpsi[:] = self._evaluate_interpolant("dalphadpsi")
+
+    def _dalphadzeta_impl(self, dalphadzeta):
+        """Implementation of dalphadzeta using interpolation."""
+        dalphadzeta[:] = self._evaluate_interpolant("dalphadzeta")

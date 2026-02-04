@@ -59,20 +59,12 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 auto start = std::chrono::high_resolution_clock::now();
                 interp->interpolate_batch(fbatch, mpi_comm);
                 auto end = std::chrono::high_resolution_clock::now();
-                // std::cout << "[InterpolatedBoozerField] MPI interpolate_batch took "
-                //           << std::scientific
-                //           << std::chrono::duration<double>(end - start).count()
-                //           << " s" << std::endl;
                 return;
             }
 #endif
             auto start = std::chrono::high_resolution_clock::now();
             interp->interpolate_batch(fbatch);
             auto end = std::chrono::high_resolution_clock::now();
-            // std::cout << "[InterpolatedBoozerField] serial interpolate_batch took "
-            //           << std::scientific
-            //           << std::chrono::duration<double>(end - start).count()
-            //           << " s" << std::endl;
         }
 
     protected:
