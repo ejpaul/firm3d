@@ -13,8 +13,6 @@ jobs:
     # if: contains(github.event.pull_request.labels.*.name, 'GPU CI')
     runs-on: [GPU-runner]
     steps:
-      - name: Debug
-        run: lspci | grep -i nvidia
       - name: Check GPU is available
         run: nvidia-smi
 
