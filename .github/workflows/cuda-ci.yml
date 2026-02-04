@@ -21,6 +21,12 @@ jobs:
       - name: Check GPU is available
         run: nvidia-smi
 
+      - name: Configure CUDA Environment
+        run: |
+          echo "/usr/local/cuda/bin" >> $GITHUB_PATH
+          echo "CUDA_HOME=/usr/local/cuda" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v4
         with:
@@ -38,9 +44,6 @@ jobs:
           pip install -e ".[dev]"
           pip install coverage
         env:
-          CUDA_HOME: /usr/local/cuda
-          PATH: /usr/local/cuda/bin:${{ env.PATH }}
-          LD_LIBRARY_PATH: /usr/local/cuda/lib64:${{ env.LD_LIBRARY_PATH }}
           NETCDF_DIR: /usr
           HDF5_DIR: /usr
           GSL_DIR: /usr
