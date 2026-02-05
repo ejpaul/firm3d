@@ -10,7 +10,7 @@ if(CMAKE_CUDA_COMPILER)
     find_package(CUDAToolkit)
     add_definitions(-DUSE_CUDA)
 
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=sm_80")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=native")
     set(CUDA_TARGETS  src/firm3dpp/cuda_kernel.cu src/firm3dpp/cuda_wrapper.cpp)
     message(STATUS "CUDA found. GPU bindings will be compiled.")
 else()
