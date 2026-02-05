@@ -17,7 +17,7 @@ dependencies = [
     "pyevtk",
     "matplotlib",
     "booz-xform>=0.0.9",
-    "multispline"
+    "ndsplines"
 ]
 
 [project.optional-dependencies]
