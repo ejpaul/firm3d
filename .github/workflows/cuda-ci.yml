@@ -21,15 +21,6 @@ jobs:
       - name: Check GPU is available
         run: nvidia-smi
 
-      - name: Configure CUDA Environment
-        run: |
-          echo "CUDA_HOME=/usr/local/cuda" >> $GITHUB_ENV
-          echo "CUDACXX=/usr/local/cuda/bin/nvcc" >> $GITHUB_ENV
-          echo "/usr/local/cuda/bin" >> $GITHUB_PATH
-          echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH" >> $GITHUB_ENV
-        env:
-          CUDA_HOME: /usr/local/cuda
-
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v4
         with:
@@ -43,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install netCDF4 cmake ninja pybind11 setuptools wheel 
+          pip install netCDF4 cmake ninja pybind11<=2.13.6 setuptools wheel 
           NVCC_PATH=$(which nvcc)          
           echo "Using NVCC at: $NVCC_PATH"
 
