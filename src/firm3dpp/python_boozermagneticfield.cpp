@@ -524,6 +524,20 @@ void init_boozermagneticfields(py::module_ &m){
       .def_readwrite("status_modB_derivs",&InterpolatedBoozerField::status_modB_derivs)
       ;
 
+  py::class_<InterpolationRule>(m, "InterpolationRule")
+      .def(py::init<int>())
+      .def_readonly("nodes", &InterpolationRule::nodes)
+      .def_readonly("scalings", &InterpolationRule::scalings)
+      .def_readonly("degree", &InterpolationRule::degree);
+
+  py::class_<UniformInterpolationRule, InterpolationRule>(
+      m, "UniformInterpolationRule"
+  ).def(py::init<int>());
+
+  py::class_<ChebyshevInterpolationRule, InterpolationRule>(
+      m, "ChebyshevInterpolationRule"
+  ).def(py::init<int>());
+
     // ShearAlfvenWave:
     auto saw = py::class_<
         ShearAlfvenWave,
