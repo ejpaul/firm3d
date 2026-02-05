@@ -44,7 +44,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install netCDF4
-          pip install -v -e ".[dev]"
+          pip install -v --no-build-isolation -e ".[dev]"
           pip install coverage
         env:
           CMAKE_ARGS: "-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc -DCMAKE_CUDA_ARCHITECTURES=75 -DCUDAToolkit_ROOT=/usr/local/cuda"
