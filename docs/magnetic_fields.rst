@@ -1,5 +1,5 @@
 Magnetic Field Classes
-=====================
+======================
 
 The equilibrium magnetic field in Boozer coordinates, an instance of ``BoozerMagneticField``, can be represented using different approaches depending on the requirements of your simulation.
 
@@ -44,7 +44,7 @@ And the rotational transform is:
 While formally :math:`I_0 = I_1 = G_1 = K_1 = 0`, these terms have been included in order to test the guiding center equations at finite beta.
 
 Usage Example
-~~~~~~~~~~~~
+~~~~~~~~~~~~~
 
 .. code-block:: python
 
@@ -79,7 +79,7 @@ Field evaluations are parallelized over the number of Fourier harmonics over CPU
    For most use cases, it is recommended to use ``InterpolatedBoozerField.from_booz_xform()`` instead of creating a ``BoozerRadialInterpolant``. The ``from_booz_xform()`` method provides a more convenient interface (through the ``BoozerSplineField`` class) and is the preferred approach in most examples.
 
 Usage Example
-~~~~~~~~~~~~
+~~~~~~~~~~~~~
 
 .. code-block:: python
 
@@ -89,7 +89,7 @@ Usage Example
    field = BoozerRadialInterpolant("boozmn_file.nc")
 
 Preparing booz_xform Equilibrium
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 As stated above, the ``booz_xform`` equilibrium must be performed with all surfaces on the VMEC half grid, and with ``phip``, ``chi``, ``pres``, and ``phi`` saved in the file. This can be done using the `C++ implementation <https://github.com/hiddenSymmetries/booz_xform>`_ with the main branch, by passing ``flux=True`` to ``read_wout()``:
 
@@ -121,7 +121,7 @@ Key features:
 - Supports parallel computation via MPI communicator
 
 Usage Example
-~~~~~~~~~~~~~
+~~~~~~~~~~~~~~
 
 .. code-block:: python
 
@@ -168,8 +168,10 @@ Usage Example
 .. note::
    For most use cases, it is recommended to use ``InterpolatedBoozerField.from_booz_xform()`` instead of creating a ``BoozerSplineField`` directly. The ``from_booz_xform()`` method creates a ``BoozerSplineField`` internally and wraps it with an ``InterpolatedBoozerField`` for optimal performance in particle tracing.
 
+.. _interpolatedboozerfield:
+
 InterpolatedBoozerField
------------------------
+--------------------------
 
 This field interpolates a magnetic field on a regular grid in :math:`(s,\theta,\zeta)`. This resulting interpolant can then be evaluated very quickly inside the tracing loop.
 
@@ -227,7 +229,7 @@ For advanced use cases, you can also create an ``InterpolatedBoozerField`` from 
    )
 
 Field Evaluation
----------------
+----------------
 
 All magnetic field classes provide methods to evaluate the field at given points. First, set the evaluation points, then evaluate the field quantities:
 

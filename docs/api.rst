@@ -1,10 +1,10 @@
 API Reference
-============
+=============
 
 This page provides detailed API documentation for the main FIRM3D modules and classes.
 
 Magnetic Field Classes
----------------------
+----------------------
 
 .. automodule:: firm3d.field.boozermagneticfield
    :members:
@@ -17,7 +17,7 @@ Magnetic Field Classes
    :show-inheritance:
 
 Trajectory Integration
----------------------
+----------------------
 
 .. automodule:: firm3d.field.trajectory_helpers
    :members:
@@ -25,7 +25,7 @@ Trajectory Integration
    :show-inheritance:
 
 Stopping Criteria
-----------------
+-----------------
 
 # Note: This module may not exist yet in the current codebase
 # .. automodule:: firm3d.field.stopping_criteria
@@ -34,7 +34,7 @@ Stopping Criteria
 #    :show-inheritance:
 
 Shear Alfvén Wave Classes
-------------------------
+-------------------------
 
 # Note: This module may not exist yet in the current codebase
 # .. automodule:: firm3d.field.shear_alfven_waves
@@ -43,7 +43,7 @@ Shear Alfvén Wave Classes
 #    :show-inheritance:
 
 Utility Functions
-----------------
+-----------------
 
 .. automodule:: firm3d.util.constants
    :members:
@@ -56,7 +56,7 @@ Utility Functions
    :show-inheritance:
 
 Plotting Utilities
------------------
+------------------
 
 .. automodule:: firm3d.plotting.plotting_helpers
    :members:
@@ -64,7 +64,7 @@ Plotting Utilities
    :show-inheritance:
 
 Core Types and Utilities
------------------------
+-------------------------
 
 .. automodule:: firm3d._core.types
    :members:
@@ -77,7 +77,7 @@ Core Types and Utilities
    :show-inheritance:
 
 SAW (Shear Alfvén Wave) Module
------------------------------
+------------------------------
 
 .. automodule:: firm3d.saw.ae3d
    :members:
@@ -90,7 +90,7 @@ SAW (Shear Alfvén Wave) Module
    :show-inheritance:
 
 Class Hierarchy
---------------
+---------------
 
 .. inheritance-diagram:: firm3d.field.boozermagneticfield
    :parts: 1

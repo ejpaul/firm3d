@@ -1,5 +1,7 @@
+.. _trajectory_saving:
+
 Trajectory Saving
-================
+=================
 
 There are two ways the trajectory information can be saved: by recording "hits" of user-defined coordinate planes (e.g., Poincaré sections), or by recording uniform time intervals of the trajectory. The routines ``trace_particles_boozer`` or ``trace_particles_boozer_perturbed`` return this information in the tuple ``(res_tys,res_hits)``.
 
