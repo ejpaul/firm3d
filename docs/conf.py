@@ -37,6 +37,7 @@ extensions = [
     "sphinx.ext.intersphinx",
     "sphinx.ext.mathjax",
     "sphinx.ext.autosummary",
+    "sphinx.ext.inheritance_diagram",
     "sphinx_rtd_theme",
     "myst_parser",
 ]
@@ -101,12 +102,11 @@ intersphinx_mapping = {
     "matplotlib": ("https://matplotlib.org/stable/", None),
 }
 
-# -- Options for MathJax ----------------------------------------------------
+# -- Options for MathJax (v3) -----------------------------------------------
 
-mathjax_config = {
-    "TeX": {
-        "equationNumbers": {"autoNumber": "AMS"},
-        "extensions": ["AMSmath.js", "AMSsymbols.js"],
+mathjax3_config = {
+    "tex": {
+        "tags": "ams",
     }
 }
 

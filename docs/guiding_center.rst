@@ -18,7 +18,7 @@ See R. White, Theory of Tokamak Plasmas, Sec. 3.2.
 The trajectory information is saved as :math:`(s,\theta,\zeta,v_{||})`, where :math:`s = \psi_0` is the toroidal flux normalized to its value on the boundary, :math:`2\pi\psi_0`.
 
 Unperturbed Guiding Center Integration
--------------------------------------
+--------------------------------------
 
 The primary routine for unperturbed guiding center integration is ``trace_particles_boozer``. The mode can be specified as ``mode='gc_vac'``, ``mode='gc_noK'``, or ``mode='gc'``. Be default, the mode is determined from the ``BoozerMagneticField`` object.
 
@@ -63,7 +63,7 @@ In the case of ``mode='gc'`` we solve the general guiding center equations for a
 where primes indicate differentiation wrt :math:`\psi`. In the case ``mode='gc_noK'``, the above equations are used with :math:`K=0`.
 
 Perturbed Guiding Center Integration
------------------------------------
+------------------------------------
 
 The primary routine for perturbed guiding center integration is ``trace_particles_boozer_perturbed``.
 

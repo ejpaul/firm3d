@@ -14,6 +14,7 @@ The core routines are based on `SIMSOPT <https://simsopt.readthedocs.io>`_, but 
    :maxdepth: 2
    :caption: Contents:
 
+   README
    installation
    magnetic_fields
    shear_alfven_waves
