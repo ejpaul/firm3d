@@ -37,34 +37,19 @@ tmax = 1e-2  # Time for integration
 ns_interp = resolution
 ntheta_interp = resolution
 nzeta_interp = resolution
-interp = True
 
 # Setup logging to redirect output to file
-setup_logging(f"stdout_{nParticles}_{resolution}_{comm_size}_{interp}.txt")
+setup_logging(f"stdout_{nParticles}_{resolution}_{comm_size}.txt")
 
-time1 = time.time()
 ## Setup field interpolation
-if interp:
-    field = InterpolatedBoozerField.from_booz_xform(
-        boozmn_filename,
-        degree=degree,
-        ns=ns_interp,
-        ntheta=ntheta_interp,
-        nzeta=nzeta_interp,
-        spline_deriv=False,
-        comm=comm_world,
-    )
-else:
-    bri = BoozerRadialInterpolant(boozmn_filename, order, no_K=False, comm=comm_world)
-    field = InterpolatedBoozerField(
-        bri,
-        degree=degree,
-        ns_interp=ns_interp,
-        ntheta_interp=ntheta_interp,
-        nzeta_interp=nzeta_interp,
-    )
-time2 = time.time()
-proc0_print("Total elapsed time for field interpolation setup = ", time2 - time1)
+field = InterpolatedBoozerField.from_booz_xform(
+    boozmn_filename,
+    degree=order,
+    ns=ns_interp,
+    ntheta=ntheta_interp,
+    nzeta=nzeta_interp,
+    comm=comm_world,
+)
 
 # Define fusion birth distribution
 # Bader, A., et al. "Modeling of energetic particle transport in optimized
