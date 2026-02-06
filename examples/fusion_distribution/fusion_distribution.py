@@ -7,7 +7,6 @@ import numpy as np
 from mpi4py import MPI  # noqa: F401
 
 from firm3d.field.boozermagneticfield import (
-    BoozerRadialInterpolant,
     InterpolatedBoozerField,
 )
 from firm3d.field.tracing import (
