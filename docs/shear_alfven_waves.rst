@@ -121,6 +121,64 @@ Both wave classes provide methods to evaluate the perturbed fields. First, set t
    saw.set_points(single_point)
    phi_single = saw.phi()[0]  # get first (and only) value
 
+InterpolatedShearAlfvenWave
+---------------------------
+
+``InterpolatedShearAlfvenWave`` accelerates evaluation of wave quantities by
+interpolating a ``ShearAlfvenWave`` on a regular grid in
+:math:`(s,\theta,\zeta)` using the C++ ``RegularGridInterpolant3D``. The
+interpolant is built at :math:`t=0`; time dependence is restored by combining
+the stored sin/cos coefficients at runtime. This class is recommended for
+tracing loops where repeated evaluations dominate runtime.
+
+Usage Example
+~~~~~~~~~~~~
+
+.. code-block:: python
+
+   from firm3d.field import BoozerAnalytic, ShearAlfvenHarmonic, InterpolatedShearAlfvenWave
+   import numpy as np
+
+   # Base equilibrium field and wave
+   eq_field = BoozerAnalytic(B0=1.0, iota0=0.5)
+   saw = ShearAlfvenHarmonic(Phihat=0.01, m=2, n=1, omega=1.0, phase=0.0, B0=eq_field)
+
+   # Build interpolant (degree-3 polynomial, 48x48x48 grid by default)
+   saw_interp = InterpolatedShearAlfvenWave(
+       saw,
+       degree=3,
+       ns_interp=48,
+       ntheta_interp=48,
+       nzeta_interp=48,
+       extrapolate=True,
+       initialize=["Phi", "dPhidpsi", "dPhidtheta", "dPhidzeta"],
+   )
+
+   # Evaluate on points (s, theta, zeta, t)
+   points = np.array([[0.5, 0.1, 0.2, 0.0]])
+   saw_interp.set_points(points)
+   phi = saw_interp.Phi()
+
+MPI Parallel Grid Evaluation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If you have MPI available, you can parallelize the grid evaluation by passing
+an MPI communicator through ``comm``. This uses ``comm.py2f()`` to forward the
+Fortran communicator handle into the C++ interpolant:
+
+.. code-block:: python
+
+   from mpi4py import MPI
+   comm = MPI.COMM_WORLD
+   saw_interp = InterpolatedShearAlfvenWave(
+       saw,
+       degree=3,
+       ns_interp=64,
+       ntheta_interp=64,
+       nzeta_interp=64,
+       comm=comm,
+   )
+
 Radial Profiles
 --------------
 
