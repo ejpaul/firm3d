@@ -1060,26 +1060,34 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             nlohmann::json j;
             file >> j;
             file.close();
-            
-            // const_cast is safe here: we're in the constructor before the object
-            // is fully constructed, so these members haven't been used yet
+
+            // Require keys written by to_json(); throw clear error if any are missing
+            const std::vector<std::string> required_keys = {
+                "psi0", "field_type", "nfp", "stellsym", "extrapolate",
+                "s_range", "theta_range", "zeta_range", "degree"
+            };
+            for (const auto& key : required_keys) {
+                if (!j.contains(key)) {
+                    throw std::runtime_error("JSON missing required key: " + key);
+                }
+            }
+
             const_cast<double&>(psi0) = j["psi0"].get<double>();
             const_cast<string&>(field_type) = j["field_type"].get<string>();
             const_cast<int&>(nfp) = j["nfp"].get<int>();
             const_cast<bool&>(stellsym) = j["stellsym"].get<bool>();
             const_cast<bool&>(extrapolate) = j["extrapolate"].get<bool>();
-            
+
             auto s_vec = j["s_range"].get<std::vector<double>>();
             auto theta_vec = j["theta_range"].get<std::vector<double>>();
             auto zeta_vec = j["zeta_range"].get<std::vector<double>>();
             const_cast<RangeTriplet&>(s_range) = {s_vec[0], s_vec[1], static_cast<int>(s_vec[2])};
             const_cast<RangeTriplet&>(theta_range) = {theta_vec[0], theta_vec[1], static_cast<int>(theta_vec[2])};
             const_cast<RangeTriplet&>(zeta_range) = {zeta_vec[0], zeta_vec[1], static_cast<int>(zeta_vec[2])};
-            
+
             int degree = j["degree"].get<int>();
-            // Use placement new since InterpolationRule has const members
             new (const_cast<InterpolationRule*>(&rule)) UniformInterpolationRule(degree);
-            
+
             if (j.contains("interpolants")) {
                 auto& interps = j["interpolants"];
                 for (auto& [name, data] : interps.items()) {
@@ -1136,15 +1144,18 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             save_interpolant_if_computed(j, "Z_derivs", interp_Z_derivs, status_Z_derivs);
             
             std::ofstream file(json_path);
-            file << j.dump(2);
+            const int json_indent = 2;  // spaces per indent level so that JSON is readable
+            file << j.dump(json_indent);
             file.close();
         }
-        
+
+        // Getters for Python from_json(): nfp, stellsym, extrapolate are private
+        // so pybind11 cannot expose them with def_readonly.
         int get_nfp() const { return nfp; }
         bool get_stellsym() const { return stellsym; }
+        bool get_extrapolate() const { return extrapolate; }
         double get_psi0() const { return psi0; }
         string get_field_type() const { return field_type; }
-        bool get_extrapolate() const { return extrapolate; }
 
     private:
         // Serialization helpers for to_json() and the JSON constructor.
@@ -1152,14 +1163,17 @@ class InterpolatedBoozerField : public BoozerMagneticField {
         // load_single_interpolant: creates interpolant from JSON, sets status flag to prevent recomputation.
         
         void save_interpolant_if_computed(nlohmann::json& j, const std::string& name,
-                const shared_ptr<RegularGridInterpolant3D<Array2>>& interp, bool status) const {
-            if (status && interp) {
+                const shared_ptr<RegularGridInterpolant3D<Array2>>& interp, bool is_computed) const {
+            // In this class is_computed and interp are always set together, so is_computed true
+            // implies interp non-null. We check interp anyway to avoid null dereference
+            // if that invariant is ever broken. interp is a std::shared_ptr; the standard
+            // defines explicit operator bool() for it (true when non-null), so in
+            // "if (interp)" the compiler converts the pointer to bool, not a function call.
+            if (is_computed && interp) {
                 auto data = interp->get_interpolant_data();
-                nlohmann::json interp_json;
                 for (const auto& [key, vec] : data) {
-                    interp_json[key] = vec;
+                    j["interpolants"][name][key] = vec;
                 }
-                j["interpolants"][name] = interp_json;
             }
         }
         
@@ -1168,8 +1182,13 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             for (auto& [key, value] : data.items()) {
                 if (value.is_array()) {
                     data_map[key] = value.get<std::vector<double>>();
+                } else if (value.is_number()) {
+                    data_map[key] = {value.get<double>()}; 
+                    //.get<double> from nlohmann library safely converts
+                    // acceptable types to double. But just in case,
+                    // we provide explicity numeric check
                 } else {
-                    data_map[key] = {value.get<double>()};
+                    throw std::runtime_error("Interpolant data key '" + key + "': expected array or number, got non-numeric JSON type");
                 }
             }
             
@@ -1189,7 +1208,8 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                 rule, s_range, y_range, z_range, value_size, extrapolate);
             interp->set_interpolant_data(data_map);
             
-            // status=true skips the if(!status_X) block in _*_impl(), so interpolate_batch() is never called
+            // Set status_X = true (same meaning as is_computed) so _*_impl() skips interpolate_batch().
+            // Member names stay status_* to match the rest of the class (e.g. if(!status_modB)).
             if (name == "modB") { interp_modB = interp; status_modB = true; }
             else if (name == "dmodBdtheta") { interp_dmodBdtheta = interp; status_dmodBdtheta = true; }
             else if (name == "dmodBdzeta") { interp_dmodBdzeta = interp; status_dmodBdzeta = true; }

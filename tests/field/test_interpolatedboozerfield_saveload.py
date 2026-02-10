@@ -6,6 +6,11 @@ Verifies that:
 - Interpolation rule (degree, nodes, scalings) is preserved
 - Field evaluations (modB, G, iota, etc.) match after load
 - Status flags are correctly set to prevent recomputation
+- Tracing is preserved: test_tracing_identical_after_load and
+  test_tracing_perturbed_identical_after_load run the same particle tracing
+  with the original field and with a field loaded from JSON, then assert the
+  trajectories match (unperturbed and SAW-perturbed, as in the fusion_distribution
+  examples).
 Test configurations cover vacuum and MHD equilibria with different symmetries.
 """
 
@@ -19,6 +24,21 @@ import numpy as np
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
+    ShearAlfvenHarmonic,
+)
+from firm3d.field.tracing import (
+    MaxToroidalFluxStoppingCriterion,
+    trace_particles_boozer,
+    trace_particles_boozer_perturbed,
+)
+from firm3d.field.tracing_helpers import (
+    initialize_position_profile,
+    initialize_velocity_uniform,
+)
+from firm3d.util.constants import (
+    ALPHA_PARTICLE_CHARGE,
+    ALPHA_PARTICLE_MASS,
+    FUSION_ALPHA_PARTICLE_ENERGY,
 )
 
 # Path to test_files directory containing equilibrium data files
@@ -302,6 +322,222 @@ class TestInterpolatedBoozerFieldSaveLoad(unittest.TestCase):
                 msg_prefix="all_quantities: ",
             )
 
+        finally:
+            if json_path and os.path.exists(json_path):
+                os.remove(json_path)
+
+    def test_tracing_identical_after_load(self):
+        """
+        Unperturbed tracing: trace one particle with original field, save
+        trajectory; repeat with field loaded from JSON; compare trajectories.
+        Uses the full s range [0, 1] (like the examples) so that
+        initialize_position_profile can sample the whole domain.
+        Small resolution and grid sizes keep field construction and
+        rejection sampling fast.
+        """
+        config = TEST_CONFIGS["vac_qa"]
+        if not os.path.exists(config["file"]):
+            self.skipTest(f"Test file not found: {config['file']}")
+
+        n_particles = 1
+        tmax = 1e-2
+        reactivity = lambda s: (1 - s**5) ** 2
+
+        # Build field with full s range [0, 1] and higher resolution
+        bri = BoozerRadialInterpolant(config["file"], config["order"], comm=comm)
+        field = InterpolatedBoozerField(
+            bri,
+            degree=3,
+            ns_interp=24,
+            ntheta_interp=24,
+            nzeta_interp=24,
+        )
+
+        # Small grid sizes (10x10x10 = 1000 pts) instead of default 100^3
+        points = initialize_position_profile(
+            field,
+            n_particles,
+            reactivity,
+            ns_max=10,
+            ntheta_max=10,
+            nzeta_max=10,
+            comm=comm,
+            seed=42,
+        )
+        Ekin = FUSION_ALPHA_PARTICLE_ENERGY
+        mass = ALPHA_PARTICLE_MASS
+        charge = ALPHA_PARTICLE_CHARGE
+        vpar0 = np.sqrt(2 * Ekin / mass)
+        vpar_init = initialize_velocity_uniform(
+            vpar0,
+            n_particles,
+            comm=comm,
+            seed=42,
+        )
+
+        res_tys_orig, res_hits_orig = trace_particles_boozer(
+            field,
+            points,
+            vpar_init,
+            tmax=tmax,
+            mass=mass,
+            charge=charge,
+            comm=comm,
+            Ekin=Ekin,
+            stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
+            forget_exact_path=True,
+            abstol=1e-10,
+            reltol=1e-10,
+        )
+
+        json_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+                json_path = f.name
+            field.to_json(json_path)
+            loaded_field = InterpolatedBoozerField.from_json(json_path)
+
+            res_tys_loaded, res_hits_loaded = trace_particles_boozer(
+                loaded_field,
+                points,
+                vpar_init,
+                tmax=tmax,
+                mass=mass,
+                charge=charge,
+                comm=comm,
+                Ekin=Ekin,
+                stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
+                forget_exact_path=True,
+                abstol=1e-10,
+                reltol=1e-10,
+            )
+
+            self.assertEqual(
+                len(res_tys_orig),
+                len(res_tys_loaded),
+                msg="Tracing with loaded field must produce same trajectories",
+            )
+            for i, (ty_orig, ty_loaded) in enumerate(zip(res_tys_orig, res_tys_loaded)):
+                np.testing.assert_allclose(
+                    ty_orig,
+                    ty_loaded,
+                    rtol=1e-11,
+                    atol=1e-13,
+                    err_msg=f"Tracing trajectory {i} differs after load",
+                )
+        finally:
+            if json_path and os.path.exists(json_path):
+                os.remove(json_path)
+
+    def test_tracing_perturbed_identical_after_load(self):
+        """
+        Perturbed tracing: trace one particle with original SAW field, then
+        with field loaded from JSON; compare trajectories.
+        Uses the full s range [0, 1] (like the examples) so that
+        initialize_position_profile can sample the whole domain.
+        Small resolution and grid sizes keep field construction and
+        rejection sampling fast.
+        """
+        config = TEST_CONFIGS["vac_qa"]
+        if not os.path.exists(config["file"]):
+            self.skipTest(f"Test file not found: {config['file']}")
+
+        n_particles = 1
+        tmax = 1e-2
+        Phihat = -1.5e3
+        Phim, Phin, omega, phase = 1, 1, 1e5, 0.0
+        reactivity = lambda s: (1 - s**5) ** 2
+
+        # Build field with full s range [0, 1] and higher resolution
+        bri = BoozerRadialInterpolant(config["file"], config["order"], comm=comm)
+        field = InterpolatedBoozerField(
+            bri,
+            degree=3,
+            ns_interp=24,
+            ntheta_interp=24,
+            nzeta_interp=24,
+        )
+
+        # Small grid sizes (10x10x10 = 1000 pts) instead of default 100^3
+        points = initialize_position_profile(
+            field,
+            n_particles,
+            reactivity,
+            ns_max=10,
+            ntheta_max=10,
+            nzeta_max=10,
+            comm=comm,
+            seed=42,
+        )
+        Ekin = FUSION_ALPHA_PARTICLE_ENERGY
+        mass = ALPHA_PARTICLE_MASS
+        charge = ALPHA_PARTICLE_CHARGE
+        vpar0 = np.sqrt(2 * Ekin / mass)
+        vpar_init = initialize_velocity_uniform(
+            vpar0,
+            n_particles,
+            comm=comm,
+            seed=42,
+        )
+        field.set_points(points)
+        mu_init = (vpar0**2 - vpar_init**2) / (2 * field.modB()[:, 0])
+
+        saw_orig = ShearAlfvenHarmonic(Phihat, Phim, Phin, omega, phase, field)
+        res_tys_orig, res_hits_orig = trace_particles_boozer_perturbed(
+            saw_orig,
+            points,
+            vpar_init,
+            mu_init,
+            mass=mass,
+            charge=charge,
+            comm=comm,
+            stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
+            forget_exact_path=True,
+            abstol=1e-10,
+            reltol=1e-10,
+            tmax=tmax,
+        )
+
+        json_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+                json_path = f.name
+            field.to_json(json_path)
+            loaded_field = InterpolatedBoozerField.from_json(json_path)
+            loaded_field.set_points(points)
+            mu_loaded = (vpar0**2 - vpar_init**2) / (2 * loaded_field.modB()[:, 0])
+            saw_loaded = ShearAlfvenHarmonic(
+                Phihat, Phim, Phin, omega, phase, loaded_field
+            )
+
+            res_tys_loaded, res_hits_loaded = trace_particles_boozer_perturbed(
+                saw_loaded,
+                points,
+                vpar_init,
+                mu_loaded,
+                mass=mass,
+                charge=charge,
+                comm=comm,
+                stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
+                forget_exact_path=True,
+                abstol=1e-10,
+                reltol=1e-10,
+                tmax=tmax,
+            )
+
+            self.assertEqual(
+                len(res_tys_orig),
+                len(res_tys_loaded),
+                msg="Perturbed loaded field tracing must produce same trajectories",
+            )
+            for i, (ty_orig, ty_loaded) in enumerate(zip(res_tys_orig, res_tys_loaded)):
+                np.testing.assert_allclose(
+                    ty_orig,
+                    ty_loaded,
+                    rtol=1e-11,
+                    atol=1e-13,
+                    err_msg=f"Perturbed tracing trajectory {i} differs after load",
+                )
         finally:
             if json_path and os.path.exists(json_path):
                 os.remove(json_path)

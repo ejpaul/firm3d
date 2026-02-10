@@ -96,8 +96,7 @@ int RegularGridInterpolant3D<Array>::locate_unsafe(double x, double y, double z)
 template<class Array>
 void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double y, double z, double* res){
 
-    // to avoid errors when the data is just a tiny bit out of bounds
-    // due to machine precision, we perform this check and shift
+    
     if(x >= xmax) x -= _EPS_;
     else if (x <= xmin) x += _EPS_;
     if(y >= ymax) y -= _EPS_;
@@ -125,8 +124,7 @@ void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double y, doubl
 template<class Array>
 void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double* res){
 
-    // to avoid errors when the data is just a tiny bit out of bounds
-    // due to machine precision, we perform this check and shift
+    
     if(x >= xmax) x -= _EPS_;
     else if (x <= xmin) x += _EPS_;
 
@@ -305,6 +303,8 @@ std::map<std::string, std::vector<double>> RegularGridInterpolant3D<Array>::get_
 
 template<class Array>
 void RegularGridInterpolant3D<Array>::set_interpolant_data(const std::map<std::string, std::vector<double>>& data) {
+    // Look up "vals" in the map. find() returns an iterator pointing to a
+    // std::pair<key, value>. Access the value via .second (key is .first).
     auto it = data.find("vals");
     if (it != data.end()) {
         vals = it->second;

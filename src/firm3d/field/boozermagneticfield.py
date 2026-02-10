@@ -2318,7 +2318,6 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
             for item in initialize:
                 getattr(self, item)()
 
-    # __init__ above is unchanged; from_json is added for loading saved fields
     @classmethod
     def from_json(cls, json_file_path):
         """
@@ -2340,13 +2339,17 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
             # Later, reload without recomputation
             loaded_field = InterpolatedBoozerField.from_json("field_data.json")
         """
-        # Create an instance without calling __init__
+        # InterpolatedBoozerField inherits from both
+        # sopp.InterpolatedBoozerField (C++) and BoozerMagneticField (Python).
+        # We must initialize each parent separately since the normal __init__
+        # requires a BoozerRadialInterpolant which we don't have when loading.
         instance = cls.__new__(cls)
 
-        # Initialize the C++ part from JSON (loads all interpolant data)
+        # C++ side: reads JSON and restores all interpolants + status flags
         sopp.InterpolatedBoozerField.__init__(instance, json_file_path)
 
-        # Initialize the Python part using values from the loaded C++ object
+        # Python side needs psi0, field_type, nfp, stellsym. C++ keeps them private,
+        # so we use getters instead of attributes.
         BoozerMagneticField.__init__(
             instance,
             instance.get_psi0(),
