@@ -39,7 +39,7 @@ jobs:
           echo "Using NVCC at: $NVCC_PATH"
 
           export CUDACXX=$NVCC_PATH
-          pip install -v --no-build-isolation -e ".[dev]"
+          pip install -v --no-build-isolation ".[dev]"
           pip install coverage
         env:
           NETCDF_DIR: /usr
