@@ -34,14 +34,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install netCDF4 cmake ninja "pybind11<=2.13.6" setuptools wheel 
-          NVCC_PATH=$(which nvcc)          
-          echo "Using NVCC at: $NVCC_PATH"
-
-          export CUDACXX=$NVCC_PATH
-          python -m pip install -v --no-build-isolation ".[dev]"
+          python -m pip install -v ".[dev]"
           python -m pip install coverage
         env:
+          CUDACXX: /usr/bin/nvcc
           NETCDF_DIR: /usr
           HDF5_DIR: /usr
           GSL_DIR: /usr
