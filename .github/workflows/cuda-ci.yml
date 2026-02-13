@@ -18,8 +18,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Check GPU is available
-        run: nvidia-smi
+      #- name: Check GPU is available
+      #  run: nvidia-smi
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v4
