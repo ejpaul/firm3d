@@ -12,6 +12,16 @@ Verifies that:
   trajectories match (unperturbed and SAW-perturbed, as in the fusion_distribution
   examples).
 Test configurations cover vacuum and MHD equilibria with different symmetries.
+
+Many tests use try/finally when writing to a temporary JSON file: the try block
+runs the test (save field, load field, run assertions); the finally block
+deletes the temp file. The finally runs even when the test fails or raises,
+so we never leave temporary JSON files on disk.
+
+Pass/fail: Assertions (assertEqual, assert_allclose, etc.) in the try block
+determine whether the test passes. If one fails, it raises AssertionError;
+that exception propagates after the finally block runs (cleanup only). We do
+not catch exceptions, so the test runner correctly reports FAILED.
 """
 
 import os
@@ -163,6 +173,42 @@ class TestInterpolatedBoozerFieldSaveLoad(unittest.TestCase):
             err_msg=f"{msg_prefix}rule.scalings mismatch",
         )
 
+    # Every status flag exposed by InterpolatedBoozerField.  The callable
+    # method name is the flag name with the "status_" prefix stripped.
+    ALL_STATUS_FLAGS = [
+        "status_modB",
+        "status_dmodBdtheta",
+        "status_dmodBdzeta",
+        "status_dmodBds",
+        "status_modB_derivs",
+        "status_G",
+        "status_I",
+        "status_iota",
+        "status_psip",
+        "status_dGds",
+        "status_dIds",
+        "status_diotads",
+        "status_K",
+        "status_dKdtheta",
+        "status_dKdzeta",
+        "status_K_derivs",
+        "status_nu",
+        "status_dnudtheta",
+        "status_dnudzeta",
+        "status_dnuds",
+        "status_nu_derivs",
+        "status_R",
+        "status_dRdtheta",
+        "status_dRdzeta",
+        "status_dRds",
+        "status_R_derivs",
+        "status_Z",
+        "status_dZdtheta",
+        "status_dZdzeta",
+        "status_dZds",
+        "status_Z_derivs",
+    ]
+
     def _verify_evaluations(
         self,
         field1,
@@ -170,11 +216,28 @@ class TestInterpolatedBoozerFieldSaveLoad(unittest.TestCase):
         grid_ranges,
         num_points=100,
         msg_prefix="",
-        quantities=None,
     ):
-        """Verify field evaluations match at random points."""
-        if quantities is None:
-            quantities = ["modB", "G", "iota", "psip"]
+        """Verify field evaluations match at random points.
+
+        Discovers which quantities were actually computed by checking every
+        status flag on field1.  For each True flag, asserts the loaded field
+        also has it True, then compares evaluated values.  This way the test
+        automatically covers exactly the quantities that were computed and
+        saved, with no hardcoded list to keep in sync.
+        """
+        # Discover which quantities were computed on the original field
+        computed = []
+        for flag in self.ALL_STATUS_FLAGS:
+            if getattr(field1, flag, False):
+                self.assertTrue(
+                    getattr(field2, flag, False),
+                    f"{msg_prefix}{flag} is True on original but False on loaded field",
+                )
+                computed.append(flag[len("status_") :])  # strip prefix -> method name
+
+        self.assertGreater(
+            len(computed), 0, f"{msg_prefix}No quantities were computed on field1"
+        )
 
         np.random.seed(42)
         margin = 0.05
@@ -194,49 +257,24 @@ class TestInterpolatedBoozerFieldSaveLoad(unittest.TestCase):
         field1.set_points(points)
         field2.set_points(points)
 
-        # Compare each quantity
-        for qty in quantities:
-            try:
-                val1 = getattr(field1, qty)()
-                val2 = getattr(field2, qty)()
-                np.testing.assert_allclose(
-                    val1,
-                    val2,
-                    rtol=1e-12,
-                    atol=1e-14,
-                    err_msg=f"{msg_prefix}{qty} values differ",
-                )
-            except Exception as e:
-                # Some quantities may not be available for all field types
-                if "not implemented" not in str(e).lower():
-                    raise
+        for qty in computed:
+            val1 = getattr(field1, qty)()
+            val2 = getattr(field2, qty)()
+            np.testing.assert_allclose(
+                val1,
+                val2,
+                rtol=1e-12,
+                atol=1e-14,
+                err_msg=f"{msg_prefix}{qty} values differ",
+            )
 
     def _verify_status_flags(self, field1, field2, msg_prefix=""):
-        """Verify that status flags match between two fields."""
-        status_attrs = [
-            "status_modB",
-            "status_G",
-            "status_I",
-            "status_iota",
-            "status_psip",
-            "status_dGds",
-            "status_dIds",
-            "status_diotads",
-            "status_K",
-            "status_nu",
-            "status_R",
-            "status_Z",
-            "status_modB_derivs",
-            "status_K_derivs",
-            "status_nu_derivs",
-            "status_R_derivs",
-            "status_Z_derivs",
-        ]
-        for attr in status_attrs:
-            val1 = getattr(field1, attr)
-            val2 = getattr(field2, attr)
+        """Verify that every status flag matches between two fields."""
+        for flag in self.ALL_STATUS_FLAGS:
+            val1 = getattr(field1, flag)
+            val2 = getattr(field2, flag)
             self.assertEqual(
-                val1, val2, msg=f"{msg_prefix}{attr} mismatch: {val1} vs {val2}"
+                val1, val2, msg=f"{msg_prefix}{flag} mismatch: {val1} vs {val2}"
             )
 
     def test_saveload_vac_qa(self):
@@ -289,42 +327,37 @@ class TestInterpolatedBoozerFieldSaveLoad(unittest.TestCase):
                 os.remove(json_path)
 
     def test_all_field_quantities(self):
-        """Test that all common field quantities are preserved through save/load."""
-        config = TEST_CONFIGS["vac_qa"]
-        if not os.path.exists(config["file"]):
-            self.skipTest(f"Test file not found: {config['file']}")
+        """Test that every computed quantity is preserved for each config.
 
-        json_path = None
-        try:
-            bri, field, grid_ranges = self._create_field(config)
+        Iterates over all TEST_CONFIGS so that vac, nok, and general field
+        types are each verified with their full set of computed quantities.
+        _verify_evaluations discovers the set automatically via status flags.
+        """
+        for config_name, config in TEST_CONFIGS.items():
+            if not os.path.exists(config["file"]):
+                continue  # skip unavailable equilibria
 
-            with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-                json_path = f.name
-            field.to_json(json_path)
+            json_path = None
+            try:
+                bri, field, grid_ranges = self._create_field(config)
 
-            loaded_field = InterpolatedBoozerField.from_json(json_path)
+                with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+                    json_path = f.name
+                field.to_json(json_path)
 
-            # Test comprehensive list of quantities
-            quantities = [
-                "modB",
-                "G",
-                "iota",
-                "psip",
-                "modB_derivs",  # Combined derivatives
-            ]
+                loaded_field = InterpolatedBoozerField.from_json(json_path)
 
-            self._verify_evaluations(
-                field,
-                loaded_field,
-                grid_ranges,
-                num_points=50,
-                quantities=quantities,
-                msg_prefix="all_quantities: ",
-            )
+                self._verify_evaluations(
+                    field,
+                    loaded_field,
+                    grid_ranges,
+                    num_points=50,
+                    msg_prefix=f"all_quantities({config_name}): ",
+                )
 
-        finally:
-            if json_path and os.path.exists(json_path):
-                os.remove(json_path)
+            finally:
+                if json_path and os.path.exists(json_path):
+                    os.remove(json_path)
 
     def test_tracing_identical_after_load(self):
         """
