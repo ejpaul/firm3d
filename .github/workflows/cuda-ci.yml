@@ -11,15 +11,15 @@ on:
 jobs:
   tests:
     # if: contains(github.event.pull_request.labels.*.name, 'GPU CI')
-    runs-on: ubuntu-latest
+    runs-on: [GPU-runner]
     strategy:
       matrix:
         python-version: ['3.9', '3.10', '3.11']
     steps:
       - uses: actions/checkout@v4
       
-      #- name: Check GPU is available
-      #  run: nvidia-smi
+      - name: Check GPU is available
+        run: nvidia-smi
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v4
@@ -29,16 +29,16 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libboost-all-dev libopenmpi-dev libnetcdf-dev libhdf5-dev libnetcdf-c++4-dev libgsl-dev pkg-config nvidia-cuda-toolkit
+          sudo apt-get install -y cmake ninja-build libboost-all-dev libopenmpi-dev libnetcdf-dev libhdf5-dev libnetcdf-c++4-dev libgsl-dev pkg-config
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip   
           python -m pip install netCDF4
-          python -m pip install -v -e ".[dev]"
+          python -m pip install -v --no-cache-dir -e ".[dev]"
           python -m pip install coverage
         env:
-          CUDACXX: /usr/bin/nvcc
+          CUDACXX: /usr/local/cuda/bin/nvcc
           NETCDF_DIR: /usr
           HDF5_DIR: /usr
           GSL_DIR: /usr
@@ -55,5 +55,3 @@ jobs:
           file: ./coverage.xml
           flags: unittests
           name: codecov-umbrella
-
-
