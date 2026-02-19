@@ -212,7 +212,8 @@ class OrbitClassification:
         # Compute all of the times when the particle bounces off vpar plane
         # These are mirror points where particle reverses direction
         bounce_times = []
-        nhits = len(res_hit[:, 0])
+        nhits = len(res_hit)
+            
         for j in range(nhits):
             if res_hit[j, 1] == 0:  # vpar plane was hit
                 bounce_times.append(res_hit[j, 0])
@@ -221,6 +222,7 @@ class OrbitClassification:
 
         # Unwrap theta to handle periodic boundary crossings (prevents jumps at ±π)
         thetas = np.unwrap(res_ty[:, 2])
+        zetas = res_ty[:, 3]
 
         # Extract initial conditions
         point = np.zeros((1, 3))
@@ -259,7 +261,7 @@ class OrbitClassification:
             # Compute change in helical angle chi = M*theta - N*zeta
             # This is the primary quantity used for classification
             dtheta = thetas[index_end] - thetas[index_start]
-            dzeta = res_ty[index_end, 3] - res_ty[index_start, 3]
+            dzeta = zetas[index_end] - zetas[index_start]
             dchi = self.helicity_M * dtheta - self.helicity_N * dzeta
             dchis.append(np.abs(dchi))
 
@@ -328,17 +330,26 @@ class OrbitClassification:
         dchis = np.array(dchis)
         dchis_predicted = np.array(dchis_predicted)
 
+        chi = self.helicity_M * thetas - self.helicity_N * zetas
+        dchi_init = np.abs(chi[-1] - chi[0])
+
         # Classify the trapping state based on dchi for each bounce segment
         if nbounce < 2:
-            # Particle never mirrored - cannot classify trapping state
+            # Particle never mirrored - cannot classify trapping state unless
+            # it is barely trapped 
+            if dchi_init > self.barely_trapped_crit:
+                status = np.array([1])
+                banana_frac = 0.0
+                barely_trapped_frac = 1.0
+                ripple_trapped_frac = 0.0         
+            else:
+                status = np.array([])
+                banana_frac = 0.0
+                barely_trapped_frac = 0.0
+                ripple_trapped_frac = 0.0
             Jpar_var = 0.0
             gammac_mean = 0.0
             ntransitions = 0
-            # Initialize empty arrays for consistency
-            status = np.array([])
-            banana_frac = 0.0
-            barely_trapped_frac = 0.0
-            ripple_trapped_frac = 0.0
         else:
             # Classification logic:
             # - Start with all segments as banana trapped (status=0)
@@ -349,6 +360,16 @@ class OrbitClassification:
             status = np.zeros_like(dchis)
             status[dchis > self.barely_trapped_crit] = 1
             status[dchis < self.ripple_trapped_crit * dchis_predicted] = 2
+
+            if dchi_init > self.barely_trapped_crit:
+                status = np.insert(status, 0, 1)
+                dchis = np.insert(dchis, 0, dchi_init)
+                dchis_predicted = np.insert(dchis_predicted, 0, 0)
+                gammacs = np.insert(gammacs, 0, 0)
+                Jpars = np.insert(Jpars, 0, 0)
+                s_means = np.insert(s_means, 0, 0)
+                dalphas = np.insert(dalphas, 0, 0)
+                dss = np.insert(dss, 0, 0)
 
             # Compute fraction of time in each trapping state
             barely_trapped_frac = np.count_nonzero(
@@ -405,3 +426,4 @@ class OrbitClassification:
             "gammac_mean": gammac_mean,
         }
         return particle_dict
+    
