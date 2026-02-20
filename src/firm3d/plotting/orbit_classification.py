@@ -392,7 +392,7 @@ class OrbitClassification:
             ) / len(dchis)
             banana_frac = np.count_nonzero(
                 (dchis <= self.barely_trapped_crit)
-                * (dchis >= self.ripple_trapped_crit)
+                * (dchis >= self.ripple_trapped_crit * dchis_predicted)
             ) / len(dchis)
 
             # Count transitions between different trapping states
