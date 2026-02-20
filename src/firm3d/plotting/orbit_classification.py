@@ -160,7 +160,9 @@ class OrbitClassification:
                 - 'point0' (ndarray): Initial position [s, theta, zeta]
                 - 'vpar0' (float): Initial parallel velocity [m/s]
 
-                **Per-bounce-segment arrays (all have length nbounce-1):**
+                **Per-bounce-segment arrays:**
+                These arrays have length nbounce-1 if pre-first-bounce 
+                segment is not classified, otherwise length is nbounce.
                 - 'status' (ndarray): Trapping state classification for
                   each segment: 0 = banana trapped, 1 = barely trapped,
                   2 = ripple trapped
@@ -334,7 +336,6 @@ class OrbitClassification:
         dchis_predicted = np.array(dchis_predicted)
 
         chi = self.helicity_M * thetas - self.helicity_N * zetas
-        dchi_total = np.abs(chi[-1] - chi[0])
 
         # Classify the trapping state based on dchi for each bounce segment
         if nbounce == 0:
@@ -348,12 +349,13 @@ class OrbitClassification:
             ntransitions = 0
         elif nbounce == 1:
             # Particle only bounced once - cannot classify trapping state unless
-            # it is barely trapped 
+            # it is barely trapped
+            dchi_total = np.abs(chi[-1] - chi[0])
             if dchi_total > self.barely_trapped_crit:
                 status = np.array([1])
                 banana_frac = 0.0
                 barely_trapped_frac = 1.0
-                ripple_trapped_frac = 0.0         
+                ripple_trapped_frac = 0.0
             else:
                 status = np.array([])
                 banana_frac = 0.0
@@ -373,9 +375,28 @@ class OrbitClassification:
             status[dchis > self.barely_trapped_crit] = 1
             status[dchis < self.ripple_trapped_crit * dchis_predicted] = 2
 
-            if dchi_total > self.barely_trapped_crit:
+            # Compute mean gamma_c over all bounce segments
+            gammac_mean = np.mean(gammacs)
+            # Compute variation in J_|| over full bounce periods
+            # Full bounce = half-bounce up + half-bounce down
+            # Low variation indicates good adiabatic invariant
+            if nbounce > 3:
+                # Sum consecutive half-bounces
+                Jpar_full = Jpars[0:-1] + Jpars[1::]
+                # Normalized std deviation
+                Jpar_var = np.std(Jpar_full) / np.mean(Jpar_full)
+            else:
+                Jpar_var = 0.0
+
+            # Consider pre-first-bounce as incomplete bounce segment,
+            # try to classify as barely trapped segment.
+            end_index = np.argmin(np.abs(bounce_times[0] - res_ty[:, 0]))
+            dchi_init = np.abs(chi[end_index] - chi[0])
+            if dchi_init > self.barely_trapped_crit:
                 status = np.insert(status, 0, 1)
-                dchis = np.insert(dchis, 0, dchi_total)
+                dchis = np.insert(dchis, 0, dchi_init)
+                # Below quantities not well-defined for pre-first-bounce segment,
+                # insert zeros as placeholders:
                 dchis_predicted = np.insert(dchis_predicted, 0, 0)
                 gammacs = np.insert(gammacs, 0, 0)
                 Jpars = np.insert(Jpars, 0, 0)
@@ -398,19 +419,6 @@ class OrbitClassification:
             # Count transitions between different trapping states
             # Fewer transitions = more stable classification
             ntransitions = np.count_nonzero(status[0:-1] != status[1::])
-
-            # Compute mean gamma_c over all bounce segments
-            gammac_mean = np.mean(gammacs)
-            # Compute variation in J_|| over full bounce periods
-            # Full bounce = half-bounce up + half-bounce down
-            # Low variation indicates good adiabatic invariant
-            if nbounce > 3:
-                # Sum consecutive half-bounces
-                Jpar_full = Jpars[0:-1] + Jpars[1::]
-                # Normalized std deviation
-                Jpar_var = np.std(Jpar_full) / np.mean(Jpar_full)
-            else:
-                Jpar_var = 0.0
 
         particle_dict = {
             "losttime": res_ty[-1, 0],
