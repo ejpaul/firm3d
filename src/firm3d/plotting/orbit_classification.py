@@ -204,8 +204,10 @@ class OrbitClassification:
                 * Banana trapped: otherwise
             - J_|| is computed using the trapezoidal rule as:
               ∫ v_|| dζ / (B·∇ζ)
-            - Requires at least 2 bounces for classification; returns
-              zeros if nbounce < 2
+            - Mirror segments requires at least 2 bounces for classification;
+              If no bounces, particle is classified as passing; 
+              If 1 bounce, classified as barely trapped if dchi_total > barely_trapped_crit.
+              When no classification is possible, returns zeros.
             - Requires at least 4 bounces for Jpar_var computation
         """
 
@@ -213,7 +215,7 @@ class OrbitClassification:
         # These are mirror points where particle reverses direction
         bounce_times = []
         nhits = len(res_hit)
-            
+
         for j in range(nhits):
             if res_hit[j, 1] == 0:  # vpar plane was hit
                 bounce_times.append(res_hit[j, 0])
@@ -267,6 +269,7 @@ class OrbitClassification:
 
             # Compute mean radial position during this bounce segment
             mean_s = np.mean(res_ty[index_start : index_end + 1, 1])
+            s_means.append(mean_s)
 
             # Predict dchi based on mirror point locations on constant-s
             # Sample modB on a chi grid at fixed s and eta=0
@@ -331,13 +334,22 @@ class OrbitClassification:
         dchis_predicted = np.array(dchis_predicted)
 
         chi = self.helicity_M * thetas - self.helicity_N * zetas
-        dchi_init = np.abs(chi[-1] - chi[0])
+        dchi_total = np.abs(chi[-1] - chi[0])
 
         # Classify the trapping state based on dchi for each bounce segment
-        if nbounce < 2:
-            # Particle never mirrored - cannot classify trapping state unless
+        if nbounce == 0:
+            # Particle never bounced, no segments to classify
+            status = np.array([])
+            banana_frac = 0.0
+            barely_trapped_frac = 0.0
+            ripple_trapped_frac = 0.0
+            Jpar_var = 0.0
+            gammac_mean = 0.0
+            ntransitions = 0
+        elif nbounce == 1:
+            # Particle only bounced once - cannot classify trapping state unless
             # it is barely trapped 
-            if dchi_init > self.barely_trapped_crit:
+            if dchi_total > self.barely_trapped_crit:
                 status = np.array([1])
                 banana_frac = 0.0
                 barely_trapped_frac = 1.0
@@ -361,9 +373,9 @@ class OrbitClassification:
             status[dchis > self.barely_trapped_crit] = 1
             status[dchis < self.ripple_trapped_crit * dchis_predicted] = 2
 
-            if dchi_init > self.barely_trapped_crit:
+            if dchi_total > self.barely_trapped_crit:
                 status = np.insert(status, 0, 1)
-                dchis = np.insert(dchis, 0, dchi_init)
+                dchis = np.insert(dchis, 0, dchi_total)
                 dchis_predicted = np.insert(dchis_predicted, 0, 0)
                 gammacs = np.insert(gammacs, 0, 0)
                 Jpars = np.insert(Jpars, 0, 0)
@@ -388,8 +400,7 @@ class OrbitClassification:
             ntransitions = np.count_nonzero(status[0:-1] != status[1::])
 
             # Compute mean gamma_c over all bounce segments
-            gammac_mean = np.mean(gammacs) if nbounce > 1 else 0.0
-
+            gammac_mean = np.mean(gammacs)
             # Compute variation in J_|| over full bounce periods
             # Full bounce = half-bounce up + half-bounce down
             # Low variation indicates good adiabatic invariant
@@ -426,4 +437,3 @@ class OrbitClassification:
             "gammac_mean": gammac_mean,
         }
         return particle_dict
-    
