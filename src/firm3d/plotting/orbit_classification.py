@@ -51,7 +51,7 @@ class OrbitClassification:
             helicity_M (int): Poloidal mode number of the helicity being
                 analyzed (M=0 for axisymmetric, M≠0 for helical).
             helicity_N (int): Toroidal mode number of the helicity being
-                analyzed (in units of nfp). The helical angle is defined as
+                analyzed. The helical angle is defined as
                 chi = M*theta - N*zeta.
             barely_trapped_crit (float, optional): Critical angle [radians]
                 for barely trapped classification. Particles with
@@ -67,7 +67,7 @@ class OrbitClassification:
             - For M=0 (axisymmetric), modB contours close poloidally, so
               theta is used as the mapping coordinate (Mp=1, Np=0).
             - For M≠0 (helical), modB contours close toroidally, so zeta
-              is used as the mapping coordinate (Mp=0, Np=nfp).
+              is used as the mapping coordinate (Mp=0, Np=-1).
         """
         self.field = field
         self.Ekin = Ekin
@@ -75,7 +75,6 @@ class OrbitClassification:
         self.charge = charge
         self.helicity_M = helicity_M
         self.helicity_N = helicity_N
-        self.nfp = field.nfp
         # Critical angle for barely trapped particle classification
         self.barely_trapped_crit = barely_trapped_crit
         # Critical value of dchi/dchi_predicted for ripple trapped
@@ -88,7 +87,7 @@ class OrbitClassification:
         # Otherwise, use zeta as mapping coordinate
         else:
             self.helicity_Mp = 0
-            self.helicity_Np = self.nfp
+            self.helicity_Np = -1
 
     def chi_eta_to_theta_zeta(self, chi, eta):
         r"""
