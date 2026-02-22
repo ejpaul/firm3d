@@ -29,18 +29,19 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libboost-all-dev libopenmpi-dev libnetcdf-dev libhdf5-dev libnetcdf-c++4-dev libgsl-dev pkg-config
+          sudo apt-get install -y cmake ninja-build libboost-all-dev libopenmpi-dev libnetcdf-dev libhdf5-dev libnetcdf-c++4-dev libgsl-dev pkg-config nvidia-cuda-toolkit
 
       - name: Install dependencies
         run: |
-          export PATH=/usr/local/cuda/bin:$PATH
-          export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-          python -m pip install --upgrade pip   
-          python -m pip install netCDF4
-          python -m pip install -v --no-cache-dir -e ".[dev]"
-          python -m pip install coverage
+          python -m pip install --upgrade pip
+          pip install netCDF4 cmake ninja "pybind11<=2.13.6" setuptools wheel 
+          NVCC_PATH=$(which nvcc)          
+          echo "Using NVCC at: $NVCC_PATH"
+
+          export CUDACXX=$NVCC_PATH
+          pip install -v --no-build-isolation -e ".[dev]"
+          pip install coverage
         env:
-          CUDACXX: /usr/local/cuda/bin/nvcc
           NETCDF_DIR: /usr
           HDF5_DIR: /usr
           GSL_DIR: /usr
