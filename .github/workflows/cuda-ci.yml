@@ -29,7 +29,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libboost-all-dev libopenmpi-dev libnetcdf-dev libhdf5-dev libnetcdf-c++4-dev libgsl-dev pkg-config nvidia-cuda-toolkit
+          sudo apt-get install -y cmake ninja-build libboost-all-dev libopenmpi-dev libnetcdf-dev libhdf5-dev libnetcdf-c++4-dev libgsl-dev pkg-config #nvidia-cuda-toolkit
 
       - name: Install dependencies
         run: |
@@ -45,7 +45,14 @@ jobs:
           NETCDF_DIR: /usr
           HDF5_DIR: /usr
           GSL_DIR: /usr
-            
+
+      - name: Confirm GPU bindings were compiled
+        run: |
+          if ! grep -q "CUDA found. GPU bindings will be compiled." output.log; then
+            echo "::error::GPU bindings were not compiled!"
+            exit 1
+          fi
+        shell: bash
       - name: Run tests
         run: |
           python -m pip list
