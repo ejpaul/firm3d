@@ -51,8 +51,7 @@ class OrbitClassification:
             helicity_M (int): Poloidal mode number of the helicity being
                 analyzed (M=0 for axisymmetric, M≠0 for helical).
             helicity_N (int): Toroidal mode number of the helicity being
-                analyzed (in units of nfp). The helical angle is defined as
-                chi = M*theta - N*zeta.
+                analyzed. The helical angle is defined as chi = M*theta - N*zeta.
             barely_trapped_crit (float, optional): Critical angle [radians]
                 for barely trapped classification. Particles with
                 dchi > barely_trapped_crit are classified as barely trapped.
