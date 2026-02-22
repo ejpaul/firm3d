@@ -66,7 +66,7 @@ class OrbitClassification:
             - For M=0 (axisymmetric), modB contours close poloidally, so
               theta is used as the mapping coordinate (Mp=1, Np=0).
             - For M≠0 (helical), modB contours close toroidally, so zeta
-              is used as the mapping coordinate (Mp=0, Np=nfp).
+              is used as the mapping coordinate (Mp=0, Np=-1).
         """
         self.field = field
         self.Ekin = Ekin
@@ -87,7 +87,7 @@ class OrbitClassification:
         # Otherwise, use zeta as mapping coordinate
         else:
             self.helicity_Mp = 0
-            self.helicity_Np = self.nfp
+            self.helicity_Np = -1
 
     def chi_eta_to_theta_zeta(self, chi, eta):
         r"""
