@@ -160,7 +160,7 @@ class OrbitClassification:
                 - 'vpar0' (float): Initial parallel velocity [m/s]
 
                 **Per-bounce-segment arrays:**
-                These arrays have length nbounce-1 if pre-first-bounce 
+                These arrays have length nbounce-1 if pre-first-bounce
                 segment is not classified, otherwise length is nbounce.
                 - 'status' (ndarray): Trapping state classification for
                   each segment: 0 = banana trapped, 1 = barely trapped,
@@ -206,7 +206,7 @@ class OrbitClassification:
             - J_|| is computed using the trapezoidal rule as:
               ∫ v_|| dζ / (B·∇ζ)
             - Mirror segments requires at least 2 bounces for classification;
-              If no bounces, particle is classified as passing; 
+              If no bounces, particle is classified as passing;
               If 1 bounce, classified as barely trapped if dchi_total > barely_trapped_crit.
               When no classification is possible, returns zeros.
             - Requires at least 4 bounces for Jpar_var computation
