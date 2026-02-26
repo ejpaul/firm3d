@@ -68,7 +68,7 @@ last_time = firm3dpp.boozer_gpu_tracing(
     tol=1e-9,
     psi0=field.psi0,
     nparticles=nparticles,
-	vacuum=True
+    vacuum=True,
 )
 
 last_time = np.reshape(last_time, (nparticles, 5))

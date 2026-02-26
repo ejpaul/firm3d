@@ -47,7 +47,7 @@ def boozer_interpolant(field, nfp, ns, ntheta, nzeta, vacuum=False):
     iota = field.iota()
     modB = field.modB()
     modB_derivs = field.modB_derivs()
-    
+
     if vacuum:
         # Vacuum approximation: G=const, I=0, K=0
         quad_info = np.hstack((modB, modB_derivs, G, iota))

@@ -10,12 +10,12 @@ from firm3d.util.gpu_utils import boozer_interpolant, boozer_saw_interpolant
 from firm3d.util.constants import (
     ALPHA_PARTICLE_MASS as MASS,
     FUSION_ALPHA_PARTICLE_ENERGY as ENERGY,
-    ALPHA_PARTICLE_CHARGE as CHARGE
+    ALPHA_PARTICLE_CHARGE as CHARGE,
 )
 from firm3d.field.tracing import (
     IterationStoppingCriterion,
     trace_particles_boozer,
-    trace_particles_boozer_perturbed
+    trace_particles_boozer_perturbed,
 )
 from firm3d.saw.ae3d import AE3DEigenvector
 
@@ -56,13 +56,13 @@ def construct_interpolant(field, nfp, saw_present=False):
         srange, trange, zrange, quad_info, maxJ = boozer_saw_interpolant(
             field, nfp, ns, ntheta, nzeta
         )
-    else: # the field is an InterpolatedBoozerField (unperturbed)
+    else:  # the field is an InterpolatedBoozerField (unperturbed)
         # print(field.field_type)
         if field.field_type == "vac":
             srange, trange, zrange, quad_info, maxJ = boozer_interpolant(
                 field, nfp, ns, ntheta, nzeta, vacuum=True
             )
-        elif field.field_type == "": # implies finite beta
+        elif field.field_type == "":  # implies finite beta
             srange, trange, zrange, quad_info, maxJ = boozer_interpolant(
                 field, nfp, ns, ntheta, nzeta, vacuum=False
             )
@@ -79,9 +79,12 @@ def sample_test_points(n_test_pts):
     stz = np.hstack((s, t, z))
     return stz
 
-def test_interpolant(field, nfp, stz, saw_present=False,tol=1e-8):
-    srange, trange, zrange, quad_info, maxJ = construct_interpolant(field, nfp, saw_present=saw_present)
-    
+
+def test_interpolant(field, nfp, stz, saw_present=False, tol=1e-8):
+    srange, trange, zrange, quad_info, maxJ = construct_interpolant(
+        field, nfp, saw_present=saw_present
+    )
+
     # evaluate interpolants
     if isinstance(field, ShearAlfvenWavesSuperposition):
         field = field.B0
@@ -94,15 +97,23 @@ def test_interpolant(field, nfp, stz, saw_present=False,tol=1e-8):
         dIds = field.dIds()
         iota = field.iota()
         diotads = field.diotads()
-        cpu_interpolation = np.hstack((modB, modB_derivs, G, dGds, I, dIds, iota, diotads))
+        cpu_interpolation = np.hstack(
+            (modB, modB_derivs, G, dGds, I, dIds, iota, diotads)
+        )
 
         ## evaluate GPU interpolant
         stz = np.ascontiguousarray(stz)
         gpu_interpolation = firm3dpp.test_gpu_interpolation(
-            quad_info, srange, trange, zrange, stz.copy(), "boozer_saw_vacuum", stz.shape[0]
+            quad_info,
+            srange,
+            trange,
+            zrange,
+            stz.copy(),
+            "boozer_saw_vacuum",
+            stz.shape[0],
         )
     else:
-        if field.field_type == "vac": 
+        if field.field_type == "vac":
             # print("saw not present")
             # evaluate CPU interpolant
             field.set_points(stz)
@@ -115,9 +126,15 @@ def test_interpolant(field, nfp, stz, saw_present=False,tol=1e-8):
             ## evaluate GPU interpolant
             stz = np.ascontiguousarray(stz)
             gpu_interpolation = firm3dpp.test_gpu_interpolation(
-                quad_info, srange, trange, zrange, stz.copy(), "boozer_vacuum", stz.shape[0]
+                quad_info,
+                srange,
+                trange,
+                zrange,
+                stz.copy(),
+                "boozer_vacuum",
+                stz.shape[0],
             )
-        elif field.field_type == "": # implies finite beta
+        elif field.field_type == "":  # implies finite beta
             # evaluate CPU interpolant
             field.set_points(stz)
             modB = field.modB()
@@ -129,7 +146,9 @@ def test_interpolant(field, nfp, stz, saw_present=False,tol=1e-8):
             iota = field.iota()
             K = field.K()
             K_derivs = field.K_derivs()
-            cpu_interpolation = np.hstack((modB, modB_derivs, G, dGds, I, dIds, iota, K, K_derivs))
+            cpu_interpolation = np.hstack(
+                (modB, modB_derivs, G, dGds, I, dIds, iota, K, K_derivs)
+            )
 
             # evaluate GPU interpolant
             stz = np.ascontiguousarray(stz)
@@ -137,16 +156,17 @@ def test_interpolant(field, nfp, stz, saw_present=False,tol=1e-8):
                 quad_info, srange, trange, zrange, stz.copy(), "boozer", stz.shape[0]
             )
 
-
-
     gpu_interpolation = np.reshape(gpu_interpolation, (stz.shape[0], -1))
 
     # compute error
-    error_is_small = np.isclose(gpu_interpolation, cpu_interpolation, rtol=tol, atol=tol).all()
-    error = np.abs(cpu_interpolation - gpu_interpolation) / (np.abs(cpu_interpolation) +1)
+    error_is_small = np.isclose(
+        gpu_interpolation, cpu_interpolation, rtol=tol, atol=tol
+    ).all()
+    error = np.abs(cpu_interpolation - gpu_interpolation) / (
+        np.abs(cpu_interpolation) + 1
+    )
 
-
-    if (error.max() > tol):
+    if error.max() > tol:
         print("tolerance not satisfied in interpolant")
         row_idx = np.unravel_index(np.argmax(error), error.shape)[0]
         print("stz:", stz[row_idx, :])
@@ -156,13 +176,29 @@ def test_interpolant(field, nfp, stz, saw_present=False,tol=1e-8):
 
     return error_is_small
 
-def test_derivatives(field, nfp, stz, vpar, vtotal, psi0, time=None, saw_present=False, saw_filename=None,tol=1e-8):
+
+def test_derivatives(
+    field,
+    nfp,
+    stz,
+    vpar,
+    vtotal,
+    psi0,
+    time=None,
+    saw_present=False,
+    saw_filename=None,
+    tol=1e-8,
+):
 
     srange, trange, zrange, quad_info, maxJ = construct_interpolant(field, nfp)
     ## evaluate derivatives
     if isinstance(field, ShearAlfvenWavesSuperposition):
-        assert time is not None, "time array must be provided when testing derivatives with SAW"
-        assert saw_filename is not None, "saw filename must be provided when testing derivatives with SAW"
+        assert time is not None, (
+            "time array must be provided when testing derivatives with SAW"
+        )
+        assert saw_filename is not None, (
+            "saw filename must be provided when testing derivatives with SAW"
+        )
         # evaluate CPU derivatives
         # print("computing simsopt derivatives")
         cpu_derivs = np.empty((stz.shape[0], 4))
@@ -170,9 +206,16 @@ def test_derivatives(field, nfp, stz, vpar, vtotal, psi0, time=None, saw_present
         if field.B0.field_type == "vac":
             for i in range(stz.shape[0]):
                 cpu_derivs[i, :] = firm3dpp.simsopt_derivs_saw(
-                    field, stz[i, :], MASS, CHARGE, vtotal, vpar[i], time[i], "vacuum_saw"
+                    field,
+                    stz[i, :],
+                    MASS,
+                    CHARGE,
+                    vtotal,
+                    vpar[i],
+                    time[i],
+                    "vacuum_saw",
                 )
-        elif field.B0.field_type == "nok": # NoK tracing
+        elif field.B0.field_type == "nok":  # NoK tracing
             for i in range(stz.shape[0]):
                 cpu_derivs[i, :] = firm3dpp.simsopt_derivs_saw(
                     field, stz[i, :], MASS, CHARGE, vtotal, vpar[i], time[i], "nok_saw"
@@ -263,7 +306,6 @@ def test_derivatives(field, nfp, stz, vpar, vtotal, psi0, time=None, saw_present
                 )
             # print(f"Time to compute simsopt derivatives: {time.time() - start_time} seconds")
 
-
             ## evaluate GPU interpolant
             stz = np.ascontiguousarray(stz)
             vpar = np.ascontiguousarray(vpar)
@@ -283,7 +325,7 @@ def test_derivatives(field, nfp, stz, vpar, vtotal, psi0, time=None, saw_present
                 stz.shape[0],
                 vacuum=True,
             )
-        elif field.field_type == "": # implies finite beta
+        elif field.field_type == "":  # implies finite beta
             # evaluate CPU derivatives
             # print("computing simsopt derivatives")
             cpu_derivs = np.empty((stz.shape[0], 4))
@@ -293,7 +335,6 @@ def test_derivatives(field, nfp, stz, vpar, vtotal, psi0, time=None, saw_present
                     field, stz[i, :], MASS, CHARGE, vtotal, vpar[i], vacuum=False
                 )
             # print(f"Time to compute simsopt derivatives: {time.time() - start_time} seconds")
-
 
             ## evaluate GPU interpolant
             stz = np.ascontiguousarray(stz)
@@ -328,12 +369,17 @@ def test_derivatives(field, nfp, stz, vpar, vtotal, psi0, time=None, saw_present
 
     return error_is_small
 
-def test_timestep(field, nfp, stz, vpar, vtotal, psi0, time=None, saw_filename=None, tol=1e-8):
+
+def test_timestep(
+    field, nfp, stz, vpar, vtotal, psi0, time=None, saw_filename=None, tol=1e-8
+):
 
     srange, trange, zrange, quad_info, maxJ = construct_interpolant(field, nfp)
 
     if isinstance(field, ShearAlfvenWavesSuperposition):
-        assert saw_filename is not None, "saw filename must be provided when testing timesteps with SAW"
+        assert saw_filename is not None, (
+            "saw filename must be provided when testing timesteps with SAW"
+        )
         # evaluate CPU timestep
         field.B0.set_points(stz)
         mu_init = (vtotal**2 - vpar**2) / (2 * field.B0.modB()[:, 0])
@@ -453,7 +499,7 @@ def test_timestep(field, nfp, stz, vpar, vtotal, psi0, time=None, saw_filename=N
                 vacuum=True,
             )
             last_time = np.reshape(last_time, (stz.shape[0], 5))
-        elif field.field_type == "": # implies finite beta
+        elif field.field_type == "":  # implies finite beta
             gc_tys, gc_zeta_hits = trace_particles_boozer(
                 field,
                 stz,
@@ -500,10 +546,12 @@ def test_timestep(field, nfp, stz, vpar, vtotal, psi0, time=None, saw_filename=N
             for x in last_time
         ]
     )
-    error_is_small = np.isclose(gpu_final_positions, cpu_positions, rtol=tol, atol=tol).all()
+    error_is_small = np.isclose(
+        gpu_final_positions, cpu_positions, rtol=tol, atol=tol
+    ).all()
     error = np.abs(cpu_positions - gpu_final_positions) / (np.abs(cpu_positions) + 1)
 
-    if (error.max() > tol):
+    if error.max() > tol:
         row_idx = np.unravel_index(np.argmax(error), error.shape)[0]
         print("stz:", stz[row_idx, :])
         print("cpu:", cpu_positions[row_idx, :])
@@ -511,6 +559,7 @@ def test_timestep(field, nfp, stz, vpar, vtotal, psi0, time=None, saw_filename=N
         print("error:", error[row_idx, :])
 
     return error_is_small
+
 
 @unittest.skipUnless(HAS_CUDA, "CUDA support not available")
 class TestGPUTracing(unittest.TestCase):
@@ -534,7 +583,9 @@ class TestGPUTracing(unittest.TestCase):
         ### test derivatives
         VELOCITY = np.sqrt(2 * ENERGY / MASS)
         vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (n_test_pts,))
-        is_small = test_derivatives(field, nfp, stz, vpar_init, VELOCITY, field.psi0, tol)
+        is_small = test_derivatives(
+            field, nfp, stz, vpar_init, VELOCITY, field.psi0, tol
+        )
         self.assertTrue(is_small)
 
         ### test timesteps
@@ -561,7 +612,9 @@ class TestGPUTracing(unittest.TestCase):
         ### test derivatives
         VELOCITY = np.sqrt(2 * ENERGY / MASS)
         vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (n_test_pts,))
-        is_small = test_derivatives(field, nfp, stz, vpar_init, VELOCITY, field.psi0, tol)
+        is_small = test_derivatives(
+            field, nfp, stz, vpar_init, VELOCITY, field.psi0, tol
+        )
         self.assertTrue(is_small)
 
         ### test timesteps
@@ -599,13 +652,34 @@ class TestGPUTracing(unittest.TestCase):
         VELOCITY = np.sqrt(2 * ENERGY / MASS)
         vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (n_test_pts,))
         time = np.random.uniform(low=0, high=1e-3, size=(n_test_pts,))
-        is_small = test_derivatives(saw, nfp, stz, vpar_init, VELOCITY, field.psi0, time=time, saw_present=True, saw_filename=saw_filename, tol=tol)
+        is_small = test_derivatives(
+            saw,
+            nfp,
+            stz,
+            vpar_init,
+            VELOCITY,
+            field.psi0,
+            time=time,
+            saw_present=True,
+            saw_filename=saw_filename,
+            tol=tol,
+        )
         self.assertTrue(is_small)
 
         ### test timesteps
-        is_small = test_timestep(saw, nfp, stz, vpar_init, VELOCITY, field.psi0, time=time, saw_filename=saw_filename, tol=tol)
+        is_small = test_timestep(
+            saw,
+            nfp,
+            stz,
+            vpar_init,
+            VELOCITY,
+            field.psi0,
+            time=time,
+            saw_filename=saw_filename,
+            tol=tol,
+        )
         self.assertTrue(is_small)
-        
+
     def test_boozer_nok_saw(self):
         n_metagrid_pts = 15
 
@@ -637,15 +711,35 @@ class TestGPUTracing(unittest.TestCase):
         VELOCITY = np.sqrt(2 * ENERGY / MASS)
         vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (n_test_pts,))
         time = np.random.uniform(low=0, high=1e-3, size=(n_test_pts,))
-        is_small = test_derivatives(saw, nfp, stz, vpar_init, VELOCITY, field.psi0, time=time, saw_present=True, saw_filename=saw_filename, tol=tol)
+        is_small = test_derivatives(
+            saw,
+            nfp,
+            stz,
+            vpar_init,
+            VELOCITY,
+            field.psi0,
+            time=time,
+            saw_present=True,
+            saw_filename=saw_filename,
+            tol=tol,
+        )
         self.assertTrue(is_small)
 
         ### test timesteps
-        is_small = test_timestep(saw, nfp, stz, vpar_init, VELOCITY, field.psi0, time=time, saw_filename=saw_filename, tol=tol)
+        is_small = test_timestep(
+            saw,
+            nfp,
+            stz,
+            vpar_init,
+            VELOCITY,
+            field.psi0,
+            time=time,
+            saw_filename=saw_filename,
+            tol=tol,
+        )
         self.assertTrue(is_small)
 
 
 if __name__ == "__main__":
     print("Running GPU tracing tests...")
     unittest.main()
-
