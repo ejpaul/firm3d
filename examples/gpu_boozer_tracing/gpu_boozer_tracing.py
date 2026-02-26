@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from math import sqrt
+
 import numpy as np
 import pandas as pd
 
@@ -11,7 +12,11 @@ from firm3d.field.boozermagneticfield import (
 )
 from firm3d.util.constants import (
     ALPHA_PARTICLE_CHARGE as CHARGE,
+)
+from firm3d.util.constants import (
     ALPHA_PARTICLE_MASS as MASS,
+)
+from firm3d.util.constants import (
     FUSION_ALPHA_PARTICLE_ENERGY as ENERGY,
 )
 from firm3d.util.gpu_utils import boozer_interpolant

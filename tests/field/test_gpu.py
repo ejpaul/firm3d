@@ -1,16 +1,13 @@
 # import time
+import unittest
+
 import numpy as np
 
 import firm3dpp
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
-)
-from firm3d.util.gpu_utils import boozer_interpolant, boozer_saw_interpolant
-from firm3d.util.constants import (
-    ALPHA_PARTICLE_MASS as MASS,
-    FUSION_ALPHA_PARTICLE_ENERGY as ENERGY,
-    ALPHA_PARTICLE_CHARGE as CHARGE,
+    ShearAlfvenWavesSuperposition,
 )
 from firm3d.field.tracing import (
     IterationStoppingCriterion,
@@ -18,10 +15,16 @@ from firm3d.field.tracing import (
     trace_particles_boozer_perturbed,
 )
 from firm3d.saw.ae3d import AE3DEigenvector
-
-import unittest
-
-from firm3d.field.boozermagneticfield import ShearAlfvenWavesSuperposition
+from firm3d.util.constants import (
+    ALPHA_PARTICLE_CHARGE as CHARGE,
+)
+from firm3d.util.constants import (
+    ALPHA_PARTICLE_MASS as MASS,
+)
+from firm3d.util.constants import (
+    FUSION_ALPHA_PARTICLE_ENERGY as ENERGY,
+)
+from firm3d.util.gpu_utils import boozer_interpolant, boozer_saw_interpolant
 
 HAS_CUDA = hasattr(firm3dpp, "test_gpu_interpolation")
 
@@ -29,7 +32,6 @@ HAS_CUDA = hasattr(firm3dpp, "test_gpu_interpolation")
 def get_field(boozmn_filename, n_metagrid_pts, vacuum):
     # start_time = time.time()
     bri = BoozerRadialInterpolant(boozmn_filename, 3, enforce_vacuum=vacuum)
-    # print(f"Time to initialize BoozerRadialInterpolant: {time.time() - start_time} seconds")
     nfp = bri.nfp
     degree = 3
     # start_time = time.time()
@@ -41,13 +43,11 @@ def get_field(boozmn_filename, n_metagrid_pts, vacuum):
         ntheta_interp=n_metagrid_pts,
         nzeta_interp=n_metagrid_pts,
     )
-    # print(f"Time to initialize InterpolatedBoozerField: {time.time() - start_time} seconds")
     # Even though bri isn't used further in this script, we need to return it,
     # or else it is garbage-collected, resulting in an error.
     return bri, field, nfp
 
 
-### this function should be replaced by a function in the InterpolatedBoozerField field class
 def construct_interpolant(field, nfp, saw_present=False):
     ns, ntheta, nzeta = 15, 15, 15
 
@@ -304,7 +304,6 @@ def test_derivatives(
                 cpu_derivs[i, :] = firm3dpp.simsopt_derivs_boozer(
                     field, stz[i, :], MASS, CHARGE, vtotal, vpar[i], vacuum=True
                 )
-            # print(f"Time to compute simsopt derivatives: {time.time() - start_time} seconds")
 
             ## evaluate GPU interpolant
             stz = np.ascontiguousarray(stz)
@@ -334,7 +333,6 @@ def test_derivatives(
                 cpu_derivs[i, :] = firm3dpp.simsopt_derivs_boozer(
                     field, stz[i, :], MASS, CHARGE, vtotal, vpar[i], vacuum=False
                 )
-            # print(f"Time to compute simsopt derivatives: {time.time() - start_time} seconds")
 
             ## evaluate GPU interpolant
             stz = np.ascontiguousarray(stz)
