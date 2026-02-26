@@ -38,7 +38,7 @@ jobs:
           echo "Using NVCC at: $NVCC_PATH"
 
           export CUDACXX=$NVCC_PATH
-          pip install -v --no-build-isolation -e ".[dev]"
+          pip install -v --no-build-isolation -e ".[dev]" 2>&1 | tee install.log
           pip install coverage
         env:
           NETCDF_DIR: /usr
@@ -47,7 +47,7 @@ jobs:
 
       - name: Confirm GPU bindings were compiled
         run: |
-          if ! grep -q "CUDA found. GPU bindings will be compiled." *.log; then
+          if ! grep -q "CUDA found. GPU bindings will be compiled." install.log; then
             echo "::error::GPU bindings were not compiled!"
             exit 1
           fi
