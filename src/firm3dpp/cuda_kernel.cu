@@ -42,6 +42,16 @@ __host__ __device__ constexpr CoordSys map_rhs_to_coord(){
     }
 }
 
+
+// this is a helper function to convert python arrays to C++ arrays
+template <typename T>
+__host__ T* create_array(py::array_t<T> x){
+    py::buffer_info buf = x.request();
+    T* arr = static_cast<T*>(buf.ptr);
+    return arr;
+} 
+
+
 /* below are declarations of data that are stored in the constant memory cache on the GPU
  * they are referenced like global variables and need to be set here, or copied to before the kernel is launched
  * accesses to constant memory are serialized and broadcasted across a warp
@@ -771,7 +781,9 @@ __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax,
         calc_max_timestep_size<coord>(dtmax, x_temp, derivs);
         dtmax[threadIdx.x] = fmin(dtmax[threadIdx.x], tmax_d);
 
-        dt[threadIdx.x] = 1e-3*dtmax[threadIdx.x];
+        if(dt[threadIdx.x] == -1.0){ // dummy value from python when dt needs to be computed
+            dt[threadIdx.x] = 1e-3*dtmax[threadIdx.x];
+        }
     }
 }
 
@@ -865,7 +877,7 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
  * Everything lives in shared memory except the data for the interpolant
  */
 template<RHS id, typename... Args>
-__global__ void particle_trace_kernel(double* out, double* init_pos, double* quadpts_arr, Args... args){
+__global__ void particle_trace_kernel(double* out, double* init_pos, double* quadpts_arr, double* dt_in, Args... args){
     int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
 
     __shared__ double x_temp[5 * PARTICLES_PER_BLOCK];
@@ -896,6 +908,7 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
         for(int i=0; i<4; ++i){
             state[i*PARTICLES_PER_BLOCK + threadIdx.x] = init_pos[4*idx + i];
         }
+        dt[threadIdx.x] = dt_in[threadIdx.x]; // copy input dt
     }
     __syncthreads();
 
@@ -940,27 +953,16 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
 
 template<RHS id, typename... Args>
 vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, 
-    py::array_t<double> loc_init, double m, double q, double vtotal, py::array_t<double> vtang, double tmax, double tol, int nparticles, Args... args){
+    py::array_t<double> loc_init, double m, double q, double vtotal, py::array_t<double> vtang, double tmax, double tol, py::array_t<double> dt_in, int nparticles, Args... args){
 
     //  read data in from python
-    py::buffer_info loc_init_buf = loc_init.request();
-    double* loc_init_arr = static_cast<double*>(loc_init_buf.ptr);
-    
-    py::buffer_info vtang_buf = vtang.request();
-    double* vtang_arr = static_cast<double*>(vtang_buf.ptr);
-
-    // contains b field
-    py::buffer_info quadpts_buf = quad_pts.request();
-    double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
-
-    py::buffer_info x1_buf = x1_range.request();
-    double* x1_range_arr = static_cast<double*>(x1_buf.ptr);
-
-    py::buffer_info x2_buf = x2_range.request();
-    double* x2_range_arr = static_cast<double*>(x2_buf.ptr);
-
-    py::buffer_info x3_buf = x3_range.request();
-    double* x3_range_arr = static_cast<double*>(x3_buf.ptr);
+    double* loc_init_arr = create_array(loc_init);
+    double* vtang_arr = create_array(vtang);
+    double* quadpts_arr = create_array(quad_pts);
+    double* x1_range_arr = create_array(x1_range);
+    double* x2_range_arr = create_array(x2_range);
+    double* x3_range_arr = create_array(x3_range);
+    double* dt_in_arr = create_array(dt_in);
 
     // allocate and copy to device memory
     double x1_range_ext[4];
@@ -1020,6 +1022,8 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
 
     double* out_d;
     gpuErrchk(cudaMalloc((void**)&out_d, 5 * nparticles * sizeof(double)) ); 
+    double* dt_in_d;
+    gpuErrchk(cudaMalloc((void**)&dt_in_d, dt_in.size() * sizeof(double)) ); 
 
 
     int nthreads = THREADS_PER_BLOCK;
@@ -1032,7 +1036,7 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    particle_trace_kernel<id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, args...);
+    particle_trace_kernel<id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, dt_in_d, args...);
 
     double out[5*nparticles];
     gpuErrchk(cudaMemcpy(out, out_d, 5 * nparticles * sizeof(double), cudaMemcpyDeviceToHost) );
@@ -1050,18 +1054,17 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
 
 extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
-        double tmax, double tol, int nparticles){
-            return gpu_tracing<RHS::GC_CartesianVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles);
+        double tmax, double tol, py::array_t<double> dt_in, int nparticles){
+            return gpu_tracing<RHS::GC_CartesianVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, dt_in, nparticles);
         }
 
 
 extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
-        double tmax, double tol, double psi0, int nparticles, bool vacuum=false){
+        double tmax, double tol, py::array_t<double> dt_in, double psi0, int nparticles, bool vacuum=false){
 
     //  read data in from python
-    py::buffer_info stz_init_buf = stz_init.request();
-    double* stz_init_arr = static_cast<double*>(stz_init_buf.ptr);
+    double* stz_init_arr = create_array(stz_init);
     
     for(int i=0; i<nparticles; ++i){
         double s = stz_init_arr[3*i];
@@ -1074,9 +1077,9 @@ extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::a
 
     std::vector<double> results;
     if (vacuum) {
-        results = gpu_tracing<RHS::GC_BoozerVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles);
+        results = gpu_tracing<RHS::GC_BoozerVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, dt_in, nparticles);
     } else {
-        results = gpu_tracing<RHS::GC_Boozer>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles);
+        results = gpu_tracing<RHS::GC_Boozer>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, dt_in, nparticles);
     }
 
     for(int i=0; i<nparticles; ++i){
@@ -1093,23 +1096,14 @@ extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::a
 
 extern "C" vector<double> boozer_saw_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, 
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
-        py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, double tmax, double tol, double psi0, int nparticles){
+        py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, double tmax, double tol, py::array_t<double> dt_in, double psi0, int nparticles){
 
     //  read data in from python
-    py::buffer_info stz_init_buf = stz_init.request();
-    double* stz_init_arr = static_cast<double*>(stz_init_buf.ptr);
-
-    py::buffer_info saw_srange_buf = saw_srange.request();
-    double* saw_srange_arr = static_cast<double*>(saw_srange_buf.ptr);
-
-    py::buffer_info saw_m_buf = saw_m.request();
-    int* saw_m_arr = static_cast<int*>(saw_m_buf.ptr);
-
-    py::buffer_info saw_n_buf = saw_n.request();
-    int* saw_n_arr = static_cast<int*>(saw_n_buf.ptr);
-
-    py::buffer_info saw_phihats_buf = saw_phihats.request();
-    double* saw_phihats_arr = static_cast<double*>(saw_phihats_buf.ptr);
+    double* stz_init_arr = create_array(stz_init);
+    double* saw_srange_arr = create_array(saw_srange);
+    int* saw_m_arr = create_array(saw_m);
+    int* saw_n_arr = create_array(saw_n);
+    double* saw_phihats_arr = create_array(saw_phihats);
 
     int* saw_m_d;
     gpuErrchk( cudaMalloc((void**)&saw_m_d, saw_m.size() * sizeof(int)) );
@@ -1139,7 +1133,7 @@ extern "C" vector<double> boozer_saw_gpu_tracing(py::array_t<double> quad_pts, p
     gpuErrchk(cudaMemcpyToSymbol(saw_srange_d, saw_srange_ext, 4*sizeof(double)) );
     gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
 
-    std::vector<double> results =  gpu_tracing<RHS::GC_BoozerVacuumSAW>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles,
+    std::vector<double> results =  gpu_tracing<RHS::GC_BoozerVacuumSAW>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, dt_in, nparticles,
                                                                         saw_omega, saw_m_d, saw_n_d, saw_phihats_d, saw_nharmonics);
 
     gpuErrchk( cudaFree(saw_m_d) );
@@ -1159,23 +1153,14 @@ extern "C" vector<double> boozer_saw_gpu_tracing(py::array_t<double> quad_pts, p
 
 extern "C" vector<double> boozer_saw_nok_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, 
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
-        py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, double tmax, double tol, double psi0, int nparticles){
+        py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, double tmax, double tol, py::array_t<double> dt_in, double psi0, int nparticles){
 
     //  read data in from python
-    py::buffer_info stz_init_buf = stz_init.request();
-    double* stz_init_arr = static_cast<double*>(stz_init_buf.ptr);
-
-    py::buffer_info saw_srange_buf = saw_srange.request();
-    double* saw_srange_arr = static_cast<double*>(saw_srange_buf.ptr);
-
-    py::buffer_info saw_m_buf = saw_m.request();
-    int* saw_m_arr = static_cast<int*>(saw_m_buf.ptr);
-
-    py::buffer_info saw_n_buf = saw_n.request();
-    int* saw_n_arr = static_cast<int*>(saw_n_buf.ptr);
-
-    py::buffer_info saw_phihats_buf = saw_phihats.request();
-    double* saw_phihats_arr = static_cast<double*>(saw_phihats_buf.ptr);
+    double* stz_init_arr = create_array(stz_init);
+    double* saw_srange_arr = create_array(saw_srange);
+    int* saw_m_arr = create_array(saw_m);
+    int* saw_n_arr = create_array(saw_n);
+    double* saw_phihats_arr = create_array(saw_phihats);
 
     int* saw_m_d;
     cudaMalloc((void**)&saw_m_d, saw_m.size() * sizeof(int));
@@ -1205,7 +1190,7 @@ extern "C" vector<double> boozer_saw_nok_gpu_tracing(py::array_t<double> quad_pt
     gpuErrchk(cudaMemcpyToSymbol(saw_srange_d, saw_srange_ext, 4*sizeof(double)) );
     gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
 
-    std::vector<double> results =  gpu_tracing<RHS::GC_BoozerNoKSAW>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, nparticles,
+    std::vector<double> results =  gpu_tracing<RHS::GC_BoozerNoKSAW>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, dt_in, nparticles,
                                                                         saw_omega, saw_m_d, saw_n_d, saw_phihats_d, saw_nharmonics);
 
     gpuErrchk( cudaFree(saw_m_d) );
@@ -1333,21 +1318,13 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* loc, dou
 
 
 extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<double> loc, std::string rhs, int n_points){
-    py::buffer_info quadpts_buf = quad_pts.request();
-    double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
-
-    py::buffer_info x1_buf = x1_range.request();
-    double* x1_range_arr = static_cast<double*>(x1_buf.ptr);
-
-    py::buffer_info x2_buf = x2_range.request();
-    double* x2_range_arr = static_cast<double*>(x2_buf.ptr);
-
-    py::buffer_info x3_buf = x3_range.request();
-    double* x3_range_arr = static_cast<double*>(x3_buf.ptr);
-
-    py::buffer_info loc_buf = loc.request();
-    double* loc_arr = static_cast<double*>(loc_buf.ptr);
-
+    // read data in from python
+    double* quadpts_arr = create_array(quad_pts);
+    double* x1_range_arr = create_array(x1_range);
+    double* x2_range_arr = create_array(x2_range);
+    double* x3_range_arr = create_array(x3_range);
+    double* loc_arr = create_array(loc);
+    
     // map input data
     // Cartesian Coordinates
     if(rhs == "cartesian_vacuum"){
@@ -1510,26 +1487,14 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* loc, double* vp
 template<RHS id, typename... Args>
 py::array_t<double> test_gpu_derivatives(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range,
                                  py::array_t<double> loc, py::array_t<double> vpar, py::array_t<double> time, double v_total, double m, double q, int n_points, Args... args){
-    py::buffer_info quadpts_buf = quad_pts.request();
-    double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
 
-    py::buffer_info x1_buf = x1_range.request();
-    double* x1_range_arr = static_cast<double*>(x1_buf.ptr);
-
-    py::buffer_info x2_buf = x2_range.request();
-    double* x2_range_arr = static_cast<double*>(x2_buf.ptr);
-
-    py::buffer_info x3_buf = x3_range.request();
-    double* x3_range_arr = static_cast<double*>(x3_buf.ptr);
-
-    py::buffer_info loc_buf = loc.request();
-    double* loc_arr = static_cast<double*>(loc_buf.ptr);
-
-    py::buffer_info vpar_buf = vpar.request();
-    double* vpar_arr = static_cast<double*>(vpar_buf.ptr);
-
-    py::buffer_info time_buf = time.request();
-    double* time_arr = static_cast<double*>(time_buf.ptr);
+    double* quadpts_arr = create_array(quad_pts);
+    double* x1_range_arr = create_array(x1_range);
+    double* x2_range_arr = create_array(x2_range);
+    double* x3_range_arr = create_array(x3_range);
+    double* loc_arr = create_array(loc);
+    double* vpar_arr = create_array(vpar);
+    double* time_arr = create_array(time);
     
     double* quadpts_d;
     cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
@@ -1635,18 +1600,11 @@ extern "C" py::array_t<double> test_derivatives_saw(py::array_t<double> quad_pts
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
         py::array_t<double> loc, py::array_t<double> vpar, py::array_t<double> time, double v_total, double m, double q,  double psi0, int n_points){
 
-    py::buffer_info saw_srange_buf = saw_srange.request();
-    double* saw_srange_arr = static_cast<double*>(saw_srange_buf.ptr);
-
-    py::buffer_info saw_m_buf = saw_m.request();
-    int* saw_m_arr = static_cast<int*>(saw_m_buf.ptr);
-
-    py::buffer_info saw_n_buf = saw_n.request();
-    int* saw_n_arr = static_cast<int*>(saw_n_buf.ptr);
-
-    py::buffer_info saw_phihats_buf = saw_phihats.request();
-    double* saw_phihats_arr = static_cast<double*>(saw_phihats_buf.ptr);
-
+    double* saw_srange_arr = create_array(saw_srange);
+    int* saw_m_arr = create_array(saw_m);
+    int* saw_n_arr = create_array(saw_n);
+    double* saw_phihats_arr = create_array(saw_phihats);
+    
     int* saw_m_d;
     cudaMalloc((void**)&saw_m_d, saw_m.size() * sizeof(int));
     cudaMemcpy(saw_m_d, saw_m_arr, saw_m.size() * sizeof(int), cudaMemcpyHostToDevice);
@@ -1683,17 +1641,10 @@ extern "C" py::array_t<double> test_derivatives_saw_nok(py::array_t<double> quad
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
         py::array_t<double> loc, py::array_t<double> vpar, py::array_t<double> time, double v_total, double m, double q,  double psi0, int n_points){
 
-    py::buffer_info saw_srange_buf = saw_srange.request();
-    double* saw_srange_arr = static_cast<double*>(saw_srange_buf.ptr);
-
-    py::buffer_info saw_m_buf = saw_m.request();
-    int* saw_m_arr = static_cast<int*>(saw_m_buf.ptr);
-
-    py::buffer_info saw_n_buf = saw_n.request();
-    int* saw_n_arr = static_cast<int*>(saw_n_buf.ptr);
-
-    py::buffer_info saw_phihats_buf = saw_phihats.request();
-    double* saw_phihats_arr = static_cast<double*>(saw_phihats_buf.ptr);
+    double* saw_srange_arr = create_array(saw_srange);
+    int* saw_m_arr = create_array(saw_m);
+    int* saw_n_arr = create_array(saw_n);
+    double* saw_phihats_arr = create_array(saw_phihats);
 
     int* saw_m_d;
     cudaMalloc((void**)&saw_m_d, saw_m.size() * sizeof(int));
@@ -1803,26 +1754,15 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
         double tol, int nparticles, Args... args){
 
     //  read data in from python
-    py::buffer_info loc_init_buf = loc_init.request();
-    double* loc_init_arr = static_cast<double*>(loc_init_buf.ptr);
+    double* loc_init_arr = create_array(loc_init);
+    double* vtang_arr = create_array(vtang);
 
-    py::buffer_info vtang_buf = vtang.request();
-    double* vtang_arr = static_cast<double*>(vtang_buf.ptr);
+    double* quadpts_arr = create_array(quad_pts);
+    double* x1_range_arr = create_array(x1_range);
+    double* x2_range_arr = create_array(x2_range);
+    double* x3_range_arr = create_array(x3_range);
 
-    // contains b field
-    py::buffer_info quadpts_buf = quad_pts.request();
-    double* quadpts_arr = static_cast<double*>(quadpts_buf.ptr);
-
-    py::buffer_info x1_buf = x1_range.request();
-    double* x1_range_arr = static_cast<double*>(x1_buf.ptr);
-
-    py::buffer_info x2_buf = x2_range.request();
-    double* x2_range_arr = static_cast<double*>(x2_buf.ptr);
-
-    py::buffer_info x3_buf = x3_range.request();
-    double* x3_range_arr = static_cast<double*>(x3_buf.ptr);
-
-  // allocate and copy to device memory
+    // allocate and copy to device memory
     double x1_range_ext[4];
     double x2_range_ext[4];
     double x3_range_ext[4];
@@ -1955,17 +1895,10 @@ extern "C" vector<double> test_timestep_saw(py::array_t<double> quad_pts, py::ar
         py::array_t<double> loc_init, double m, double q, double v_total, py::array_t<double> vtang, py::array_t<double> time,
         double tol, double psi0, int nparticles){
  
-    py::buffer_info saw_srange_buf = saw_srange.request();
-    double* saw_srange_arr = static_cast<double*>(saw_srange_buf.ptr);
-
-    py::buffer_info saw_m_buf = saw_m.request();
-    int* saw_m_arr = static_cast<int*>(saw_m_buf.ptr);
-
-    py::buffer_info saw_n_buf = saw_n.request();
-    int* saw_n_arr = static_cast<int*>(saw_n_buf.ptr);
-
-    py::buffer_info saw_phihats_buf = saw_phihats.request();
-    double* saw_phihats_arr = static_cast<double*>(saw_phihats_buf.ptr);
+    double* saw_srange_arr = create_array(saw_srange);
+    int* saw_m_arr = create_array(saw_m);
+    int* saw_n_arr = create_array(saw_n);
+    double* saw_phihats_arr = create_array(saw_phihats);
 
     int* saw_m_d;
     cudaMalloc((void**)&saw_m_d, saw_m.size() * sizeof(int));
@@ -2019,17 +1952,10 @@ extern "C" vector<double> test_timestep_saw_nok(py::array_t<double> quad_pts, py
         py::array_t<double> loc_init, double m, double q, double v_total, py::array_t<double> vtang, py::array_t<double> time,
         double tol, double psi0, int nparticles){
  
-    py::buffer_info saw_srange_buf = saw_srange.request();
-    double* saw_srange_arr = static_cast<double*>(saw_srange_buf.ptr);
-
-    py::buffer_info saw_m_buf = saw_m.request();
-    int* saw_m_arr = static_cast<int*>(saw_m_buf.ptr);
-
-    py::buffer_info saw_n_buf = saw_n.request();
-    int* saw_n_arr = static_cast<int*>(saw_n_buf.ptr);
-
-    py::buffer_info saw_phihats_buf = saw_phihats.request();
-    double* saw_phihats_arr = static_cast<double*>(saw_phihats_buf.ptr);
+    double* saw_srange_arr = create_array(saw_srange);
+    int* saw_m_arr = create_array(saw_m);
+    int* saw_n_arr = create_array(saw_n);
+    double* saw_phihats_arr = create_array(saw_phihats);
 
     int* saw_m_d;
     cudaMalloc((void**)&saw_m_d, saw_m.size() * sizeof(int));
