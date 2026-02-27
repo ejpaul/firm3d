@@ -8,8 +8,7 @@ version = "0.0.0"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-    "numpy<2.0",
-    "scipy>=1.5.4, <1.12",
+    "scipy>=1.5.4",
     "Deprecated>=1.2.10",
     "ruamel.yaml",
     "plotly",
