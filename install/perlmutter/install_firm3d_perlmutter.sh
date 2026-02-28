@@ -39,7 +39,6 @@ cd ..
 
 pip install booz_xform
 check_success "Failed to install BOOZ_XFORM"
-cd ..
 
 echo "Successfully installed FIRM3D into the conda environment '$env_name'"
 echo "To activate, run: conda activate $env_name"
