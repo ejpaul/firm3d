@@ -756,9 +756,9 @@ __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax,
                             double* quad_pts, double* x1_shape, double* x2_shape, double* x3_shape, double* state, double* derivs,
                             int nparticles_blk, Args... args){
 
+    
     if(threadIdx.x < nparticles_blk){
         t[threadIdx.x] = 0.0;
-        dt[threadIdx.x] = 0.0;
         symmetry_exploited[threadIdx.x] = false;
         build_state<id>(x_temp, 0, symmetry_exploited, index_i, index_j, index_k,
                                 x1_shape, x2_shape, x3_shape, state, derivs, t, dt);
@@ -1704,6 +1704,7 @@ __global__ void test_gpu_timestep_kernel(double* out, double* init_pos, double* 
     if(is_valid){
         has_left[threadIdx.x] = true;
         t[threadIdx.x] = 0.0;
+        dt[threadIdx.x] = -1.0; //there is no dt input for time step test
         has_left[threadIdx.x] = false;
         for(int i=0; i<4; ++i){
             state[i*PARTICLES_PER_BLOCK + threadIdx.x] = init_pos[4*idx+i];
