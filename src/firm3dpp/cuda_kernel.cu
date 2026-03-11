@@ -1020,10 +1020,11 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     gpuErrchk(cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double)) ); 
     gpuErrchk(cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice) );
 
-    double* out_d;
-    gpuErrchk(cudaMalloc((void**)&out_d, 5 * nparticles * sizeof(double)) ); 
     double* dt_in_d;
     gpuErrchk(cudaMalloc((void**)&dt_in_d, dt_in.size() * sizeof(double)) ); 
+    gpuErrchk(cudaMemcpy(dt_in_d, dt_in_arr, dt_in.size() * sizeof(double), cudaMemcpyHostToDevice) );
+    double* out_d;
+    gpuErrchk(cudaMalloc((void**)&out_d, 5 * nparticles * sizeof(double)) ); 
 
 
     int nthreads = THREADS_PER_BLOCK;
