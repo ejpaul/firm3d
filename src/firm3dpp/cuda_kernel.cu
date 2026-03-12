@@ -857,7 +857,10 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
         }
         // Accept the step
         t[threadIdx.x] += dt[threadIdx.x];
-        dt[threadIdx.x] = fmin(dt_new, tmax_d - t[threadIdx.x]);
+
+        if(t[threadIdx.x] < tmax_d){
+            dt[threadIdx.x] = fmin(dt_new, tmax_d - t[threadIdx.x]);
+        }
 
         for(int i = 0; i < 4; i++) {
             state[i*PARTICLES_PER_BLOCK + threadIdx.x] = x_temp[(i+1)*PARTICLES_PER_BLOCK + threadIdx.x];
@@ -946,7 +949,7 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
         for(int i=0; i<4; ++i){
             out[6*idx + i + 1] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
         }
-        out[6*idx + 6] = dt[threadIdx.x];
+        out[6*idx + 5] = dt[threadIdx.x];
     }
     return;
 }
@@ -1085,11 +1088,11 @@ extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::a
     }
 
     for(int i=0; i<nparticles; ++i){
-        double x1 = results[5*i+1];
-        double x2 = results[5*i+2];
+        double x1 = results[6*i+1];
+        double x2 = results[6*i+2];
 
-        results[5*i+1] = sqrt(x1*x1 + x2*x2);
-        results[5*i+2] = atan2(x2, x1);
+        results[6*i+1] = sqrt(x1*x1 + x2*x2);
+        results[6*i+2] = atan2(x2, x1);
     }
 
     return results;
@@ -1143,11 +1146,11 @@ extern "C" vector<double> boozer_saw_gpu_tracing(py::array_t<double> quad_pts, p
     gpuErrchk( cudaFree(saw_phihats_d) );
 
     for(int i=0; i<nparticles; ++i){
-        double x1 = results[5*i+1];
-        double x2 = results[5*i+2];
+        double x1 = results[6*i+1];
+        double x2 = results[6*i+2];
 
-        results[5*i+1] = sqrt(x1*x1 + x2*x2);
-        results[5*i+2] = atan2(x2, x1);
+        results[6*i+1] = sqrt(x1*x1 + x2*x2);
+        results[6*i+2] = atan2(x2, x1);
     }
 
     return results;
@@ -1200,11 +1203,11 @@ extern "C" vector<double> boozer_saw_nok_gpu_tracing(py::array_t<double> quad_pt
     gpuErrchk( cudaFree(saw_phihats_d) );
 
     for(int i=0; i<nparticles; ++i){
-        double x1 = results[5*i+1];
-        double x2 = results[5*i+2];
+        double x1 = results[6*i+1];
+        double x2 = results[6*i+2];
 
-        results[5*i+1] = sqrt(x1*x1 + x2*x2);
-        results[5*i+2] = atan2(x2, x1);
+        results[6*i+1] = sqrt(x1*x1 + x2*x2);
+        results[6*i+2] = atan2(x2, x1);
     }
 
     return results;

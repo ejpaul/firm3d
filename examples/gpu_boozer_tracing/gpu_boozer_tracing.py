@@ -1,11 +1,14 @@
 #!/usr/bin/env python
 
-from math import sqrt
 
 import numpy as np
 import pandas as pd
 
-
+from firm3d.catapult.tracing import trace_particles_boozer
+from firm3d.field.boozermagneticfield import (
+    BoozerRadialInterpolant,
+    InterpolatedBoozerField,
+)
 from firm3d.field.tracing_helpers import (
     initialize_position_profile,
     initialize_velocity_uniform,
@@ -15,12 +18,7 @@ from firm3d.util.constants import (
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
-
-from firm3d.field.boozermagneticfield import BoozerRadialInterpolant, InterpolatedBoozerField
-from firm3d.catapult.tracing import trace_particles_boozer
-
-from firm3d.util.mpi import comm_size, comm_world, verbose
-
+from firm3d.util.mpi import comm_world
 
 ### CREATE A FIELD FOR TRACING
 boozmn_filename = "../inputs/boozmn_aten_rescaled.nc"
@@ -37,7 +35,7 @@ field = InterpolatedBoozerField(
 np.random.seed(8)
 
 # trace particles
-nparticles = 1
+nparticles = 1000
 
 # Define fusion birth distribution
 # Bader, A., et al. "Modeling of energetic particle transport in optimized
@@ -65,7 +63,7 @@ vpar0 = np.sqrt(2 * Ekin / mass)
 vpar_inits = initialize_velocity_uniform(vpar0, nparticles)
 
 
-tmax = 1e-7
+tmax = 1e-5
 last_time = trace_particles_boozer(
     bri,
     stz_inits,
