@@ -66,7 +66,7 @@ jobs:
           name: codecov-umbrella
 
       - name: Run Examples
-      - run: |
+        run: |
           cd examples/gpu_boozer_tracing
           python gpu_boozer_tracing.py
 
