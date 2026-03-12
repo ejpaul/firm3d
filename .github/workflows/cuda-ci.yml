@@ -64,3 +64,9 @@ jobs:
           file: ./coverage.xml
           flags: unittests
           name: codecov-umbrella
+
+      - name: Run Examples
+      - run: |
+          cd examples/gpu_boozer_tracing
+          python gpu_boozer_tracing.py
+
