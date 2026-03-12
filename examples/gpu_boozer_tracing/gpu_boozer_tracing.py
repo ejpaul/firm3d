@@ -90,6 +90,7 @@ particle_data = pd.DataFrame(
         "z_end": last_time[:, 3],
         "vpar_end": last_time[:, 4],
         "last_time": last_time[:, 0],
+        "dt_end" : last_time[:, 5]
     }
 )
 particle_data.to_csv("./particle_data.csv")

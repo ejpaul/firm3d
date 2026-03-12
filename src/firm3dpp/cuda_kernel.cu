@@ -942,10 +942,11 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
     }
     __syncthreads();
     if(is_valid){
-        out[5*idx] = t[threadIdx.x];
+        out[6*idx] = t[threadIdx.x];
         for(int i=0; i<4; ++i){
-            out[5*idx + i + 1] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
+            out[6*idx + i + 1] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
         }
+        out[6*idx + 6] = dt[threadIdx.x];
     }
     return;
 }
@@ -1024,7 +1025,7 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     gpuErrchk(cudaMalloc((void**)&dt_in_d, dt_in.size() * sizeof(double)) ); 
     gpuErrchk(cudaMemcpy(dt_in_d, dt_in_arr, dt_in.size() * sizeof(double), cudaMemcpyHostToDevice) );
     double* out_d;
-    gpuErrchk(cudaMalloc((void**)&out_d, 5 * nparticles * sizeof(double)) ); 
+    gpuErrchk(cudaMalloc((void**)&out_d, 6 * nparticles * sizeof(double)) ); 
 
 
     int nthreads = THREADS_PER_BLOCK;
@@ -1040,13 +1041,13 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     particle_trace_kernel<id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, dt_in_d, args...);
 
     double out[5*nparticles];
-    gpuErrchk(cudaMemcpy(out, out_d, 5 * nparticles * sizeof(double), cudaMemcpyDeviceToHost) );
+    gpuErrchk(cudaMemcpy(out, out_d, 6 * nparticles * sizeof(double), cudaMemcpyDeviceToHost) );
 
     gpuErrchk( cudaFree(quadpts_d) );
     gpuErrchk( cudaFree(init_pos_d) );
     gpuErrchk( cudaFree(out_d) );
-    vector<double> particle_output(5*nparticles);
-    for(int i=0; i<5*nparticles; ++i){
+    vector<double> particle_output(6*nparticles);
+    for(int i=0; i<6*nparticles; ++i){
         particle_output[i] = out[i];
     }
 

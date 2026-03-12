@@ -43,5 +43,5 @@ def trace_particles_boozer(field, stz_inits, parallel_speeds, tmax, mass, charge
             nparticles=nparticles,
             vacuum=True,
         )
-        last_time = np.reshape(last_time, (nparticles, 5))
+        last_time = np.reshape(last_time, (nparticles, 6))
         return last_time
