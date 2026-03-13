@@ -199,8 +199,6 @@ def calculate_QS_resonance(Phim, Phin, M, N, omega, drift_omega_zeta, ell):
     return (Phin - N * Phim - omega / drift_omega_zeta) / (Phim + ell) + N
 
 
-# profile = compute_rotational_profile(field, lam, sign_vpar, mass, charge, Ekin, comm)
-# drift_omega_zeta = np.mean(profile[:,2])
 if verbose:
     heat_map.plot_ratio(savepath="figs/full_field_QS.png")
     plt.clf()
