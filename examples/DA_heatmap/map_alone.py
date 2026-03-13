@@ -1,21 +1,34 @@
+import time
+
+import matplotlib as mpl
 import numpy as np
-from firm3d.saw.ae3d import AE3DEigenvector
+from matplotlib import pyplot as plt
+
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
+    ShearAlfvenHarmonic,
+    ShearAlfvenWave,
+    ShearAlfvenWavesSuperposition,
 )
+from firm3d.field.tracing_helpers import (
+    initialize_position_profile,
+    initialize_position_uniform_surf,
+)
+from firm3d.field.trajectory_helpers import (
+    MapPhaseSpace,
+    PassingPerturbedPoincare,
+    PassingPoincare,
+    compute_peta,
+)
+from firm3d.saw.ae3d import AE3DEigenvector
 from firm3d.util.constants import (
+    ALPHA_PARTICLE_CHARGE,
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
-    ALPHA_PARTICLE_CHARGE,
 )
 from firm3d.util.functions import proc0_print
-from firm3d.field.trajectory_helpers import PassingPerturbedPoincare, PassingPoincare, compute_peta, MapPhaseSpace
-from firm3d.field.boozermagneticfield import ShearAlfvenHarmonic, ShearAlfvenWave, ShearAlfvenWavesSuperposition
-import time 
-from firm3d.field.tracing_helpers import initialize_position_profile, initialize_position_uniform_surf
-from matplotlib import pyplot as plt
-import matplotlib as mpl
+
 try:
     from mpi4py import MPI
 
@@ -30,16 +43,16 @@ except ImportError:
 
 boozmn_filename = "boozmn_betaQH.nc"
 AE_filename = "QH_10harmonics_scale0_001.npy"
-folder = 'figs'
+folder = "figs"
 harmonic = 0
 
-mpl.rcParams['font.size'] = 14          # base font size
-mpl.rcParams['axes.labelsize'] = 14     # x/y labels
-mpl.rcParams['axes.titlesize'] = 14
-mpl.rcParams['xtick.labelsize'] = 14
-mpl.rcParams['ytick.labelsize'] = 14
-mpl.rcParams['legend.fontsize'] = 14
-mpl.rcParams['figure.titlesize'] = 14
+mpl.rcParams["font.size"] = 14  # base font size
+mpl.rcParams["axes.labelsize"] = 14  # x/y labels
+mpl.rcParams["axes.titlesize"] = 14
+mpl.rcParams["xtick.labelsize"] = 14
+mpl.rcParams["ytick.labelsize"] = 14
+mpl.rcParams["legend.fontsize"] = 14
+mpl.rcParams["figure.titlesize"] = 14
 
 order = 3
 degree = 3
@@ -53,43 +66,45 @@ helicity_N = -4
 helicity_Mp = 0
 helicity_Np = -1
 
-bri = BoozerRadialInterpolant(boozmn_filename, order,no_K=True,helicity_M=helicity_M,helicity_N=helicity_N, comm=comm) #
+bri = BoozerRadialInterpolant(
+    boozmn_filename,
+    order,
+    no_K=True,
+    helicity_M=helicity_M,
+    helicity_N=helicity_N,
+    comm=comm,
+)  #
 field = InterpolatedBoozerField(
     bri,
     degree,
     ns_interp=ns_interp,
     ntheta_interp=ntheta_interp,
     nzeta_interp=nzeta_interp,
-
 )
 
 
 AE_temp = AE3DEigenvector.load_from_numpy(AE_filename)
-saw = ShearAlfvenWavesSuperposition.from_ae3d(AE_temp,
-                B0 = field,
-                minor_radius_meters = 1.7,
-                phase=0.0
-            )
-omega =  np.sqrt(AE_temp.eigenvalue)*1000
-#Phihat = (AE_temp.s_coords, AE_temp.harmonics[harmonic].amplitudes)
+saw = ShearAlfvenWavesSuperposition.from_ae3d(
+    AE_temp, B0=field, minor_radius_meters=1.7, phase=0.0
+)
+omega = np.sqrt(AE_temp.eigenvalue) * 1000
+# Phihat = (AE_temp.s_coords, AE_temp.harmonics[harmonic].amplitudes)
 Phin = AE_temp.harmonics[harmonic].n
 Phim = AE_temp.harmonics[harmonic].m
 print(f"{Phim=}, {Phin=}", flush=True)
 
-#saw = ShearAlfvenHarmonic(Phihat, Phim=Phim, Phin=Phin,omega=omega, B0=field, phase=0)
+# saw = ShearAlfvenHarmonic(Phihat, Phim=Phim, Phin=Phin,omega=omega, B0=field, phase=0)
 sign_vpar = 1  # 1 for co-passing, -1 for counter-passing
 p0_int = 0.5
 mass = ALPHA_PARTICLE_MASS
 charge = ALPHA_PARTICLE_CHARGE
 Ekin = FUSION_ALPHA_PARTICLE_ENERGY
-vtotal = np.sqrt(
-            2 * Ekin / mass
-        ) 
+vtotal = np.sqrt(2 * Ekin / mass)
 nchi_poinc = 5
 ns_poinc = 200
 Nmaps = 1500
 p0 = np.zeros((1, 3))
-p0[0, 0] = p0_int # s
+p0[0, 0] = p0_int  # s
 
 
 lam = 0.0
@@ -99,9 +114,7 @@ Ekin = Ekin  # Total kinetic energy
 saw.B0.set_points(p0)
 modB = saw.B0.modB()[0, 0]
 if 1 - lam * modB < 0:
-    raise ValueError(
-        "Invalid parameter p0: 1 - lambda * modB must be non-negative."
-    )
+    raise ValueError("Invalid parameter p0: 1 - lambda * modB must be non-negative.")
 vpar = sign_vpar * v0 * np.sqrt(1 - lam * modB)  # Parallel velocity
 Peta0 = compute_peta(
     saw.B0,
@@ -112,9 +125,9 @@ Peta0 = compute_peta(
     helicity_M,
     helicity_N,
 )
-unperturbed = False #False
-if unperturbed: 
-    nprime = ( helicity_N - helicity_M) / (
+unperturbed = False  # False
+if unperturbed:
+    nprime = (helicity_N - helicity_M) / (
         helicity_Np * helicity_M - helicity_N * helicity_Mp
     )
 else:
@@ -138,29 +151,40 @@ heat_map = MapPhaseSpace(
     unperturbed=True,
     randomize_particles=True,
     number_of_particles=6000,
-    comm=comm
+    comm=comm,
 )
+
 
 def compute_rotational_profile(field, pitch, sgn, mass, charge, Ekin, comm):
     # return omega_theta, omega_zeta, radial_position
-    poinc = PassingPoincare(field,
-            np.abs(pitch),
-            sgn,
-            mass,
-            charge,
-            Ekin,
-            ns_poinc=50,
-            ntheta_poinc=3,
-            Nmaps=10,
-            comm=comm,
-            tmax=1e-2,
-            solver_options={'axis':0}
-        )
+    poinc = PassingPoincare(
+        field,
+        np.abs(pitch),
+        sgn,
+        mass,
+        charge,
+        Ekin,
+        ns_poinc=50,
+        ntheta_poinc=3,
+        Nmaps=10,
+        comm=comm,
+        tmax=1e-2,
+        solver_options={"axis": 0},
+    )
     data = poinc.compute_frequencies()
-    data = np.column_stack([data[2], data[0], data[1], [data[0][i]/data[1][i] for i in range(len(data[0]))]])
+    data = np.column_stack(
+        [
+            data[2],
+            data[0],
+            data[1],
+            [data[0][i] / data[1][i] for i in range(len(data[0]))],
+        ]
+    )
     profiles = data[data[:, 0].argsort()]
     # return radial_position, omega_theta, omega_zeta, orbit_helicity
     return profiles
+
+
 def calculate_crossings(drift_helicity, h_res, radial_position):
     diff = drift_helicity - h_res
     sign_changes = np.where(np.sign(diff[:-1]) != np.sign(diff[1:]))[0]
@@ -171,11 +195,12 @@ def calculate_crossings(drift_helicity, h_res, radial_position):
     return crossings
 
 
-def calculate_QS_resonance(Phim,Phin,M,N,omega,drift_omega_zeta, ell):
-    return (Phin - N*Phim - omega / drift_omega_zeta) / (Phim+ell) + N
+def calculate_QS_resonance(Phim, Phin, M, N, omega, drift_omega_zeta, ell):
+    return (Phin - N * Phim - omega / drift_omega_zeta) / (Phim + ell) + N
 
-#profile = compute_rotational_profile(field, lam, sign_vpar, mass, charge, Ekin, comm)
-#drift_omega_zeta = np.mean(profile[:,2])
-if verbose: 
-    heat_map.plot_ratio(savepath = f'figs/full_field_QS.png')
+
+# profile = compute_rotational_profile(field, lam, sign_vpar, mass, charge, Ekin, comm)
+# drift_omega_zeta = np.mean(profile[:,2])
+if verbose:
+    heat_map.plot_ratio(savepath="figs/full_field_QS.png")
     plt.clf()

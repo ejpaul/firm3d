@@ -63,7 +63,7 @@ saw = ShearAlfvenHarmonic(Phihat, Phim, Phin, omega, phase, field)
 # Define fusion birth distribution
 # Bader, A., et al. "Modeling of energetic particle transport in optimized
 # stellarators." Nuclear Fusion 61.11 (2021): 116060.
-nD = lambda s: (1 - s**5)  # Normalized density
+nD = lambda s: 1 - s**5  # Normalized density
 nT = nD
 T = lambda s: 11.5 * (1 - s)  # Temperature in keV
 
@@ -74,6 +74,8 @@ def sigmav(T):
         return T ** (-2 / 3) * np.exp(-19.94 * T ** (-1 / 3))
     else:
         return 0
+
+
 # @TODO: fix the initial condition issue so that they are saved
 
 # Reactivity profile
