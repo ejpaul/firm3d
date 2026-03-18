@@ -1,15 +1,25 @@
-__all__ = ['trace_particles_boozer']
-from firm3d.field.boozermagneticfield import (
-    BoozerRadialInterpolant,
-    InterpolatedBoozerField,
-    ShearAlfvenWavesSuperposition,
-)
-import firm3dpp
+__all__ = ["trace_particles_boozer"]
 import numpy as np
-from firm3d.catapult.utils import boozer_interpolant, boozer_saw_interpolant
 
-def trace_particles_boozer(field, stz_inits, parallel_speeds, tmax, mass, charge, vtotal, tol, ns, ntheta, nzeta, dt=None):
-    """ 
+import firm3dpp
+from firm3d.catapult.utils import boozer_interpolant
+
+
+def trace_particles_boozer(
+    field,
+    stz_inits,
+    parallel_speeds,
+    tmax,
+    mass,
+    charge,
+    vtotal,
+    tol,
+    ns,
+    ntheta,
+    nzeta,
+    dt=None,
+):
+    """
     Trace particles in Boozer coordinates using CATAPULT
     field: a magnetic field object representing the field in Boozer coordinates
     stz_inits: initial conditions for particles in (s, theta, zeta) coordinates
@@ -23,7 +33,9 @@ def trace_particles_boozer(field, stz_inits, parallel_speeds, tmax, mass, charge
     """
     nparticles = stz_inits.shape[0]
     if field.field_type == "vac":
-        srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, field.nfp, ns, ntheta, nzeta, vacuum=True)
+        srange, trange, zrange, quad_info, maxJ = boozer_interpolant(
+            field, field.nfp, ns, ntheta, nzeta, vacuum=True
+        )
         vacuum = True
         psi0 = field.psi0
         last_time = firm3dpp.boozer_gpu_tracing(
@@ -39,9 +51,9 @@ def trace_particles_boozer(field, stz_inits, parallel_speeds, tmax, mass, charge
             tmax=tmax,
             tol=tol,
             dt_in=-np.ones(nparticles),
-            psi0=field.psi0,
+            psi0=psi0,
             nparticles=nparticles,
-            vacuum=True,
+            vacuum=vacuum,
         )
         last_time = np.reshape(last_time, (nparticles, 6))
         return last_time

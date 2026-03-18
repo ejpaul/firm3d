@@ -44,12 +44,14 @@ nD = lambda s: 1 - s**5  # Normalized density
 nT = nD
 T = lambda s: 11.5 * (1 - s)  # Temperature in keV
 
+
 # D-T cross-section
 def sigmav(T):
     if T > 0:
         return T ** (-2 / 3) * np.exp(-19.94 * T ** (-1 / 3))
     else:
         return 0
+
 
 # Reactivity profile
 reactivity = lambda s: nD(s) * nT(s) * sigmav(T(s))
@@ -88,7 +90,7 @@ particle_data = pd.DataFrame(
         "z_end": last_time[:, 3],
         "vpar_end": last_time[:, 4],
         "last_time": last_time[:, 0],
-        "dt_end" : last_time[:, 5]
+        "dt_end": last_time[:, 5],
     }
 )
 particle_data.to_csv("./particle_data.csv")
