@@ -4,7 +4,7 @@
 import numpy as np
 import pandas as pd
 
-from firm3d.catapult.tracing import trace_particles_boozer
+from firm3d.catapult.tracing import trace_particles_boozer_gpu
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
@@ -66,7 +66,7 @@ vpar_inits = initialize_velocity_uniform(vpar0, nparticles)
 
 
 tmax = 1e-5
-last_time = trace_particles_boozer(
+last_time = trace_particles_boozer_gpu(
     bri,
     stz_inits,
     vpar_inits,

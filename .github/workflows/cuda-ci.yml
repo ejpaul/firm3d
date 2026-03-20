@@ -69,4 +69,6 @@ jobs:
         run: |
           cd examples/gpu_boozer_tracing
           python gpu_boozer_tracing.py
+          cd ../gpu_saw_tracing
+          python gpu_saw_tracing.py
 
