@@ -1,4 +1,4 @@
-__all__ = ['trace_particles_boozer']
+__all__ = ["trace_particles_boozer_gpu"]
 import numpy as np
 
 import firm3dpp
@@ -6,8 +6,22 @@ from firm3d.catapult.utils import boozer_interpolant
 from firm3d.field.boozermagneticfield import ShearAlfvenWavesSuperposition
 from firm3d.util.gpu_utils import boozer_saw_interpolant
 
-def trace_particles_boozer_gpu(field, stz_inits, parallel_speeds, tmax, mass, charge, vtotal, tol, ns, ntheta, nzeta, dt=None):
-    """ 
+
+def trace_particles_boozer_gpu(
+    field,
+    stz_inits,
+    parallel_speeds,
+    tmax,
+    mass,
+    charge,
+    vtotal,
+    tol,
+    ns,
+    ntheta,
+    nzeta,
+    dt=None,
+):
+    """
     Trace particles in Boozer coordinates using CATAPULT
     field: a magnetic field object representing the field in Boozer coordinates
     stz_inits: initial conditions for particles in (s, theta, zeta) coordinates
@@ -49,14 +63,14 @@ def trace_particles_boozer_gpu(field, stz_inits, parallel_speeds, tmax, mass, ch
                 zrange=zrange,
                 saw_omega=saw_omega,
                 saw_srange=saw_srange,
-                saw_m=saw_m,        
+                saw_m=saw_m,
                 saw_n=saw_n,
                 saw_phihats=saw_phihats,
                 saw_nharmonics=saw_nharmonics,
                 stz_init=stz_inits,
                 m=mass,
                 q=charge,
-                vtotal=vtotal,  
+                vtotal=vtotal,
                 vtang=parallel_speeds,
                 tmax=tmax,
                 tol=tol,
@@ -91,9 +105,14 @@ def trace_particles_boozer_gpu(field, stz_inits, parallel_speeds, tmax, mass, ch
             raise ValueError(f"Unsupported field type {B0.field_type} for SAW tracing")
     else:
         if field.field_type not in ["vac", ""]:
-            raise ValueError(f"Unsupported field type {field.field_type} for Boozer tracing, expected 'vac' or ''")
-        vacuum = field.field_type == "vac" # true if vacuum, false if finite beta
-        srange, trange, zrange, quad_info, maxJ = boozer_interpolant(field, field.nfp, ns, ntheta, nzeta, vacuum=vacuum)
+            raise ValueError(
+                f"Unsupported field type {field.field_type} for Boozer tracing, \
+                     expected 'vac' or ''"
+            )
+        vacuum = field.field_type == "vac"  # true if vacuum, false if finite beta
+        srange, trange, zrange, quad_info, maxJ = boozer_interpolant(
+            field, field.nfp, ns, ntheta, nzeta, vacuum=vacuum
+        )
         psi0 = field.psi0
         last_time = firm3dpp.boozer_gpu_tracing(
             quad_pts=quad_info,
@@ -115,4 +134,3 @@ def trace_particles_boozer_gpu(field, stz_inits, parallel_speeds, tmax, mass, ch
 
     last_time = np.reshape(last_time, (nparticles, 6))
     return last_time
-

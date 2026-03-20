@@ -1,6 +1,6 @@
 import numpy as np
 
-import firm3dpp
+from firm3d.catapult.tracing import trace_particles_boozer_gpu
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
@@ -14,9 +14,6 @@ from firm3d.util.constants import ALPHA_PARTICLE_MASS as MASS
 from firm3d.util.constants import FUSION_ALPHA_PARTICLE_ENERGY as ENERGY
 from firm3d.util.gpu_utils import boozer_saw_interpolant
 from firm3d.util.sampling import sample_stz
-
-from firm3d.catapult.tracing import trace_particles_boozer_gpu
-
 
 np.random.seed(1800)
 
@@ -67,7 +64,19 @@ VELOCITY = np.sqrt(2 * ENERGY / MASS)
 vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (nparticles,))
 stz = np.ascontiguousarray(stz_inits)
 
-last_time = trace_particles_boozer_gpu(saw, stz, vpar_init, tmax, MASS, CHARGE, np.sqrt(2 * ENERGY / MASS), 1e-9, n_metagrid_pts, n_metagrid_pts, n_metagrid_pts)
+last_time = trace_particles_boozer_gpu(
+    saw,
+    stz,
+    vpar_init,
+    tmax,
+    MASS,
+    CHARGE,
+    np.sqrt(2 * ENERGY / MASS),
+    1e-9,
+    n_metagrid_pts,
+    n_metagrid_pts,
+    n_metagrid_pts,
+)
 loss_times = last_time[:, 0]
 print("loss times: ", loss_times)
 print("loss frac: ", np.mean(loss_times < tmax))
