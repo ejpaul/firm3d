@@ -35,10 +35,20 @@ class InterpolatedBoozerField : public BoozerMagneticField {
         vector<bool> symmetries = vector<bool>(1, false);
 
     protected:
+      void require_field() const {
+          if (!field) {
+              throw std::runtime_error(
+                  "Cannot compute new quantities on a loaded InterpolatedBoozerField: "
+                  "no BoozerRadialInterpolant is available. Only quantities that were "
+                  "computed before saving can be evaluated on a field loaded from JSON.");
+          }
+      }
+
       void _psip_impl(Array2& psip) override {
           if(!interp_psip)
               interp_psip = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, angle0_range, angle0_range, 1, extrapolate);
           if(!status_psip) {
+              require_field();
               Array2 old_points = this->field->get_points();
               string which_scalar = "psip";
               std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -60,6 +70,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_G)
                 interp_G = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, angle0_range, angle0_range, 1, extrapolate);
             if(!status_G) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "G";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -81,6 +92,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_I)
                 interp_I = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, angle0_range, angle0_range, 1, extrapolate);
             if(!status_I) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "I";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -102,6 +114,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_iota)
                 interp_iota = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, angle0_range, angle0_range, 1, extrapolate);
             if(!status_iota) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "iota";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -123,6 +136,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dGds)
                 interp_dGds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, angle0_range, angle0_range, 1, extrapolate);
             if(!status_dGds) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dGds";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -144,6 +158,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dIds)
                 interp_dIds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, angle0_range, angle0_range, 1, extrapolate);
             if(!status_dIds) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dIds";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -165,6 +180,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_diotads)
                 interp_diotads = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, angle0_range, angle0_range, 1, extrapolate);
             if(!status_diotads) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "diotads";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -186,6 +202,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_K)
                 interp_K = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_K) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "K";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -210,6 +227,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dKdtheta)
                 interp_dKdtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_dKdtheta) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dKdtheta";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -231,6 +249,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dKdzeta)
                 interp_dKdzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_dKdzeta) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dKdzeta";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -252,6 +271,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_K_derivs)
                 interp_K_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 2, extrapolate);
             if(!status_K_derivs) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "K_derivs";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -273,6 +293,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_nu)
                 interp_nu = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_nu) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "nu";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -297,6 +318,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dnudtheta)
                 interp_dnudtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_dnudtheta) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dnudtheta";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -318,6 +340,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dnudzeta)
                 interp_dnudzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_dnudzeta) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dnudzeta";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -338,6 +361,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dnuds)
                 interp_dnuds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_dnuds) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dnuds";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -361,6 +385,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_nu_derivs)
                 interp_nu_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 3, extrapolate);
             if(!status_nu_derivs) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "nu_derivs";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -384,6 +409,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_R)
                 interp_R = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_R) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "R";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -404,6 +430,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dRdtheta)
                 interp_dRdtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_dRdtheta) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dRdtheta";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -427,6 +454,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dRdzeta)
                 interp_dRdzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_dRdzeta) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dRdzeta";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -450,6 +478,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dRds)
                 interp_dRds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_dRds) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dRds";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -470,6 +499,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_R_derivs)
                 interp_R_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 3, extrapolate);
             if(!status_R_derivs) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "R_derivs";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -493,6 +523,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_Z)
                 interp_Z = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_Z) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "Z";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -516,6 +547,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dZdtheta)
                 interp_dZdtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_dZdtheta) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dZdtheta";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -536,6 +568,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dZdzeta)
                 interp_dZdzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_dZdzeta) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dZdzeta";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -556,6 +589,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dZds)
                 interp_dZds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_dZds) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dZds";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -579,6 +613,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_Z_derivs)
                 interp_Z_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 3, extrapolate);
             if(!status_Z_derivs) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "Z_derivs";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -602,6 +637,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_modB)
                 interp_modB = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_modB) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "modB";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -622,6 +658,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dmodBdtheta)
                 interp_dmodBdtheta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_dmodBdtheta) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dmodBdtheta";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -645,6 +682,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dmodBdzeta)
                 interp_dmodBdzeta = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_dmodBdzeta) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dmodBdzeta";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -668,6 +706,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_dmodBds)
                 interp_dmodBds = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 1, extrapolate);
             if(!status_dmodBds) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "dmodBds";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -688,6 +727,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
             if(!interp_modB_derivs)
                 interp_modB_derivs = std::make_shared<RegularGridInterpolant3D<Array2>>(rule, s_range, theta_range, zeta_range, 3, extrapolate);
             if(!status_modB_derivs) {
+                require_field();
                 Array2 old_points = this->field->get_points();
                 string which_scalar = "modB_derivs";
                 std::function<Vec(Vec, Vec, Vec)> fbatch = [this,which_scalar](Vec s, Vec theta, Vec zeta) {
@@ -904,6 +944,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                       return fbatch_scalar(s,theta,zeta,"modB");
                     };
                     if(!status_modB) {
+                        require_field();
                         Array2 old_points = this->field->get_points();
                         interp_modB->interpolate_batch(fbatch);
                         Array2 old_points_py(old_points);
@@ -921,6 +962,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                       return fbatch_scalar(s,theta,zeta,"K");
                     };
                     if(!status_K) {
+                        require_field();
                         Array2 old_points = this->field->get_points();
                         interp_K->interpolate_batch(fbatch);
                         Array2 old_points_py(old_points);
@@ -938,6 +980,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                       return fbatch_scalar(s,theta,zeta,"R");
                     };
                     if(!status_R) {
+                        require_field();
                         Array2 old_points = this->field->get_points();
                         interp_R->interpolate_batch(fbatch);
                         Array2 old_points_py(old_points);
@@ -955,6 +998,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                       return fbatch_scalar(s,theta,zeta,"Z");
                     };
                     if(!status_Z) {
+                        require_field();
                         Array2 old_points = this->field->get_points();
                         interp_Z->interpolate_batch(fbatch);
                         Array2 old_points_py(old_points);
@@ -972,6 +1016,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                       return fbatch_scalar(s,theta,zeta,"nu");
                     };
                     if(!status_nu) {
+                        require_field();
                         Array2 old_points = this->field->get_points();
                         interp_nu->interpolate_batch(fbatch);
                         Array2 old_points_py(old_points);
@@ -989,6 +1034,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                       return fbatch_scalar(s,theta,zeta,"G");
                     };
                     if(!status_G) {
+                        require_field();
                         Array2 old_points = this->field->get_points();
                         interp_G->interpolate_batch(fbatch);
                         Array2 old_points_py(old_points);
@@ -1006,6 +1052,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                       return fbatch_scalar(s,theta,zeta,"I");
                     };
                     if(!status_I) {
+                        require_field();
                         Array2 old_points = this->field->get_points();
                         interp_I->interpolate_batch(fbatch);
                         Array2 old_points_py(old_points);
@@ -1023,6 +1070,7 @@ class InterpolatedBoozerField : public BoozerMagneticField {
                       return fbatch_scalar(s,theta,zeta,"iota");
                     };
                     if(!status_iota) {
+                        require_field();
                         Array2 old_points = this->field->get_points();
                         interp_iota->interpolate_batch(fbatch);
                         Array2 old_points_py(old_points);

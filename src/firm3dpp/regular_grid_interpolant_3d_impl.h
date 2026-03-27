@@ -96,7 +96,8 @@ int RegularGridInterpolant3D<Array>::locate_unsafe(double x, double y, double z)
 template<class Array>
 void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double y, double z, double* res){
 
-    
+    // to avoid funny business when the data is just a tiny bit out of bounds
+    // due to machine precision, we perform this check and shift
     if(x >= xmax) x -= _EPS_;
     else if (x <= xmin) x += _EPS_;
     if(y >= ymax) y -= _EPS_;
@@ -123,8 +124,9 @@ void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double y, doubl
 
 template<class Array>
 void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double* res){
-
     
+    // to avoid funny business when the data is just a tiny bit out of bounds
+    // due to machine precision, we perform this check and shift
     if(x >= xmax) x -= _EPS_;
     else if (x <= xmin) x += _EPS_;
 
@@ -170,7 +172,10 @@ void RegularGridInterpolant3D<Array>::evaluate_local(double x, double y, double 
         }
     }
 
-    
+    // Potential optimization: Use barycentric interpolation here. Right now, the
+    // implementation is O(degree^3) in memory and O(degree^4) in computation,
+    // using Barycentric interpolation this could be reduced to O(degree^3) in
+    // memory and O(degree^3) in computation.
     for(int l=0; l<padded_value_size; l += simdcount) {
         simd_t sumi(0.);
         int offset_local = l;
@@ -195,6 +200,7 @@ void RegularGridInterpolant3D<Array>::evaluate_local(double x, double y, double 
         }
     }
 }
+//TODO memory usage not fixed
 
 template<class Array>
 void RegularGridInterpolant3D<Array>::evaluate_local(double x, int cell_idx, double* res)

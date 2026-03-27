@@ -927,6 +927,41 @@ class TestInterpolatedBoozerFieldSaveLoad(unittest.TestCase):
             if json_path and os.path.exists(json_path):
                 os.remove(json_path)
 
+    def test_loaded_field_rejects_uncomputed_quantity(self):
+        """Test where an uncomputed quantity on a loaded field raises RuntimeError.
+
+        A loaded field has no BoozerRadialInterpolant, so it cannot compute
+        quantities that were not saved.  The C++ require_field() guard should
+        throw a descriptive RuntimeError instead of segfaulting.
+        """
+        config = TEST_CONFIGS["vac_qa"]
+        if not os.path.exists(config["file"]):
+            self.skipTest(f"Test file not found: {config['file']}")
+
+        json_path = None
+        try:
+            bri, field, grid_ranges = self._create_field(config)
+
+            # diotads is never in any default initialize list
+            self.assertFalse(
+                field.status_diotads,
+                "status_diotads should be False by default",
+            )
+
+            with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+                json_path = f.name
+            field.to_json(json_path)
+            loaded_field = InterpolatedBoozerField.from_json(json_path)
+
+            # Calling an uncomputed quantity must raise, not segfault
+            loaded_field.set_points(np.array([[0.5, 1.0, 0.5]]))
+            with self.assertRaises(RuntimeError):
+                loaded_field.diotads()
+
+        finally:
+            if json_path and os.path.exists(json_path):
+                os.remove(json_path)
+
     # These files have incorrect radial grids or ordering, so BoozerRadialInterpolant
     # should raise ValueError when trying to load them.
     def test_invalid_reduced_files(self):

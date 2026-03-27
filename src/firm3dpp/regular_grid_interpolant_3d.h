@@ -2,7 +2,7 @@
 
 #include "simdhelpers.h"
 #include <unordered_map>
-#include <map>  // Required for get_interpolant_data() return type
+#include <map>  
 #include <algorithm>
 #include <functional>
 #include <iostream>
