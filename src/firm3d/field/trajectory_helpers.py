@@ -2380,7 +2380,8 @@ class MapPhaseSpace:
             saw, ShearAlfvenWavesSuperposition
         ):
             raise ValueError(
-                "saw must be an instance of ShearAlfvenWave or ShearAlfvenWavesSuperposition."
+                "saw must be an instance of ShearAlfvenWave "
+                "or ShearAlfvenWavesSuperposition."
             )
         # @TODO: add convergence points support
 
@@ -2546,7 +2547,8 @@ class MapPhaseSpace:
                 mu = initial_mu_per_particle
             else:
                 raise ValueError(
-                    "If providing initial conditions, must provide both initial_vpar and initial_mu_per_particle"
+                    "If providing initial conditions, " \
+                    "must provide both initial_vpar and initial_mu_per_particle"
                 )
 
         # set parameters for convergence plot
@@ -3017,10 +3019,6 @@ class MapPhaseSpace:
             )
             idx_wall = np.argmax(s_path >= 1) if np.any(s_path >= 1) else None
             if idx_wall is not None and s_path[idx_wall] >= 1:
-                print(
-                    f"Particle {itrj} hit the wall at time {time_momentum[idx_wall]}, s = {s_path[idx_wall]}",
-                    flush=True,
-                )
                 idx_wall -= 1
                 points_trajectory = points_trajectory[:idx_wall, :]
                 vpar_path = vpar_path[:idx_wall]
@@ -3047,10 +3045,6 @@ class MapPhaseSpace:
             Eprime = self.nprime * E - self.omega * Peta_values
 
             if points_trajectory.shape[0] < 8:
-                print(
-                    f"{itrj} has no valid trajectory points \t {point[-1, :]} \t stopping criterion: {gc_zeta_hits[0]}",
-                    flush=True,
-                )
                 # start state vector:  [t, s, theta, zeta, vpar, peta, E, mu, Eprime]
                 # end state vector:   [t, s, theta, zeta, vpar, peta, E]
                 start_state = [
@@ -3865,19 +3859,11 @@ class WBAParticles:
             )
             idx_wall = np.argmax(s_path >= 1) if np.any(s_path >= 1) else None
             if idx_wall is not None and s_path[idx_wall] >= 1:
-                print(
-                    f"Particle {itrj} hit the wall at time {time_momentum[idx_wall]}, s = {s_path[idx_wall]}",
-                    flush=True,
-                )
                 idx_wall -= 1
                 points_trajectory = points_trajectory[:idx_wall, :]
                 vpar_path = vpar_path[:idx_wall]
 
             if points_trajectory.shape[0] < 8:
-                print(
-                    f"Particle {itrj} has no valid trajectory points \t {points_trajectory[-1, :]}",
-                    flush=True,
-                )
                 start_state = points_trajectory[0, :].tolist()
                 end_state = points_trajectory[-1, :].tolist()
                 particle_out = [start_state, end_state, np.nan]
@@ -4213,20 +4199,11 @@ class WBAUnPertParticles:
             )
             idx_wall = np.argmax(s_path >= 1) if np.any(s_path >= 1) else None
             if idx_wall is not None and s_path[idx_wall] >= 1:
-                print(
-                    f"Particle {itrj} hit the wall at time {time_momentum[idx_wall]}, \n"
-                    f"s = {s_path[idx_wall]}",
-                    flush=True,
-                )
                 idx_wall -= 1
                 points_trajectory = points_trajectory[:idx_wall, :]
                 vpar_path = vpar_path[:idx_wall]
 
             if points_trajectory.shape[0] < 8:
-                print(
-                    f"Particle {itrj} has no valid trajectory points \t {points_trajectory[-1, :]}",
-                    flush=True,
-                )
                 start_state = points_trajectory[0, :].tolist()
                 end_state = points_trajectory[-1, :].tolist()
                 particle_out = [start_state, end_state, np.nan]
@@ -4258,3 +4235,24 @@ class WBAUnPertParticles:
         if self.comm is not None:
             res_tys = [i for o in self.comm.allgather(res_tys) for i in o]
         return res_tys
+
+def trajectory_to_vtk(res_ty, field, filename="trajectory"):
+    r"""
+    Save a single particle trajectory in Cartesian coordinates to a VTK file.
+    Requires the pyevtk package to be installed.
+
+    Args:
+        res_ty : A 2D numpy array of shape (nsteps, 5) containing the trajectory of a
+                 single particle in Boozer coordinates.
+        field : The :class:`BoozerMagneticField` instance used for field evaluation.
+        filename : The name of the output VTK file.
+    """
+    from pyevtk.hl import polyLinesToVTK
+
+    R_traj, phi_traj, Z_traj = compute_trajectory_cylindrical(res_ty, field)
+
+    X_traj = R_traj * np.cos(phi_traj)
+    Y_traj = R_traj * np.sin(phi_traj)
+
+    ppl = np.asarray([len(R_traj)])  # Number of points along trajectory
+    polyLinesToVTK(filename, X_traj, Y_traj, Z_traj, pointsPerLine=ppl)
