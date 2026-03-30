@@ -57,7 +57,7 @@ field = InterpolatedBoozerField(
     nzeta_interp=nzeta_interp,
 )
 
-nD = lambda s: (1 - s**5)
+nD = lambda s: 1 - s**5
 nT = nD
 T = lambda s: 11.5 * (1 - s)
 
