@@ -1,5 +1,6 @@
 import pickle
 import time
+from os.path import exists
 
 import matplotlib as mpl
 import numpy as np
@@ -125,8 +126,6 @@ reactivity = lambda s: nD(s) * nT(s) * sigmav(T(s))
 fusionborn_points_filepath = "DATA/fusionborn_points.txt"
 fusionborn_vpar_filepath = "DATA/fusionborn_vpar.txt"
 fusionborn_mu_filepath = "DATA/fusionborn_mu.txt"
-
-from os.path import exists
 
 if (
     exists(fusionborn_points_filepath)
