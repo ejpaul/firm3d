@@ -431,7 +431,6 @@ class PassingPoincare:
             ):  # Need at least one full Poincare return maps to compute frequency
                 continue
             delta_theta = np.array(theta_traj[1:]) - np.array(theta_traj[0:-1])
-            delta_s = np.array(s_traj[1:]) - np.array(s_traj[0:-1])
 
             delta_t = t_traj[1::]
             delta_zeta = 2 * np.pi * self.sign_vpar * sign_G
@@ -439,7 +438,6 @@ class PassingPoincare:
             # Average over wells along one field line
             freq_theta = np.mean(delta_theta) / np.mean(delta_t)
             freq_zeta = delta_zeta / np.mean(delta_t)
-            delta_s / np.mean(delta_t)
 
             omega_theta.append(freq_theta)
             omega_zeta.append(freq_zeta)
@@ -1829,36 +1827,29 @@ class PassingPerturbedPoincare:
             n_zetas = [0]
             m_thetas = [self.nprime]
             omegas = [self.omega]
-        try:
-            res_tys, res_hits = trace_particles_boozer_perturbed(
-                perturbed_field=self.saw,
-                stz_inits=points,
-                parallel_speeds=[point[2]],
-                mus=[self.mu],
-                tmax=self.tmax,
-                mass=self.mass,
-                charge=self.charge,
-                phases=phases,
-                n_zetas=n_zetas,
-                m_thetas=m_thetas,
-                omegas=omegas,
-                vpars=[0],
-                axis=0,
-                stopping_criteria=[
-                    MinToroidalFluxStoppingCriterion(0.001),
-                    MaxToroidalFluxStoppingCriterion(0.99),
-                ],
-                forget_exact_path=True,
-                vpars_stop=True,
-                phases_stop=True,
-                **self.solver_options,
-            )
-        except:
-            print(
-                f"Error integrating guiding center equations at {point=}, {t=}, {eta=}",
-                flush=True,
-            )
-            raise RuntimeError()
+        res_tys, res_hits = trace_particles_boozer_perturbed(
+            perturbed_field=self.saw,
+            stz_inits=points,
+            parallel_speeds=[point[2]],
+            mus=[self.mu],
+            tmax=self.tmax,
+            mass=self.mass,
+            charge=self.charge,
+            phases=phases,
+            n_zetas=n_zetas,
+            m_thetas=m_thetas,
+            omegas=omegas,
+            vpars=[0],
+            axis=0,
+            stopping_criteria=[
+                MinToroidalFluxStoppingCriterion(0.001),
+                MaxToroidalFluxStoppingCriterion(0.99),
+            ],
+            forget_exact_path=True,
+            vpars_stop=True,
+            phases_stop=True,
+            **self.solver_options,
+        )
         if len(res_hits[0]) == 0:
             raise RuntimeError("No stopping criterion reached in passing_map.")
 
@@ -2108,13 +2099,12 @@ class PassingPerturbedPoincare:
                     orientation="vertical",
                     label="Digit Accuracy",
                 )
-        print("Lines to plot:", lines, flush=True)
+
         lines_2 = []
         if lines is not None:
             cmap = plt.get_cmap("Wistia")
             n_lines = len(lines)
             for i, line in enumerate(lines):
-                print(f"i={i}, {line}", flush=True)
                 ell, arr = line[0], line[1]
                 if linecolors is not None:
                     color = linecolors[i]
@@ -2154,7 +2144,6 @@ class PassingPerturbedPoincare:
                 pa_data[:, 0] = np.mod(pa_data[:, 0], (2 * np.pi))
                 pa_data = pa_data[pa_data[:, 0].argsort()]
                 if i > 0 and lines[i][0] == lines[i - 1][0]:
-                    print("second zero activated", flush=True)
                     ax.plot(pa_data[:, 0], pa_data[:, 1], lw=5, color=color)
                     continue
                 ax.plot(
@@ -2194,9 +2183,7 @@ class PassingPerturbedPoincare:
             fig.tight_layout()
             plt.savefig(filename + "_convergence.png", dpi=300)
             plt.clf()
-            for elem in final_DAs:
-                if not np.isnan(elem):
-                    final_DAs.remove(elem)
+            final_DAs = [x for x in final_DAs if not np.isnan(x)]
             plt.hist(final_DAs)
             plt.xlabel("Digit Accuracy")
             plt.title("Distribution of Digit Accuracy")
@@ -2403,8 +2390,7 @@ class MapPhaseSpace:
             s_lims = [0.01, 0.95]
         if mu_max is None:
             mu_max = Ekin
-        else:
-            self.mu_max = mu_max
+        self.mu_max = mu_max
 
         # set field parameters
         self.saw = saw
@@ -2626,6 +2612,35 @@ class MapPhaseSpace:
         """
         return self.helicity_M * theta - self.helicity_N * zeta
 
+    def eta(self, theta, zeta):
+        r"""
+        Compute the mapping angle eta = Mp*theta - Np*zeta.
+
+        Args:
+            theta : Poloidal angle.
+            zeta : Toroidal angle.
+        Returns:
+            eta : The mapping angle.
+        """
+        return self.helicity_Mp * theta - self.helicity_Np * zeta
+
+    def chi_eta_to_theta_zeta(self, chi, eta):
+        r"""
+        Convert helical angles (chi, eta) to (theta, zeta).
+
+        Args:
+            chi : Helical angle chi.
+            eta : Mapping angle eta.
+        Returns:
+            theta : Poloidal angle.
+            zeta : Toroidal angle.
+        """
+        denom = self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
+        theta = (self.helicity_Np * chi - self.helicity_N * eta) / denom
+        zeta = (self.helicity_Mp * chi - self.helicity_M * eta) / denom
+
+        return theta, zeta
+
     def instantiate_uniform_particles(self, nParticles):
         r"""
         Generate uniformly distributed initial particles and velocities.
@@ -2686,23 +2701,6 @@ class MapPhaseSpace:
             vpars_init,
             mus_per_mass,
         )
-
-    def chi_eta_to_theta_zeta(self, chi, eta):
-        r"""
-        Convert helical angles (chi, eta) to (theta, zeta).
-
-        Args:
-            chi : Helical angle chi.
-            eta : Mapping angle eta.
-        Returns:
-            theta : Poloidal angle.
-            zeta : Toroidal angle.
-        """
-        denom = self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
-        theta = (self.helicity_Np * chi - self.helicity_N * eta) / denom
-        zeta = (self.helicity_Mp * chi - self.helicity_M * eta) / denom
-
-        return theta, zeta
 
     def vpar_func(self, s, theta, zeta, p_a, sgn):
         r"""
@@ -2831,7 +2829,6 @@ class MapPhaseSpace:
                         sgn[i],
                     )
                     if isinstance(vp_temp, float):
-                        print(vp_temp)
                         continue
                     else:
                         vpars_temp.append(vp_temp[0])
@@ -2871,46 +2868,6 @@ class MapPhaseSpace:
             vpars,
             mus,
         )
-
-    def chi(self, theta, zeta):
-        r"""
-        Compute the helical angle chi = M*theta - N*zeta.
-
-        Args:
-            theta : Poloidal angle.
-            zeta : Toroidal angle.
-        Returns:
-            chi : The helical angle.
-        """
-        return self.helicity_M * theta - self.helicity_N * zeta
-
-    def eta(self, theta, zeta):
-        r"""
-        Compute the mapping angle eta = Mp*theta - Np*zeta.
-
-        Args:
-            theta : Poloidal angle.
-            zeta : Toroidal angle.
-        Returns:
-            eta : The mapping angle.
-        """
-        return self.helicity_Mp * theta - self.helicity_Np * zeta
-
-    def chi_eta_to_theta_zeta(self, chi, eta):
-        r"""
-        Convert helical angles (chi, eta) to (theta, zeta).
-
-        Args:
-            chi : Helical angle chi.
-            eta : Mapping angle eta.
-        Returns:
-            theta : Poloidal angle.
-            zeta : Toroidal angle.
-        """
-        denom = self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
-        theta = (self.helicity_Np * chi - self.helicity_N * eta) / denom
-        zeta = (self.helicity_Mp * chi - self.helicity_M * eta) / denom
-        return theta, zeta
 
     def remove_equilibrium_lost_particles(self, points, vpars_init, mus):
         r"""
@@ -3072,7 +3029,6 @@ class MapPhaseSpace:
                 + self.mass * mu[0] * modB
                 + self.charge * self.saw.Phi()[:, 0]
             )
-            # if not np.allclose(E, Eprime): print('Not ALl close')
             Peta_values = compute_peta(
                 self.saw,
                 points_trajectory,
@@ -3290,6 +3246,8 @@ class MapPhaseSpace:
             points[0, 0],
             points[0, 1],
             points[0, 2],
+            mu, 
+            sign
         )
 
         peta = compute_peta(
@@ -3764,7 +3722,7 @@ class WBAParticles:
                 np.column_stack((self.wall_lost_indicies, self.wall_lost_times)),
             )
         else:
-            print("loaded existing data files", flush=True)
+            if self.verbose: print("loaded existing data files", flush=True)
             self.DAs = np.loadtxt(self.final_filepaths["DA"]).tolist()
             wall_lost = np.loadtxt(self.final_filepaths["wall_lost"]).astype(int)
             self.wall_lost_indicies = wall_lost[:, 0].tolist()
@@ -3876,7 +3834,6 @@ class WBAParticles:
                 res_tys.append(particle_out)
                 res_hits.append(np.array([]))
                 continue
-            # print(f'{points_phase[itrj].shape=} \t{vpars[itrj]=} \t{mus[itrj]=}', flush=True)
             gc_tys, gc_zeta_hits = trace_particles_boozer_perturbed(
                 perturbed_field=saw,
                 stz_inits=points_phase[itrj, :].reshape(1, 4),
@@ -4117,7 +4074,7 @@ class WBAUnPertParticles:
                 np.column_stack((self.wall_lost_indicies, self.wall_lost_times)),
             )
         else:
-            print("loaded existing data files", flush=True)
+            if self.verbose: print("loaded existing data files", flush=True)
             self.DAs = np.loadtxt(self.final_filepaths["DA"]).tolist()
             wall_lost = np.loadtxt(self.final_filepaths["wall_lost"]).astype(int)
             self.wall_lost_indicies = wall_lost[:, 0].tolist()
@@ -4209,7 +4166,6 @@ class WBAUnPertParticles:
         first, last = parallel_loop_bounds(self.comm, points_phase.shape[0])
         res_tys = []
         res_hits = []
-        print(f"{points_phase.shape[0]=}")
 
         for itrj in range(first, last):
             if itrj in self.skip:
@@ -4223,14 +4179,11 @@ class WBAUnPertParticles:
                 res_hits.append(np.array([]))
                 continue
 
-            # print(f'{points_phase[itrj].shape=} \t{vpars[itrj]=} \t{mus[itrj]=}', flush=True)
             pt = np.zeros((1, 3))
             pt[0, 0] = points_phase[itrj, 0]
             pt[0, 1] = points_phase[itrj, 1]
             pt[0, 2] = points_phase[itrj, 2]
             self.vtotal = np.sqrt(2 * self.Ekin / self.mass)
-            print(f"vpar_frac = {vpars[itrj] / self.vtotal}", flush=True)
-            print(f"{isinstance(field, BoozerMagneticField)}", flush=True)
             gc_tys, gc_zeta_hits = trace_particles_boozer(
                 field,
                 stz_inits=pt,
@@ -4280,7 +4233,6 @@ class WBAUnPertParticles:
                 continue
 
             traj = points_trajectory[:, :-1]
-            print(f"{traj.shape=}", flush=True)
 
             Peta_values = compute_peta(
                 self.B0,
