@@ -2267,7 +2267,7 @@ class MapPhaseSpace:
         initial parallel velocity vpar from the perturbed invariant constraint. If
         Eprime is not provided, particles are initialized at fixed Ekin with velocities
         sampled directly and magnetic moment inferred from the local magnetic field.
-        This uses a reference kinetic energy Ekin. 
+        This uses a reference kinetic energy Ekin.
 
         Initial conditions may be supplied directly or generated internally in one of
         two ways:
@@ -2340,7 +2340,7 @@ class MapPhaseSpace:
                 the initialization solves for vpar from the perturbed invariant rather
                 than sampling vpar directly from fixed Ekin.
             sign:
-                Optional fixed sign of vpar used during initialization. 
+                Optional fixed sign of vpar used during initialization.
                 If None, both signs are sampled.
             min_timestep:
                 Minimum timestep used for intergration.
@@ -2376,8 +2376,12 @@ class MapPhaseSpace:
                 Maximum magnetic moment sampled during initialization. If None, defaults
                 to Ekin/minmodB of the volume.
         """
-        if not isinstance(saw, ShearAlfvenWave) and not isinstance(saw, ShearAlfvenWavesSuperposition):
-            raise ValueError("saw must be an instance of ShearAlfvenWave or ShearAlfvenWavesSuperposition.")
+        if not isinstance(saw, ShearAlfvenWave) and not isinstance(
+            saw, ShearAlfvenWavesSuperposition
+        ):
+            raise ValueError(
+                "saw must be an instance of ShearAlfvenWave or ShearAlfvenWavesSuperposition."
+            )
         # @TODO: add convergence points support
 
         if savedata is None:
@@ -3243,11 +3247,7 @@ class MapPhaseSpace:
         points[0, :] = s
 
         vp_temp = self.vpar_func_perturbed(
-            points[0, 0],
-            points[0, 1],
-            points[0, 2],
-            mu, 
-            sign
+            points[0, 0], points[0, 1], points[0, 2], mu, sign
         )
 
         peta = compute_peta(
@@ -3268,7 +3268,7 @@ class MapPhaseSpace:
         savepath="heatmap_digit_accuracy.png",
         ax=None,
         DA_max=7,
-        plot_losses=False
+        plot_losses=False,
     ):
         r"""
         Plot 2D phase-space heatmaps and trapped/loss boundaries.
@@ -3436,7 +3436,7 @@ class MapPhaseSpace:
                             volume_boundary_pitch += pitch_lst
                 if self.verbose:
                     print("making trapped boundary...", flush=True)
-                
+
                 stat_bounce, x_edges_bounce, y_edges_bounce, binnumber_bounce = (
                     binned_statistic_2d(
                         np.array(volume_boundary_pitch),
@@ -3581,7 +3581,7 @@ class WBAParticles:
         guiding-center trajectories.
 
         This class takes a user-supplied set of initial particle conditions,
-        traces each particle in a SAW or ShearAlfvenWaveSuperposition, computes 
+        traces each particle in a SAW or ShearAlfvenWaveSuperposition, computes
         a weighted Birkhoff average diagnostic from the resulting
         time series of P_eta, and records which particles are lost to the wall
         before the final tracing time.
@@ -3640,11 +3640,11 @@ class WBAParticles:
                 Threshold used after tracing to classify particles as chaotic
                 when computing  fractions.
             skipped_particles:
-                List of particle indices to exclude from tracing. Typically, 
+                List of particle indices to exclude from tracing. Typically,
                 these are particles that are equilibrium lost. These are
                 assigned NaN DA values and treated as pre-skipped entries.
             solver_options:
-                Additional keyword arguments passed to the 
+                Additional keyword arguments passed to the
                 integrator.
         """
 
@@ -3722,7 +3722,8 @@ class WBAParticles:
                 np.column_stack((self.wall_lost_indicies, self.wall_lost_times)),
             )
         else:
-            if self.verbose: print("loaded existing data files", flush=True)
+            if self.verbose:
+                print("loaded existing data files", flush=True)
             self.DAs = np.loadtxt(self.final_filepaths["DA"]).tolist()
             wall_lost = np.loadtxt(self.final_filepaths["wall_lost"]).astype(int)
             self.wall_lost_indicies = wall_lost[:, 0].tolist()
@@ -4074,7 +4075,8 @@ class WBAUnPertParticles:
                 np.column_stack((self.wall_lost_indicies, self.wall_lost_times)),
             )
         else:
-            if self.verbose: print("loaded existing data files", flush=True)
+            if self.verbose:
+                print("loaded existing data files", flush=True)
             self.DAs = np.loadtxt(self.final_filepaths["DA"]).tolist()
             wall_lost = np.loadtxt(self.final_filepaths["wall_lost"]).astype(int)
             self.wall_lost_indicies = wall_lost[:, 0].tolist()
