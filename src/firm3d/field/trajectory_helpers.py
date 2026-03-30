@@ -21,6 +21,7 @@ __all__ = [
     "compute_trajectory_cylindrical",
     "PassingPoincare",
     "PassingPerturbedPoincare",
+    "TrappedPoincare",
     "trajectory_to_vtk",
 ]
 
@@ -116,7 +117,7 @@ class PassingPoincare:
         tmax=1e-2,
         solver_options=None,
     ):
-        """
+        r"""
         Initialize and compute the passing Poincare map, evaluated by
         integrating the guiding center equations until the trajectory returns
         to the zeta = 0 plane.
@@ -125,6 +126,8 @@ class PassingPoincare:
 
         Args:
             field : The :class:`BoozerMagneticField` instance.
+            lam : Pitch-angle variable :math:`\lambda = v_\perp^2/(v^2 B)`.
+            sign_vpar : Sign of the parallel velocity.
             mass : Particle mass.
             charge : Particle charge.
             Ekin : Particle total energy.
@@ -446,12 +449,13 @@ class TrappedPoincare:
         field,
         helicity_M,
         helicity_N,
-        s_mirror,
-        theta_mirror,
-        zeta_mirror,
         mass,
         charge,
         Ekin,
+        s_mirror=None,
+        theta_mirror=None,
+        zeta_mirror=None,
+        lam=None,
         ns_poinc=None,
         neta_poinc=None,
         s_init=None,
@@ -478,17 +482,34 @@ class TrappedPoincare:
 
         Args:
             field : The :class:`BoozerMagneticField` instance.
+            helicity_M : Approximate poloidal helicity of the field strength for
+                         classifying ripple and barely-trapped particles.
+            helicity_N : Approximate toroidal helicity of the field strength for
+                         classifying ripple and barely-trapped particles.
             mass : Particle mass.
             charge : Particle charge.
             Ekin : Particle total energy.
-            s_init : List of initial s coordinates for the Poincare map.
-                     (default: None, ns_poinc is used instead)
-            etas_init : List of initial eta coordinates for the Poincare map.
-                        (default: None, neta_poinc is used instead)
+            s_mirror : Initial s coordinate for the mirror point. If None, the
+                       pitch-angle variable lam is used to find the mirror point.
+            theta_mirror : Initial theta coordinate for the mirror point. If None
+                           when lam is provided, the default value of chi = pi/2 is
+                           used as an initial guess for the mirror point.
+            zeta_mirror : Initial zeta coordinate for the mirror point. If None
+                           when lam is provided, the default value of chi = pi/2 is
+                           used as an initial guess for the mirror point.
+            lam : Pitch-angle variable :math:`\lambda = v_\perp^2/(v^2 B)`.
+                  If s_mirror, theta_mirror, zeta_mirror and lam are all provided,
+                  then lam is used to find the mirror point, but s_mirror,
+                  theta_mirror, zeta_mirror are still used to specify an initial
+                  guess for the root solve to find the mirror point.
             ns_poinc : Number of initial conditions in s for Poincare plot
                        (default: 120).
             neta_poinc : Number of initial conditions in eta for Poincare plot
                          (default: 2).
+            s_init : List of initial s coordinates for the Poincare map.
+                     (default: None, ns_poinc is used instead)
+            etas_init : List of initial eta coordinates for the Poincare map.
+                        (default: None, neta_poinc is used instead)
             Nmaps : Number of Poincare return maps to compute for each initial
                     condition (default: 500).
             comm : MPI communicator for parallel execution (default: None).
@@ -512,12 +533,30 @@ class TrappedPoincare:
             self.helicity_Mp = 0
             self.helicity_Np = self.field.nfp
 
-        self.s_mirror = s_mirror
-        self.theta_mirror = theta_mirror
-        self.zeta_mirror = zeta_mirror
-        field.set_points(np.array([[s_mirror], [theta_mirror], [zeta_mirror]]).T)
-        self.modBcrit = field.modB()[0, 0]  # Magnetic field at mirror point
-        self.lam = 1 / self.modBcrit  # lambda = v_perp^2/(v^2 B) = 1/modBcrit
+        if lam is not None:
+            if lam <= 0:
+                raise ValueError("lam must be positive.")
+            self.lam = lam
+            self.modBcrit = 1 / self.lam
+            if theta_mirror is None or zeta_mirror is None:
+                # Default value for mirror point initial guess
+                self.chi_mirror = np.pi / 2
+            else:
+                self.chi_mirror = self.chi(theta_mirror, zeta_mirror)
+        elif (
+            s_mirror is not None
+            and theta_mirror is not None
+            and zeta_mirror is not None
+        ):
+            field.set_points(np.array([[s_mirror], [theta_mirror], [zeta_mirror]]).T)
+            self.modBcrit = field.modB()[0, 0]  # Magnetic field at mirror point
+            self.lam = 1 / self.modBcrit  # lambda = v_perp^2/(v^2 B) = 1/modBcrit
+            self.chi_mirror = self.chi(theta_mirror, zeta_mirror)
+        else:
+            raise ValueError(
+                "Either lam or s_mirror, theta_mirror, zeta_mirror must be provided."
+            )
+
         self.mass = mass
         self.charge = charge
         self.Ekin = Ekin
@@ -684,12 +723,11 @@ class TrappedPoincare:
                 self.field.set_points(point)
                 return self.field.modB()[0, 0]
 
-            chi_mirror = self.chi(self.theta_mirror, self.zeta_mirror)
             try:
                 sol = root_scalar(
                     diffmodB,
                     fprime=graddiffmodB,
-                    x0=chi_mirror,
+                    x0=self.chi_mirror,
                     method="toms748",
                     bracket=[0, np.pi],
                 )
@@ -984,7 +1022,7 @@ def compute_peta(
             helicity_Mp = 0
             helicity_Np = -1
     else:
-        if (helicity_Mp * helicity_Np) == (helicity_Np * helicity_M):
+        if (helicity_Mp * helicity_N) == (helicity_Np * helicity_M):
             raise ValueError(
                 "Chosen helicities (N, M, N', M') do not create a well "
                 "defined Jacobian."
