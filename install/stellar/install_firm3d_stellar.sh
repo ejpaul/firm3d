@@ -23,7 +23,7 @@ module load gsl/2.6
 export CC=$(which mpicc)
 export CXX=$(which mpicxx)
 export FC=$(which mpifort)
-echo "MPI C compidler: $CC"
+echo "MPI C compiler: $CC"
 echo "MPI C++ compiler: $CXX"
 echo "MPI fortran compiler: $FC"
 
