@@ -1,5 +1,6 @@
 import os.path
 import warnings
+from typing import Union
 
 import numpy as np
 from booz_xform import Booz_xform
@@ -2685,7 +2686,7 @@ class ShearAlfvenWavesSuperposition(
         cls,
         eigenvector: AE3DEigenvector,
         B0: BoozerMagneticField,
-        max_dB_normal_by_B0: float = 1e-3,
+        max_dB_normal_by_B0: Union[float, None] = None,
         minor_radius_meters=1.7,
         phase=0.0,
     ):
@@ -2698,8 +2699,10 @@ class ShearAlfvenWavesSuperposition(
                 harmonics from the AE3D simulation.
             B0 (BoozerMagneticField): The background magnetic field
                 (computed separately), in Tesla
-            max_dB_normal_by_B0 (float): Desired ratio of maximum normal B
-                from SAW mode over B0 field
+            max_dB_normal_by_B0 (float | None): Desired ratio of maximum
+                normal B from SAW mode over B0 field. If None, no rescaling is
+                done so the mode is returned with the ampitudes as they appear in
+                AE3DEigenvector.
             minor_radius_meters (float): Stellarator's minor radius, in meters.
                 User can get this from VMEC wout equilibrium
 
@@ -2733,6 +2736,8 @@ class ShearAlfvenWavesSuperposition(
             harmonic_list.append(sah)
         # start with arbitrary magnitude SAW, then rescale it:
         unscaled_SAW = ShearAlfvenWavesSuperposition(harmonic_list)
+        if max_dB_normal_by_B0 is None:
+            return unscaled_SAW
         # Make radial grid that captures all unique radial values for all harmonic:
         s_unique = sorted(set(s_list))
         # Make angle grids that resolve maxima of highest harmonics
@@ -2784,7 +2789,7 @@ class ShearAlfvenWavesSuperposition(
         cls,
         eigenvector: FAR3DEigenvector,
         B0: BoozerMagneticField,
-        max_dB_normal_by_B0: float = 1e-3,
+        max_dB_normal_by_B0: Union[float, None] = None,
         minor_radius_meters=1.7,
         phase=0.0,
     ):
@@ -2797,8 +2802,9 @@ class ShearAlfvenWavesSuperposition(
                 harmonics from the FAR3D initial value solver.
             B0 (BoozerMagneticField): The background magnetic field
                 (computed separately), in Tesla
-            max_dB_normal_by_B0 (float): Desired ratio of maximum normal B
-                from SAW mode over B0 field
+            max_dB_normal_by_B0 (float | None): Desired ratio of maximum
+            normal B from SAW mode over B0 field. If None, no rescaling is
+            done.
             minor_radius_meters (float): Stellarator's minor radius, in meters.
                 User can get this from VMEC wout equilibrium
             phase (float): Phase to add to the harmonic. Adds to an existing
@@ -2834,6 +2840,8 @@ class ShearAlfvenWavesSuperposition(
             harmonic_list.append(sah)
         # start with arbitrary magnitude SAW, then rescale it:
         unscaled_SAW = ShearAlfvenWavesSuperposition(harmonic_list)
+        if max_dB_normal_by_B0 is None:
+            return unscaled_SAW
         # Make radial grid that captures all unique radial values for all harmonic:
         s_unique = sorted(set(s_list))
         # Make angle grids that resolve maxima of highest harmonics

@@ -17,10 +17,10 @@ check_success "Failed to add conda-forge channel"
 
 echo "Enter the name for the new conda environment (e.g., firm3d):"
 read -p "Your input: " env_name
-# Add validation for env_name if needed
 
 echo "Creating conda environment: $env_name"
-conda create -n "$env_name" python=3.9
+# At 2025-12-02, NERSC Conda had Python 3.11.7:
+conda create -n "$env_name" python=3.11.7
 check_success "Failed to create conda environment $env_name"
 
 echo "Activating conda environment: $env_name"
