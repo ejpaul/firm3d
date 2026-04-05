@@ -57,10 +57,10 @@ public:
         double get_pzeta(double vpar);
         void get_val(double pzeta);
         void get_derivatives(double pzeta);
-        double get_dsdt();
-        double get_dthdt();
-        double get_dzedt();
-        double get_dvpardt();
+        double get_dsdtau();
+        double get_dthdtau();
+        double get_dzedtau();
+        double get_dvpardtau();
 };
 
 tuple<vector<array<double, SymplField::Size+1>>, vector<array<double, SymplField::Size+2>>> solve_sympl(

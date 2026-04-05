@@ -31,7 +31,7 @@ abstol = 1e-8  # Absolute tolerance for the ODE solver
 order = 3  # Order for radial interpolation
 degree = 3  # Degree for 3d interpolation
 boozmn_filename = "../inputs/boozmn_beta2.5_QA.nc"
-saw_filename = "ae3d_output/eig_mode_asci.dat"
+saw_filename = "ae.npy"
 tmax = 1e-2  # Time for integration
 ns_interp = resolution
 ntheta_interp = resolution
@@ -117,7 +117,7 @@ proc0_print("Elapsed time for tracing = ", time2 - time1)
 if verbose:
     from firm3d.field.trajectory_helpers import compute_loss_fraction
 
-    times, loss_frac = compute_loss_fraction(res_tys, tmin=1e-5, tmax=1e-2)
+    times, loss_frac = compute_loss_fraction(res_tys, tmin=1e-5, tmax=tmax)
     import matplotlib
 
     matplotlib.use("Agg")  # Don't use interactive backend
@@ -125,7 +125,7 @@ if verbose:
 
     plt.figure()
     plt.loglog(times, loss_frac)
-    plt.xlim([1e-5, 1e-2])
+    plt.xlim([1e-5, tmax])
     plt.ylim([1e-3, 1])
     plt.xlabel("Time [s]")
     plt.ylabel("Fraction of lost particles")

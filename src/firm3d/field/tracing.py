@@ -203,6 +203,9 @@ def trace_particles_boozer_perturbed(
         reltol = tol
     if abstol is None:
         abstol = tol
+    if dt_save <= 0:
+        raise ValueError("dt_save must be positive.")
+
     nparticles = stz_inits.shape[0]
     assert stz_inits.shape[0] == len(parallel_speeds)
     assert len(mus) == len(parallel_speeds)
@@ -484,6 +487,9 @@ def trace_particles_boozer(
     if predictor_step is None:
         predictor_step = True
 
+    if dt_save <= 0:
+        raise ValueError("dt_save must be positive.")
+
     nparticles = stz_inits.shape[0]
     assert stz_inits.shape[0] == len(parallel_speeds)
     speed_par = parallel_speeds
@@ -511,13 +517,16 @@ def trace_particles_boozer(
     res_hits = []
     first, last = parallel_loop_bounds(comm, nparticles)
     for i in range(first, last):
+        # Convert to Python scalars to ensure compatibility with C++ bindings
+        vtotal = np.asarray(speed_total[i]).item()
+        vpar = np.asarray(speed_par[i]).item()
         res_ty, res_hit = sopp.particle_guiding_center_boozer_tracing(
             field,
             stz_inits[i, :],
             m,
             charge,
-            speed_total[i],
-            speed_par[i],
+            vtotal,
+            vpar,
             tmax,
             vacuum=(mode == "gc_vac"),
             noK=(mode == "gc_nok"),

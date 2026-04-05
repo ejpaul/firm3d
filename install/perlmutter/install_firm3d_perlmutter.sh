@@ -12,7 +12,7 @@ check_success() {
 }
 
 # Load modules
-module load python cray-hdf5/1.14.3.1 cray-netcdf/4.9.0.13
+module load python cray-hdf5/1.14.3.7 cray-netcdf/4.9.2.1
 
 # Ensure Conda is available
 type conda >/dev/null 2>&1 || { echo "conda command not found. Please install Anaconda/Miniconda first."; exit 1; }
@@ -40,11 +40,8 @@ env CC=cc CXX=CC pip install -e .
 check_success "Failed to install FIRM3D"
 cd ..
 
-# BOOZ_XFORM Installation
-cd booz_xform || { echo "Error: booz_xform directory not found. Exiting."; exit 1; }
-env CC=cc CXX=CC pip install -e .
+pip install booz_xform
 check_success "Failed to install BOOZ_XFORM"
-cd ..
 
 echo "Successfully installed FIRM3D into the conda environment '$env_name'"
 echo "To activate, run: conda activate $env_name"
