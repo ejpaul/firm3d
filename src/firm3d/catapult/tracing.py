@@ -3,6 +3,7 @@ import numpy as np
 
 import firm3dpp
 from firm3d.catapult.utils import boozer_interpolant
+from firm3d.catapult.utils import cartesian_interpolant
 from firm3d.field.boozermagneticfield import ShearAlfvenWavesSuperposition
 from firm3d.util.gpu_utils import boozer_saw_interpolant
 
@@ -132,5 +133,44 @@ def trace_particles_boozer_gpu(
             vacuum=vacuum,
         )
 
+    last_time = np.reshape(last_time, (nparticles, 6))
+    return last_time
+
+
+
+def trace_particles_cartesian_gpu(
+    field,
+    surface_classifier,
+    nfp,
+    xyz_inits,
+    parallel_speeds,
+    tmax,
+    mass,
+    charge,
+    vtotal,
+    tol,
+    nr,
+    nphi,
+    nz,
+    dt=None,
+):
+
+    nparticles = xyz_inits.shape[0]
+    r_range, phi_range, z_range, quad_info = cartesian_interpolant(field, surface_classifier)
+    last_time = firm3dpp.cartesian_gpu_tracing(
+        quad_pts=quad_info,
+        xrange=r_range,
+        yrange=phi_range,
+        zrange=z_range,
+        stz_init=xyz_inits,
+        m=mass,
+        q=charge,
+        vtotal=vtotal,
+        vtang=parallel_speeds,
+        tmax=tmax,
+        tol=tol,
+        dt_in=dt if dt is not None else -np.ones(nparticles),
+        nparticles=nparticles,
+    )
     last_time = np.reshape(last_time, (nparticles, 6))
     return last_time

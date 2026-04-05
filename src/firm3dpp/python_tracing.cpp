@@ -11,8 +11,8 @@ using std::vector;
 #endif
 
 #ifdef USE_CUDA
-extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
-        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> rrange,
+        py::array_t<double> phirange, py::array_t<double> zrange, py::array_t<double> xyz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tmax, double tol, py::array_t<double> dt_in, int nparticles);
 
 extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
@@ -131,8 +131,8 @@ void init_tracing(py::module_ &m){
 #ifdef USE_CUDA
     m.def("cartesian_gpu_tracing", &cartesian_gpu_tracing,
         py::arg("quad_pts"),
-        py::arg("srange"),
-        py::arg("trange"),
+        py::arg("rrange"),
+        py::arg("phirange"),
         py::arg("zrange"),
         py::arg("stz_init"),
         py::arg("m"),

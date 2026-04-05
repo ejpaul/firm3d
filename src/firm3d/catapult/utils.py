@@ -180,7 +180,7 @@ def boozer_saw_interpolant(field, nfp, ns, ntheta, nzeta):
     return srange, trange, zrange, cell_quad_pts, np.max(J)
 
 
-def cartesian_interpolant(field, sc_particle, nfp, n_metagrid_pts):
+def cartesian_interpolant(field, surface_classifier):
     r"""
     Set up a Boozer vacuum interpolant for tracing.
 
@@ -222,7 +222,7 @@ def cartesian_interpolant(field, sc_particle, nfp, n_metagrid_pts):
     B = field.B_cyl()
     GradAbsB = field.GradAbsB_cyl()
 
-    signed_dist_vals = sc_particle.evaluate_rphiz(quad_pts)
+    signed_dist_vals = surface_classifier.evaluate_rphiz(quad_pts)
 
     quad_info = np.hstack((B, GradAbsB, signed_dist_vals))
 
