@@ -34,7 +34,7 @@ jobs:
       - name: Perform automated code review
         env:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
-          MODEL: sonnet-4.5
+          MODEL: claude-4.5-sonnet
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BLOCKING_REVIEW: ${{ vars.BLOCKING_REVIEW || 'false' }}
         run: |
