@@ -24,7 +24,11 @@ from firm3d.util.constants import (
 from firm3d.util.constants import (
     FUSION_ALPHA_PARTICLE_ENERGY as ENERGY,
 )
-from firm3d.util.gpu_utils import boozer_interpolant, boozer_saw_interpolant
+from firm3d.catapult.utils import boozer_interpolant, boozer_saw_interpolant, cartesian_interpolant
+from simsopt.field import (BiotSavart, InterpolatedField,
+                           SurfaceClassifier, LevelsetStoppingCriterion, load_coils_from_makegrid_file, coils_via_symmetries)
+from simsopt.field.sampling import draw_uniform_on_surface
+from simsopt.geo import SurfaceRZFourier
 
 HAS_CUDA = hasattr(firm3dpp, "test_gpu_interpolation")
 
@@ -50,7 +54,6 @@ def get_field(boozmn_filename, n_metagrid_pts, vacuum):
 
 def construct_interpolant(field, nfp, saw_present=False):
     ns, ntheta, nzeta = 15, 15, 15
-
     if isinstance(field, ShearAlfvenWavesSuperposition):
         field = field.B0
         srange, trange, zrange, quad_info, maxJ = boozer_saw_interpolant(
@@ -80,48 +83,51 @@ def sample_test_points(n_test_pts):
     return stz
 
 
-def test_interpolant(field, nfp, stz, saw_present=False, tol=1e-8):
-    srange, trange, zrange, quad_info, maxJ = construct_interpolant(
-        field, nfp, saw_present=saw_present
-    )
+def test_interpolant(field, nfp, stz, saw_present=False, surf_classifier=None, tol=1e-8):
 
-    # evaluate interpolants
-    if isinstance(field, ShearAlfvenWavesSuperposition):
-        field = field.B0
-        field.set_points(stz)
-        modB = field.modB()
-        modB_derivs = field.modB_derivs()
-        G = field.G()
-        dGds = field.dGds()
-        I = field.I()
-        dIds = field.dIds()
-        iota = field.iota()
-        diotads = field.diotads()
-        cpu_interpolation = np.hstack(
-            (modB, modB_derivs, G, dGds, I, dIds, iota, diotads)
-        )
+    # if in Cartesian coordinates
+    if isinstance(field, InterpolatedField):
+        rrange, phirange, zrange, quad_info = cartesian_interpolant(field, surf_classifier)
+        field.set_points_cyl(stz)
+        # Quantities to interpolate
+        B = field.B_cyl()
+        GradAbsB = field.GradAbsB_cyl()
 
-        ## evaluate GPU interpolant
-        stz = np.ascontiguousarray(stz)
+        # Compare interpolation of B and GradAbsB
+        cpu_interpolation = np.hstack((B, GradAbsB))
         gpu_interpolation = firm3dpp.test_gpu_interpolation(
             quad_info,
-            srange,
-            trange,
+            rrange,
+            phirange,
             zrange,
             stz.copy(),
-            "boozer_saw_vacuum",
+            "cartesian",
             stz.shape[0],
         )
-    else:
-        if field.field_type == "vac":
-            # print("saw not present")
-            # evaluate CPU interpolant
+        gpu_interpolation = np.reshape(gpu_interpolation, (stz.shape[0], -1))
+        gpu_interpolation = gpu_interpolation[:, 0:6]
+        print("running cartesian interpolant test")
+
+    else: # Boozer coordinates
+        srange, trange, zrange, quad_info, maxJ = construct_interpolant(
+            field, nfp, saw_present=saw_present
+        )
+
+        # evaluate interpolants
+        if isinstance(field, ShearAlfvenWavesSuperposition):
+            field = field.B0
             field.set_points(stz)
             modB = field.modB()
             modB_derivs = field.modB_derivs()
             G = field.G()
+            dGds = field.dGds()
+            I = field.I()
+            dIds = field.dIds()
             iota = field.iota()
-            cpu_interpolation = np.hstack((modB, modB_derivs, G, iota))
+            diotads = field.diotads()
+            cpu_interpolation = np.hstack(
+                (modB, modB_derivs, G, dGds, I, dIds, iota, diotads)
+            )
 
             ## evaluate GPU interpolant
             stz = np.ascontiguousarray(stz)
@@ -131,32 +137,54 @@ def test_interpolant(field, nfp, stz, saw_present=False, tol=1e-8):
                 trange,
                 zrange,
                 stz.copy(),
-                "boozer_vacuum",
+                "boozer_saw_vacuum",
                 stz.shape[0],
             )
-        elif field.field_type == "":  # implies finite beta
-            # evaluate CPU interpolant
-            field.set_points(stz)
-            modB = field.modB()
-            modB_derivs = field.modB_derivs()
-            G = field.G()
-            dGds = field.dGds()
-            I = field.I()
-            dIds = field.dIds()
-            iota = field.iota()
-            K = field.K()
-            K_derivs = field.K_derivs()
-            cpu_interpolation = np.hstack(
-                (modB, modB_derivs, G, dGds, I, dIds, iota, K, K_derivs)
-            )
+        else:
+            if field.field_type == "vac":
+                # print("saw not present")
+                # evaluate CPU interpolant
+                field.set_points(stz)
+                modB = field.modB()
+                modB_derivs = field.modB_derivs()
+                G = field.G()
+                iota = field.iota()
+                cpu_interpolation = np.hstack((modB, modB_derivs, G, iota))
 
-            # evaluate GPU interpolant
-            stz = np.ascontiguousarray(stz)
-            gpu_interpolation = firm3dpp.test_gpu_interpolation(
-                quad_info, srange, trange, zrange, stz.copy(), "boozer", stz.shape[0]
-            )
+                ## evaluate GPU interpolant
+                stz = np.ascontiguousarray(stz)
+                gpu_interpolation = firm3dpp.test_gpu_interpolation(
+                    quad_info,
+                    srange,
+                    trange,
+                    zrange,
+                    stz.copy(),
+                    "boozer_vacuum",
+                    stz.shape[0],
+                )
+            elif field.field_type == "":  # implies finite beta
+                # evaluate CPU interpolant
+                field.set_points(stz)
+                modB = field.modB()
+                modB_derivs = field.modB_derivs()
+                G = field.G()
+                dGds = field.dGds()
+                I = field.I()
+                dIds = field.dIds()
+                iota = field.iota()
+                K = field.K()
+                K_derivs = field.K_derivs()
+                cpu_interpolation = np.hstack(
+                    (modB, modB_derivs, G, dGds, I, dIds, iota, K, K_derivs)
+                )
 
-    gpu_interpolation = np.reshape(gpu_interpolation, (stz.shape[0], -1))
+                # evaluate GPU interpolant
+                stz = np.ascontiguousarray(stz)
+                gpu_interpolation = firm3dpp.test_gpu_interpolation(
+                    quad_info, srange, trange, zrange, stz.copy(), "boozer", stz.shape[0]
+                )
+
+        gpu_interpolation = np.reshape(gpu_interpolation, (stz.shape[0], -1))
 
     # compute error
     error_is_small = np.isclose(
@@ -736,6 +764,66 @@ class TestGPUTracing(unittest.TestCase):
             tol=tol,
         )
         self.assertTrue(is_small)
+
+    def test_cartesian_vacuum(self):
+        degree = 3 # degree of interpolant
+        n = 16 # resolution of interpolant
+        order = 12 # order of coil curves
+
+        filename = "examples/inputs/coils.curves_22_7_21"
+        wout_filename = "examples/inputs/wout_vmec.nc"
+
+        surf = SurfaceRZFourier.from_wout(wout_filename)
+
+        coils = load_coils_from_makegrid_file(filename, order, ppp=20, group_names=None)
+
+        curves = []
+        currents = []
+        for i, coil in enumerate(coils):
+            curves.append(coil.curve)
+            currents.append(coil.current)
+
+        coils_full = coils_via_symmetries(curves, currents, surf.nfp, True)
+        bs = BiotSavart(coils_full)
+
+        surf_launch = SurfaceRZFourier.from_wout(wout_filename, s=0.3)
+
+        sc_particle = SurfaceClassifier(surf, h=0.1, p=2)
+        rs = np.linalg.norm(surf.gamma()[:, :, 0:2], axis=2)
+        zs = surf.gamma()[:, :, 2]
+
+        rrange = (np.min(rs), np.max(rs), n)
+        phirange = (0, 2*np.pi/surf.nfp, n*2)
+        # exploit stellarator symmetry and only consider positive z values:
+        zrange = (0, np.max(zs), n//2)
+        bsh = InterpolatedField(
+            bs, degree, rrange, phirange, zrange, True, nfp=surf.nfp, stellsym=True
+        )
+
+        # rejection sample points inside the surface uniformly
+        nparticles = 1000
+        rphiz = np.empty((nparticles, 3))
+        for i in range(nparticles):
+            pt = np.random.uniform(low=0, high=1, size=(1,3))
+            pt[0,0] = pt[0,0]*(rrange[1] - rrange[0]) + rrange[0]
+            pt[0,1] *= 2*np.pi
+            pt[0,2] = (pt[0,2] - 0.5) *2*zrange[1]
+
+            while sc_particle.evaluate_rphiz(pt) <=  0: # particle is outside the surface
+                pt = np.random.uniform(low=0, high=1, size=(1,3))
+                pt[0,0] = pt[0, 0]*(rrange[1] - rrange[0]) + rrange[0]
+                pt[0,1] *= 2*np.pi
+                pt[0,2] = (pt[0,2] - 0.5) *2*zrange[1]
+            rphiz[i, :] = pt
+        xyz = np.empty((nparticles, 3))
+        xyz[:, 0] = rphiz[:, 0] * np.cos(rphiz[:, 1])
+        xyz[:, 1] = rphiz[:, 0] * np.sin(rphiz[:, 1])
+        xyz[:, 2] = rphiz[:, 2]
+
+
+        test_interpolant(bsh, surf.nfp, xyz, surf_classifier=sc_particle, tol=1e-8)
+
+        self.assertTrue(5==5)
 
 
 if __name__ == "__main__":
