@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# load cuda module to build gpu code
+module load cudatoolkit
+
 # Function to check last command's success
 check_success() {
     if [ $? -ne 0 ]; then
