@@ -26,20 +26,21 @@ from firm3d.util.constants import (
 )
 from firm3d.catapult.utils import boozer_interpolant, boozer_saw_interpolant, cartesian_interpolant
 from simsopt.field import (BiotSavart, InterpolatedField,
-                           SurfaceClassifier, LevelsetStoppingCriterion, load_coils_from_makegrid_file, coils_via_symmetries)
+                           SurfaceClassifier, load_coils_from_makegrid_file, coils_via_symmetries)
 from simsopt.field.sampling import draw_uniform_on_surface
 from simsopt.geo import SurfaceRZFourier
+from simsopt.field import (
+    trace_particles,
+)
+import simsopt
 
 HAS_CUDA = hasattr(firm3dpp, "test_gpu_interpolation")
 
 
 def get_field(boozmn_filename, n_metagrid_pts, vacuum):
-    # start_time = time.time()
     bri = BoozerRadialInterpolant(boozmn_filename, 3, enforce_vacuum=vacuum)
     nfp = bri.nfp
     degree = 3
-    # start_time = time.time()
-    # print("bri field type:", bri.field_type)
     field = InterpolatedBoozerField(
         bri,
         degree,
@@ -60,7 +61,6 @@ def construct_interpolant(field, nfp, saw_present=False):
             field, nfp, ns, ntheta, nzeta
         )
     else:  # the field is an InterpolatedBoozerField (unperturbed)
-        # print(field.field_type)
         if field.field_type == "vac":
             srange, trange, zrange, quad_info, maxJ = boozer_interpolant(
                 field, nfp, ns, ntheta, nzeta, vacuum=True
@@ -82,6 +82,28 @@ def sample_test_points(n_test_pts):
     stz = np.hstack((s, t, z))
     return stz
 
+def cartesian_rhs(position, vpar, field, mass, charge, velocity):
+    field.set_points_cyl(position.reshape(-1, 3))
+    B = field.B()
+    GradAbsB = field.GradAbsB()
+    AbsB = np.linalg.norm(B)
+
+    BcrossGradAbsB = [0] * 3
+    BcrossGradAbsB[0] = B[0, 1] * GradAbsB[0, 2] - B[0, 2] * GradAbsB[0, 1]
+    BcrossGradAbsB[1] = B[0, 2] * GradAbsB[0, 0] - B[0, 0] * GradAbsB[0, 2]
+    BcrossGradAbsB[2] = B[0, 0] * GradAbsB[0, 1] - B[0, 1] * GradAbsB[0, 0]
+
+    v_perp2 = velocity**2 - vpar**2
+    mu = v_perp2 / (2 * AbsB)
+    fak1 = vpar / AbsB
+    fak2 = (mass / (charge * AbsB**3)) * (0.5 * v_perp2 + vpar**2)
+
+    out = [0] * 4
+    for i in range(3):
+        out[i] = fak1 * B[0, i] + fak2 * BcrossGradAbsB[i]
+    out[3] = -mu * np.sum([B[0, i] * GradAbsB[0, i] for i in range(3)]) / AbsB
+    return out
+
 
 def test_interpolant(field, nfp, stz, saw_present=False, surf_classifier=None, tol=1e-8):
 
@@ -101,12 +123,12 @@ def test_interpolant(field, nfp, stz, saw_present=False, surf_classifier=None, t
             phirange,
             zrange,
             stz.copy(),
-            "cartesian",
+            "cartesian_vacuum",
             stz.shape[0],
         )
+
         gpu_interpolation = np.reshape(gpu_interpolation, (stz.shape[0], -1))
         gpu_interpolation = gpu_interpolation[:, 0:6]
-        print("running cartesian interpolant test")
 
     else: # Boozer coordinates
         srange, trange, zrange, quad_info, maxJ = construct_interpolant(
@@ -142,7 +164,6 @@ def test_interpolant(field, nfp, stz, saw_present=False, surf_classifier=None, t
             )
         else:
             if field.field_type == "vac":
-                # print("saw not present")
                 # evaluate CPU interpolant
                 field.set_points(stz)
                 modB = field.modB()
@@ -193,7 +214,6 @@ def test_interpolant(field, nfp, stz, saw_present=False, surf_classifier=None, t
     error = np.abs(cpu_interpolation - gpu_interpolation) / (
         np.abs(cpu_interpolation) + 1
     )
-
     if error.max() > tol:
         print("tolerance not satisfied in interpolant")
         row_idx = np.unravel_index(np.argmax(error), error.shape)[0]
@@ -211,180 +231,191 @@ def test_derivatives(
     stz,
     vpar,
     vtotal,
-    psi0,
+    psi0=0,
     time=None,
     saw_present=False,
     saw_filename=None,
+    surf_classifier=None,
     tol=1e-8,
 ):
+    if isinstance(field, InterpolatedField): # Cartesian
+        rrange, phirange, zrange, quad_info = cartesian_interpolant(field, surf_classifier)
+        gpu_derivs = firm3dpp.test_derivatives_cartesian(
+            quad_info,
+            rrange,
+            phirange,
+            zrange,
+            stz,
+            vpar,
+            vtotal,
+            MASS,
+            CHARGE,
+            stz.shape[0],
+        )
+        gpu_derivs = np.reshape(gpu_derivs, (stz.shape[0], 4))
 
-    srange, trange, zrange, quad_info, maxJ = construct_interpolant(field, nfp)
-    ## evaluate derivatives
-    if isinstance(field, ShearAlfvenWavesSuperposition):
-        assert time is not None, (
-            "time array must be provided when testing derivatives with SAW"
-        )
-        assert saw_filename is not None, (
-            "saw filename must be provided when testing derivatives with SAW"
-        )
-        # evaluate CPU derivatives
-        # print("computing simsopt derivatives")
         cpu_derivs = np.empty((stz.shape[0], 4))
+        for i in range(stz.shape[0]):
+            cpu_derivs[i, :] = cartesian_rhs(
+                stz[i, :], vpar[i], field, MASS, CHARGE, vtotal
+            )
 
-        if field.B0.field_type == "vac":
-            for i in range(stz.shape[0]):
-                cpu_derivs[i, :] = firm3dpp.simsopt_derivs_saw(
-                    field,
-                    stz[i, :],
+    else:
+        srange, trange, zrange, quad_info, maxJ = construct_interpolant(field, nfp)
+        ## evaluate derivatives
+        if isinstance(field, ShearAlfvenWavesSuperposition):
+            assert time is not None, (
+                "time array must be provided when testing derivatives with SAW"
+            )
+            assert saw_filename is not None, (
+                "saw filename must be provided when testing derivatives with SAW"
+            )
+            # evaluate CPU derivatives
+            cpu_derivs = np.empty((stz.shape[0], 4))
+
+            if field.B0.field_type == "vac":
+                for i in range(stz.shape[0]):
+                    cpu_derivs[i, :] = firm3dpp.simsopt_derivs_saw(
+                        field,
+                        stz[i, :],
+                        MASS,
+                        CHARGE,
+                        vtotal,
+                        vpar[i],
+                        time[i],
+                        "vacuum_saw",
+                    )
+            elif field.B0.field_type == "nok":  # NoK tracing
+                for i in range(stz.shape[0]):
+                    cpu_derivs[i, :] = firm3dpp.simsopt_derivs_saw(
+                        field, stz[i, :], MASS, CHARGE, vtotal, vpar[i], time[i], "nok_saw"
+                    )
+            else:
+                ValueError("Field type not recognized for SAW derivatives")
+
+            saw_nharmonics = 5
+            ## load saw data as arrays
+            saw_data = np.load(saw_filename, allow_pickle=True)
+            saw_data = saw_data[()]
+            saw_omega = field.get_wave(0).omega
+            s = field.get_wave(0).phihat.get_s_basis()
+            saw_srange = (s[0], s[-1], len(s))
+
+            saw_m = [field.get_wave(i).Phim for i in range(saw_nharmonics)]
+            saw_n = [field.get_wave(i).Phin for i in range(saw_nharmonics)]
+            saw_phihats = np.ascontiguousarray(
+                np.column_stack(
+                    [
+                        np.array([field.get_wave(i).phihat(s_val) for s_val in s])
+                        for i in range(saw_nharmonics)
+                    ]
+                )
+            )
+            ## evaluate GPU interpolant
+            stz = np.ascontiguousarray(stz)
+            vpar = np.ascontiguousarray(vpar)
+
+            if field.B0.field_type == "vac":
+                gpu_derivs = firm3dpp.test_derivatives_saw(
+                    quad_info,
+                    srange,
+                    trange,
+                    zrange,
+                    saw_omega,
+                    saw_srange,
+                    saw_m,
+                    saw_n,
+                    saw_phihats,
+                    saw_nharmonics,
+                    stz,
+                    vpar,
+                    time,
+                    vtotal,
                     MASS,
                     CHARGE,
+                    psi0,
+                    stz.shape[0],
+                )
+            elif field.B0.field_type == "nok":
+                gpu_derivs = firm3dpp.test_derivatives_saw_nok(
+                    quad_info,
+                    srange,
+                    trange,
+                    zrange,
+                    saw_omega,
+                    saw_srange,
+                    saw_m,
+                    saw_n,
+                    saw_phihats,
+                    saw_nharmonics,
+                    stz,
+                    vpar,
+                    time,
                     vtotal,
-                    vpar[i],
-                    time[i],
-                    "vacuum_saw",
+                    MASS,
+                    CHARGE,
+                    psi0,
+                    stz.shape[0],
                 )
-        elif field.B0.field_type == "nok":  # NoK tracing
-            for i in range(stz.shape[0]):
-                cpu_derivs[i, :] = firm3dpp.simsopt_derivs_saw(
-                    field, stz[i, :], MASS, CHARGE, vtotal, vpar[i], time[i], "nok_saw"
-                )
+            else:
+                ValueError("Field type not recognized for SAW derivatives")
         else:
-            ValueError("Field type not recognized for SAW derivatives")
+            if field.field_type == "vac":
+                # evaluate CPU derivatives
+                cpu_derivs = np.empty((stz.shape[0], 4))
+                for i in range(stz.shape[0]):
+                    cpu_derivs[i, :] = firm3dpp.simsopt_derivs_boozer(
+                        field, stz[i, :], MASS, CHARGE, vtotal, vpar[i], vacuum=True
+                    )
 
-        saw_nharmonics = 5
-        ## load saw data as arrays
-        saw_data = np.load(saw_filename, allow_pickle=True)
-        saw_data = saw_data[()]
-        saw_omega = field.get_wave(0).omega
-        # print("omega=", saw_omega)
-        s = field.get_wave(0).phihat.get_s_basis()
-        # print("s", s)
-        # print(s[40:])
-        saw_srange = (s[0], s[-1], len(s))
-
-        saw_m = [field.get_wave(i).Phim for i in range(saw_nharmonics)]
-        saw_n = [field.get_wave(i).Phin for i in range(saw_nharmonics)]
-        saw_phihats = np.ascontiguousarray(
-            np.column_stack(
-                [
-                    np.array([field.get_wave(i).phihat(s_val) for s_val in s])
-                    for i in range(saw_nharmonics)
-                ]
-            )
-        )
-        ## evaluate GPU interpolant
-        stz = np.ascontiguousarray(stz)
-        vpar = np.ascontiguousarray(vpar)
-        # print("calculating new derivatives")
-        # start_time = time.time()
-
-        if field.B0.field_type == "vac":
-            gpu_derivs = firm3dpp.test_derivatives_saw(
-                quad_info,
-                srange,
-                trange,
-                zrange,
-                saw_omega,
-                saw_srange,
-                saw_m,
-                saw_n,
-                saw_phihats,
-                saw_nharmonics,
-                stz,
-                vpar,
-                time,
-                vtotal,
-                MASS,
-                CHARGE,
-                psi0,
-                stz.shape[0],
-            )
-        elif field.B0.field_type == "nok":
-            gpu_derivs = firm3dpp.test_derivatives_saw_nok(
-                quad_info,
-                srange,
-                trange,
-                zrange,
-                saw_omega,
-                saw_srange,
-                saw_m,
-                saw_n,
-                saw_phihats,
-                saw_nharmonics,
-                stz,
-                vpar,
-                time,
-                vtotal,
-                MASS,
-                CHARGE,
-                psi0,
-                stz.shape[0],
-            )
-        else:
-            ValueError("Field type not recognized for SAW derivatives")
-    else:
-        if field.field_type == "vac":
-            # evaluate CPU derivatives
-            # print("computing simsopt derivatives")
-            cpu_derivs = np.empty((stz.shape[0], 4))
-            # start_time = time.time()
-            for i in range(stz.shape[0]):
-                cpu_derivs[i, :] = firm3dpp.simsopt_derivs_boozer(
-                    field, stz[i, :], MASS, CHARGE, vtotal, vpar[i], vacuum=True
+                ## evaluate GPU interpolant
+                stz = np.ascontiguousarray(stz)
+                vpar = np.ascontiguousarray(vpar)
+                gpu_derivs = firm3dpp.test_derivatives_boozer(
+                    quad_info,
+                    srange,
+                    trange,
+                    zrange,
+                    stz.copy(),
+                    vpar,
+                    vtotal,
+                    MASS,
+                    CHARGE,
+                    psi0,
+                    stz.shape[0],
+                    vacuum=True,
                 )
+            elif field.field_type == "":  # implies finite beta
+                # evaluate CPU derivatives
+                cpu_derivs = np.empty((stz.shape[0], 4))
+                # start_time = time.time()
+                for i in range(stz.shape[0]):
+                    cpu_derivs[i, :] = firm3dpp.simsopt_derivs_boozer(
+                        field, stz[i, :], MASS, CHARGE, vtotal, vpar[i], vacuum=False
+                    )
 
-            ## evaluate GPU interpolant
-            stz = np.ascontiguousarray(stz)
-            vpar = np.ascontiguousarray(vpar)
-            # print("calculating new derivatives")
-            # start_time = time.time()
-            gpu_derivs = firm3dpp.test_derivatives_boozer(
-                quad_info,
-                srange,
-                trange,
-                zrange,
-                stz.copy(),
-                vpar,
-                vtotal,
-                MASS,
-                CHARGE,
-                psi0,
-                stz.shape[0],
-                vacuum=True,
-            )
-        elif field.field_type == "":  # implies finite beta
-            # evaluate CPU derivatives
-            # print("computing simsopt derivatives")
-            cpu_derivs = np.empty((stz.shape[0], 4))
-            # start_time = time.time()
-            for i in range(stz.shape[0]):
-                cpu_derivs[i, :] = firm3dpp.simsopt_derivs_boozer(
-                    field, stz[i, :], MASS, CHARGE, vtotal, vpar[i], vacuum=False
+                ## evaluate GPU interpolant
+                stz = np.ascontiguousarray(stz)
+                vpar = np.ascontiguousarray(vpar)
+                gpu_derivs = firm3dpp.test_derivatives_boozer(
+                    quad_info,
+                    srange,
+                    trange,
+                    zrange,
+                    stz.copy(),
+                    vpar,
+                    vtotal,
+                    MASS,
+                    CHARGE,
+                    psi0,
+                    stz.shape[0],
+                    vacuum=False,
                 )
-
-            ## evaluate GPU interpolant
-            stz = np.ascontiguousarray(stz)
-            vpar = np.ascontiguousarray(vpar)
-            # print("calculating new derivatives")
-            # start_time = time.time()
-            gpu_derivs = firm3dpp.test_derivatives_boozer(
-                quad_info,
-                srange,
-                trange,
-                zrange,
-                stz.copy(),
-                vpar,
-                vtotal,
-                MASS,
-                CHARGE,
-                psi0,
-                stz.shape[0],
-                vacuum=False,
-            )
-    gpu_derivs = np.reshape(gpu_derivs, (stz.shape[0], 4))
+        gpu_derivs = np.reshape(gpu_derivs, (stz.shape[0], 4))
 
     error_is_small = np.isclose(gpu_derivs, cpu_derivs, rtol=tol, atol=tol).all()
     error = np.abs(cpu_derivs - gpu_derivs) / (np.abs(cpu_derivs) + 1)
+
 
     if not error_is_small:
         row_idx = np.unravel_index(np.argmax(error), error.shape)[0]
@@ -397,181 +428,216 @@ def test_derivatives(
 
 
 def test_timestep(
-    field, nfp, stz, vpar, vtotal, psi0, time=None, saw_filename=None, tol=1e-8
+    field, nfp, stz, vpar, vtotal, psi0=0, time=None, saw_filename=None, tol=1e-8, surf_classifier=None
 ):
-
-    srange, trange, zrange, quad_info, maxJ = construct_interpolant(field, nfp)
-
-    if isinstance(field, ShearAlfvenWavesSuperposition):
-        assert saw_filename is not None, (
-            "saw filename must be provided when testing timesteps with SAW"
+    if isinstance(field, InterpolatedField): # Cartesian
+        rrange, phirange, zrange, quad_info = cartesian_interpolant(field, surf_classifier)
+        last_time = firm3dpp.test_timestep_cartesian(
+            quad_pts=quad_info,
+            rrange=rrange,
+            phirange=phirange,
+            zrange=zrange,
+            loc_init = stz,
+            m=MASS,
+            q=CHARGE,
+            vtotal=np.sqrt(2 * ENERGY / MASS),
+            vtang=vpar,
+            tol=1e-9,
+            nparticles=stz.shape[0],
         )
-        # evaluate CPU timestep
-        field.B0.set_points(stz)
-        mu_init = (vtotal**2 - vpar**2) / (2 * field.B0.modB()[:, 0])
+        gpu_final_positions = np.reshape(last_time, (stz.shape[0], 5))
 
-        gc_tys, gc_zeta_hits = trace_particles_boozer_perturbed(
+        rphiz = stz
+        r = rphiz[:, 0].reshape(-1, 1)
+        phi = rphiz[:, 1].reshape(-1, 1)
+        z = rphiz[:, 2].reshape(-1, 1)
+        x = r * np.cos(phi)
+        y = r * np.sin(phi)
+        xyz = np.hstack((x, y, z))
+        gc_tys, gc_zeta_hits = trace_particles(
             field,
-            stz,
+            xyz,
             vpar,
-            mu_init,
             tmax=1e-2,
             mass=MASS,
             charge=CHARGE,
+            Ekin=ENERGY,
             tol=1e-9,
-            stopping_criteria=[IterationStoppingCriterion(0)],
+            stopping_criteria=[simsopt.field.IterationStoppingCriterion(1)],
             forget_exact_path=True,
         )
-
-        saw_nharmonics = 5
-        ## load saw data as arrays
-        saw_data = np.load(saw_filename, allow_pickle=True)
-        saw_data = saw_data[()]
-        saw_omega = field.get_wave(0).omega
-        # print("omega=", saw_omega)
-        s = field.get_wave(0).phihat.get_s_basis()
-        # print("s", s)
-        # print(s[40:])
-        saw_srange = (s[0], s[-1], len(s))
-
-        saw_m = [field.get_wave(i).Phim for i in range(saw_nharmonics)]
-        saw_n = [field.get_wave(i).Phin for i in range(saw_nharmonics)]
-        saw_phihats = np.ascontiguousarray(
-            np.column_stack(
-                [
-                    np.array([field.get_wave(i).phihat(s_val) for s_val in s])
-                    for i in range(saw_nharmonics)
-                ]
-            )
-        )
-        stz = np.ascontiguousarray(stz)
-        psi0 = field.B0.psi0
-
-        if field.B0.field_type == "vac":
-            last_time = firm3dpp.test_timestep_saw(
-                quad_pts=quad_info,
-                srange=srange,
-                trange=trange,
-                zrange=zrange,
-                saw_omega=saw_omega,
-                saw_srange=saw_srange,
-                saw_m=saw_m,
-                saw_n=saw_n,
-                saw_phihats=saw_phihats,
-                saw_nharmonics=saw_nharmonics,
-                stz_init=stz,
-                m=MASS,
-                q=CHARGE,
-                vtotal=np.sqrt(2 * ENERGY / MASS),
-                vtang=vpar,
-                time=time,
-                tol=1e-9,
-                psi0=psi0,
-                nparticles=stz.shape[0],
-            )
-        elif field.B0.field_type == "nok":
-            last_time = firm3dpp.test_timestep_saw_nok(
-                quad_pts=quad_info,
-                srange=srange,
-                trange=trange,
-                zrange=zrange,
-                saw_omega=saw_omega,
-                saw_srange=saw_srange,
-                saw_m=saw_m,
-                saw_n=saw_n,
-                saw_phihats=saw_phihats,
-                saw_nharmonics=saw_nharmonics,
-                stz_init=stz,
-                m=MASS,
-                q=CHARGE,
-                vtotal=np.sqrt(2 * ENERGY / MASS),
-                vtang=vpar,
-                time=time,
-                tol=1e-9,
-                psi0=psi0,
-                nparticles=stz.shape[0],
-            )
-        last_time = np.reshape(last_time, (stz.shape[0], 5))
+        cpu_positions = np.array([x[-1] for x in gc_tys])
+    
     else:
-        if field.field_type == "vac":
-            gc_tys, gc_zeta_hits = trace_particles_boozer(
+        srange, trange, zrange, quad_info, maxJ = construct_interpolant(field, nfp)
+
+        if isinstance(field, ShearAlfvenWavesSuperposition):
+            assert saw_filename is not None, (
+                "saw filename must be provided when testing timesteps with SAW"
+            )
+            # evaluate CPU timestep
+            field.B0.set_points(stz)
+            mu_init = (vtotal**2 - vpar**2) / (2 * field.B0.modB()[:, 0])
+
+            gc_tys, gc_zeta_hits = trace_particles_boozer_perturbed(
                 field,
                 stz,
                 vpar,
+                mu_init,
                 tmax=1e-2,
                 mass=MASS,
                 charge=CHARGE,
-                Ekin=ENERGY,
                 tol=1e-9,
-                stopping_criteria=[IterationStoppingCriterion(0)],
+                stopping_criteria=[IterationStoppingCriterion(1)],
                 forget_exact_path=True,
             )
 
-            stz = np.ascontiguousarray(stz)
-            psi0 = field.psi0
-            last_time = firm3dpp.test_timestep_boozer(
-                quad_pts=quad_info,
-                srange=srange,
-                trange=trange,
-                zrange=zrange,
-                stz_init=stz,
-                m=MASS,
-                q=CHARGE,
-                vtotal=np.sqrt(2 * ENERGY / MASS),
-                vtang=vpar,
-                tol=1e-9,
-                psi0=psi0,
-                nparticles=stz.shape[0],
-                vacuum=True,
-            )
-            last_time = np.reshape(last_time, (stz.shape[0], 5))
-        elif field.field_type == "":  # implies finite beta
-            gc_tys, gc_zeta_hits = trace_particles_boozer(
-                field,
-                stz,
-                vpar,
-                tmax=1e-2,
-                mass=MASS,
-                charge=CHARGE,
-                Ekin=ENERGY,
-                tol=1e-9,
-                stopping_criteria=[IterationStoppingCriterion(0)],
-                forget_exact_path=True,
-            )
+            saw_nharmonics = 5
+            ## load saw data as arrays
+            saw_data = np.load(saw_filename, allow_pickle=True)
+            saw_data = saw_data[()]
+            saw_omega = field.get_wave(0).omega
+            s = field.get_wave(0).phihat.get_s_basis()
+            saw_srange = (s[0], s[-1], len(s))
 
-            stz = np.ascontiguousarray(stz)
-            psi0 = field.psi0
-            last_time = firm3dpp.test_timestep_boozer(
-                quad_pts=quad_info,
-                srange=srange,
-                trange=trange,
-                zrange=zrange,
-                stz_init=stz,
-                m=MASS,
-                q=CHARGE,
-                vtotal=np.sqrt(2 * ENERGY / MASS),
-                vtang=vpar,
-                tol=1e-9,
-                psi0=psi0,
-                nparticles=stz.shape[0],
-                vacuum=False,
+            saw_m = [field.get_wave(i).Phim for i in range(saw_nharmonics)]
+            saw_n = [field.get_wave(i).Phin for i in range(saw_nharmonics)]
+            saw_phihats = np.ascontiguousarray(
+                np.column_stack(
+                    [
+                        np.array([field.get_wave(i).phihat(s_val) for s_val in s])
+                        for i in range(saw_nharmonics)
+                    ]
+                )
             )
-            last_time = np.reshape(last_time, (stz.shape[0], 5))
+            stz = np.ascontiguousarray(stz)
+            psi0 = field.B0.psi0
 
-    # map to pseudo-cylindrical coordinates
-    cpu_positions = np.array([x[-1] for x in gc_tys])
-    cpu_positions = np.array(
-        [
-            [x[0], x[1] * np.cos(x[2]), x[1] * np.sin(x[2]), x[3], x[4]]
-            for x in cpu_positions
-        ]
-    )
-    gpu_final_positions = np.array(
-        [
-            [x[0], x[1] * np.cos(x[2]), x[1] * np.sin(x[2]), x[3], x[4]]
-            for x in last_time
-        ]
-    )
+            if field.B0.field_type == "vac":
+                last_time = firm3dpp.test_timestep_saw(
+                    quad_pts=quad_info,
+                    srange=srange,
+                    trange=trange,
+                    zrange=zrange,
+                    saw_omega=saw_omega,
+                    saw_srange=saw_srange,
+                    saw_m=saw_m,
+                    saw_n=saw_n,
+                    saw_phihats=saw_phihats,
+                    saw_nharmonics=saw_nharmonics,
+                    stz_init=stz,
+                    m=MASS,
+                    q=CHARGE,
+                    vtotal=np.sqrt(2 * ENERGY / MASS),
+                    vtang=vpar,
+                    time=time,
+                    tol=1e-9,
+                    psi0=psi0,
+                    nparticles=stz.shape[0],
+                )
+            elif field.B0.field_type == "nok":
+                last_time = firm3dpp.test_timestep_saw_nok(
+                    quad_pts=quad_info,
+                    srange=srange,
+                    trange=trange,
+                    zrange=zrange,
+                    saw_omega=saw_omega,
+                    saw_srange=saw_srange,
+                    saw_m=saw_m,
+                    saw_n=saw_n,
+                    saw_phihats=saw_phihats,
+                    saw_nharmonics=saw_nharmonics,
+                    stz_init=stz,
+                    m=MASS,
+                    q=CHARGE,
+                    vtotal=np.sqrt(2 * ENERGY / MASS),
+                    vtang=vpar,
+                    time=time,
+                    tol=1e-9,
+                    psi0=psi0,
+                    nparticles=stz.shape[0],
+                )
+            last_time = np.reshape(last_time, (stz.shape[0], 5))
+        else:
+            if field.field_type == "vac":
+                gc_tys, gc_zeta_hits = trace_particles_boozer(
+                    field,
+                    stz,
+                    vpar,
+                    tmax=1e-2,
+                    mass=MASS,
+                    charge=CHARGE,
+                    Ekin=ENERGY,
+                    tol=1e-9,
+                    stopping_criteria=[IterationStoppingCriterion(1)],
+                    forget_exact_path=True,
+                )
+
+                stz = np.ascontiguousarray(stz)
+                psi0 = field.psi0
+                last_time = firm3dpp.test_timestep_boozer(
+                    quad_pts=quad_info,
+                    srange=srange,
+                    trange=trange,
+                    zrange=zrange,
+                    stz_init=stz,
+                    m=MASS,
+                    q=CHARGE,
+                    vtotal=np.sqrt(2 * ENERGY / MASS),
+                    vtang=vpar,
+                    tol=1e-9,
+                    psi0=psi0,
+                    nparticles=stz.shape[0],
+                    vacuum=True,
+                )
+                last_time = np.reshape(last_time, (stz.shape[0], 5))
+            elif field.field_type == "":  # implies finite beta
+                gc_tys, gc_zeta_hits = trace_particles_boozer(
+                    field,
+                    stz,
+                    vpar,
+                    tmax=1e-2,
+                    mass=MASS,
+                    charge=CHARGE,
+                    Ekin=ENERGY,
+                    tol=1e-9,
+                    stopping_criteria=[IterationStoppingCriterion(1)],
+                    forget_exact_path=True,
+                )
+
+                stz = np.ascontiguousarray(stz)
+                psi0 = field.psi0
+                last_time = firm3dpp.test_timestep_boozer(
+                    quad_pts=quad_info,
+                    srange=srange,
+                    trange=trange,
+                    zrange=zrange,
+                    stz_init=stz,
+                    m=MASS,
+                    q=CHARGE,
+                    vtotal=np.sqrt(2 * ENERGY / MASS),
+                    vtang=vpar,
+                    tol=1e-9,
+                    psi0=psi0,
+                    nparticles=stz.shape[0],
+                    vacuum=False,
+                )
+                last_time = np.reshape(last_time, (stz.shape[0], 5))
+
+        # map to pseudo-cylindrical coordinates
+        cpu_positions = np.array([x[-1] for x in gc_tys])
+        cpu_positions = np.array(
+            [
+                [x[0], x[1] * np.cos(x[2]), x[1] * np.sin(x[2]), x[3], x[4]]
+                for x in cpu_positions
+            ]
+        )
+        gpu_final_positions = np.array(
+            [
+                [x[0], x[1] * np.cos(x[2]), x[1] * np.sin(x[2]), x[3], x[4]]
+                for x in last_time
+            ]
+        )
     error_is_small = np.isclose(
         gpu_final_positions, cpu_positions, rtol=tol, atol=tol
     ).all()
@@ -801,7 +867,7 @@ class TestGPUTracing(unittest.TestCase):
         )
 
         # rejection sample points inside the surface uniformly
-        nparticles = 1000
+        nparticles = 10000
         rphiz = np.empty((nparticles, 3))
         for i in range(nparticles):
             pt = np.random.uniform(low=0, high=1, size=(1,3))
@@ -809,7 +875,7 @@ class TestGPUTracing(unittest.TestCase):
             pt[0,1] *= 2*np.pi
             pt[0,2] = (pt[0,2] - 0.5) *2*zrange[1]
 
-            while sc_particle.evaluate_rphiz(pt) <=  0: # particle is outside the surface
+            while sc_particle.evaluate_rphiz(pt) <=  0.2: # particle is outside the surface or too close to the surface
                 pt = np.random.uniform(low=0, high=1, size=(1,3))
                 pt[0,0] = pt[0, 0]*(rrange[1] - rrange[0]) + rrange[0]
                 pt[0,1] *= 2*np.pi
@@ -821,9 +887,19 @@ class TestGPUTracing(unittest.TestCase):
         xyz[:, 2] = rphiz[:, 2]
 
 
-        test_interpolant(bsh, surf.nfp, xyz, surf_classifier=sc_particle, tol=1e-8)
+        # test interpolant
+        is_small = test_interpolant(bsh, surf.nfp, rphiz, surf_classifier=sc_particle, tol=1e-8)
+        self.assertTrue(is_small)
 
-        self.assertTrue(5==5)
+        # test rhs
+        VELOCITY = np.sqrt(2 * ENERGY / MASS)
+        vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (nparticles,))
+        is_small = test_derivatives(bsh, surf.nfp, rphiz, vpar_init, VELOCITY, surf_classifier=sc_particle, tol=1e-8)
+        self.assertTrue(is_small)
+
+        # test timestep
+        is_small = test_timestep(bsh, surf.nfp, rphiz, vpar_init, VELOCITY, surf_classifier=sc_particle, tol=1e-8)
+        self.assertTrue(is_small)
 
 
 if __name__ == "__main__":

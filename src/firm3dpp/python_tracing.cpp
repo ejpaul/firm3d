@@ -37,8 +37,8 @@ extern "C" py::array_t<double> test_derivatives_saw_nok(py::array_t<double> quad
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
         py::array_t<double> loc, py::array_t<double> vpar, py::array_t<double> time, double v_total, double m, double q,  double psi0, int n_points);
 
-extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, py::array_t<double> srange,
-        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, py::array_t<double> rrange,
+        py::array_t<double> phirange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tol, int nparticles);
 
 extern "C" vector<double> test_timestep_boozer(py::array_t<double> quad_pts, py::array_t<double> srange,
@@ -316,10 +316,10 @@ void init_tracing(py::module_ &m){
 
     m.def("test_timestep_cartesian", &test_timestep_cartesian,
         py::arg("quad_pts"),
-        py::arg("srange"),
-        py::arg("trange"),
+        py::arg("rrange"),
+        py::arg("phirange"),
         py::arg("zrange"),
-        py::arg("stz_init"),
+        py::arg("loc_init"),
         py::arg("m"),
         py::arg("q"),
         py::arg("vtotal"),
