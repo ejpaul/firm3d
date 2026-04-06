@@ -5,7 +5,7 @@ import firm3dpp
 from firm3d.catapult.utils import boozer_interpolant
 from firm3d.catapult.utils import cartesian_interpolant
 from firm3d.field.boozermagneticfield import ShearAlfvenWavesSuperposition
-from firm3d.util.gpu_utils import boozer_saw_interpolant
+from firm3d.catapult.utils import boozer_saw_interpolant
 
 
 def trace_particles_boozer_gpu(
