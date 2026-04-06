@@ -2,7 +2,7 @@ name: NVIDIA GPU workflow
 on:
   push:
     branches:
-      - gpu
+      - main, gpu, gpu_cartesian
   pull_request:
     types:
       - labeled
