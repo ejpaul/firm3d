@@ -583,6 +583,8 @@ class TrappedPoincare:
         Nmaps=500,
         comm=None,
         tmax=1e-2,
+        chaos_detection=False,
+        nconvergence_points=None,
         solver_options=None,
     ):
         r"""
@@ -637,6 +639,7 @@ class TrappedPoincare:
                    map (default: 1e-2 s).
             solver_options : Dictionary of options to pass to the ODE solver
                              (default: {}).
+            chaos_detection : Whether to perform chaos detection (default: False).
         """
         if solver_options is None:
             solver_options = {}
@@ -699,11 +702,29 @@ class TrappedPoincare:
         self.dtheta_dchi = self.helicity_Np / denom
         self.dzeta_dchi = self.helicity_Mp / denom
 
+        self.DA_poinc = chaos_detection
+        if self.DA_poinc:
+            if nconvergence_points is None:
+                self.nconvergence_points = 1
+                self.WBA_transit_steps = [Nmaps - 1]
+            else:
+                self.nconvergence_points = nconvergence_points
+                # set list of transits for each WBA evaluation
+                transits_per_average = int(Nmaps / (nconvergence_points))
+                self.WBA_transit_steps = np.linspace(
+                    transits_per_average, Nmaps - 1, num=nconvergence_points, dtype=int
+                ).tolist()
+        else:
+            self.nconvergence_points = 1
+            self.WBA_transit_steps = [Nmaps - 1]
+
         (
             self.s_all,
             self.chis_all,
             self.etas_all,
             self.t_all,
+            self.DA_all,
+            self.DA_times,
         ) = self.compute_trapped_map()
 
     def chi(self, theta, zeta):
@@ -796,9 +817,40 @@ class TrappedPoincare:
             point[1] = self.chi(res_hit[3], res_hit[4])
             point[2] = self.eta(res_hit[3], res_hit[4])
             time = res_hit[0]
-            return point, time
+            #return point, time
         else:
             raise RuntimeError("Alternative stopping criterion reached in passing_map.")
+
+        if not self.DA_poinc:
+            return point, time
+        
+        # define trajectories
+        time_momentum = res_tys[0][:, 0]
+        s_path = res_tys[0][:, 1]
+        theta_path = res_tys[0][:, 2]
+        zeta_path = res_tys[0][:, 3]
+        vpar_path = res_tys[0][:, 4]
+
+        # set points for trajectories:
+        points_traj = np.zeros((len(time_momentum), 4))
+        points_traj[:, 0] = s_path
+        points_traj[:, 1] = theta_path
+        points_traj[:, 2] = zeta_path
+        points_traj[:, 3] = time_momentum
+
+        peta = compute_peta(
+            self.field,
+            points_traj,
+            vpar_path,
+            self.mass,
+            self.charge,
+            self.helicity_M,
+            self.helicity_N,
+            self.helicity_Mp,
+            self.helicity_Np,
+        )
+        peta = np.column_stack((time_momentum, peta))
+        return point, time, self.eta(res_hit[3], res_hit[4]), peta
 
     def initialize_trapped_map(self):
         r"""
@@ -910,6 +962,8 @@ class TrappedPoincare:
         s_all = []
         chis_all = []
         etas_all = []
+        DA_all = []
+        DA_times = []
         t_all = []
         first, last = parallel_loop_bounds(self.comm, Ntrj)
         for itrj in range(first, last):
@@ -919,40 +973,67 @@ class TrappedPoincare:
             etas_traj = [tr[2]]
             t_traj = [0]
             broken = False
-            for _jj in range(self.Nmaps):
+            particle_DAs = []
+            particle_DA_times = []
+            for jj in range(self.Nmaps):
                 try:
-                    # Apply trapped map twice to return to same vpar = 0 plane
-                    tr, time1 = self.trapped_map(tr)
-                    tr, time2 = self.trapped_map(tr)
-                    if np.abs(tr[1] - chis_traj[-1]) > 2 * np.pi:
-                        warn(
-                            "Barely trapped particle detected in trapped_map.",
-                            stacklevel=2,
-                        )
-                        broken = True
-                        break
+                    if self.DA_poinc:
+                        if jj == 0: 
+                            tr, time1, Peta = self.trapped_map(tr)
+                        else:
+                            tr, time1, Peta_iter = self.trapped_map(tr)
+                            Peta_iter[:, 0] += Peta[-1, 0]
+                            Peta = np.vstack((Peta, Peta_iter[1:, :]))
+
+                        tr, time2, Peta_iter = self.trapped_map(tr)
+                        Peta_iter[:, 0] += Peta[-1, 0]
+                        Peta = np.vstack((Peta, Peta_iter[1:, :]))
+                    else:
+                        # Apply trapped map twice to return to same vpar = 0 plane
+                        tr, time1 = self.trapped_map(tr)
+                        tr, time2 = self.trapped_map(tr)
+                        if np.abs(tr[1] - chis_traj[-1]) > 2 * np.pi:
+                            warn(
+                                "Barely trapped particle detected in trapped_map.",
+                                stacklevel=2,
+                            )
+                            broken = True
+                            break
                     s_traj.append(tr[0])
                     chis_traj.append(tr[1])
                     etas_traj.append(tr[2])
                     t_traj.append(time1 + time2)
+                    if self.DA_poinc and jj in self.WBA_transit_steps:
+                        time_at_evaluation, DA_at_evaluation = return_DA(Peta)
+                        particle_DAs.append(DA_at_evaluation)
+                        particle_DA_times.append(jj)
                 except RuntimeError:
                     broken = True
+                    # @NOTE: not returning DA 
                     break
             if not broken:
                 s_all.append(s_traj)
                 chis_all.append(chis_traj)
                 etas_all.append(etas_traj)
                 t_all.append(t_traj)
+                DA_all.append(particle_DAs)
+                DA_times.append(particle_DA_times)
 
         if self.comm is not None:
             s_all = [i for o in self.comm.allgather(s_all) for i in o]
             chis_all = [i for o in self.comm.allgather(chis_all) for i in o]
             etas_all = [i for o in self.comm.allgather(etas_all) for i in o]
             t_all = [i for o in self.comm.allgather(t_all) for i in o]
+            DA_all = [i for o in self.comm.allgather(DA_all) for i in o]
+            DA_times = [i for o in self.comm.allgather(DA_times) for i in o]
 
-        return s_all, chis_all, etas_all, t_all
+        return s_all, chis_all, etas_all, t_all, DA_all, DA_times
 
-    def plot_poincare(self, ax=None, filename="trapped_poincare.pdf"):
+    def plot_poincare(self, 
+                      ax=None, 
+                      filename="trapped_poincare.pdf", 
+                      convergence_test_indicies=None, 
+                      DA_max=7):
         r"""
         Plot the trapped Poincare map and save to a file. It is recommended to only
         call this function on MPI rank 0.
@@ -965,25 +1046,86 @@ class TrappedPoincare:
         Returns:
             ax : The Matplotlib axis containing the plot.
         """
-        import matplotlib
+        import matplotlib as mpl
 
-        matplotlib.use("Agg")  # Don't use interactive backend
+        mpl.use("Agg")  # Don't use interactive backend
         import matplotlib.pyplot as plt
+        from matplotlib.cm import ScalarMappable
+
+        try:
+            import cmcrameri.cm as cmc  # noqa: F401
+            cmap = "cmc.managua"
+        except ImportError:
+            cmap = "viridis"
 
         if ax is None:
             fig, ax = plt.subplots()
+        
+        if convergence_test_indicies is None:
+            convergence_test_indicies = list(range(len(self.s_all)))
+        
+        if self.DA_poinc and self.nconvergence_points > 1:
+            s_itrj_map = {}
+            for itrj in convergence_test_indicies:
+                s_itrj_map[itrj] = self.s_all[itrj][0]
+
+            min_s = min(list(s_itrj_map.values()))
+            max_s = max(list(s_itrj_map.values()))
+            s_lst_true = list(s_itrj_map.values())
+            cmap_s = mpl.colormaps["copper"].resampled(len(s_lst_true) ** 2)
+
+        def normalize(numbers):
+            if not numbers:
+                return []
+            min_val, max_val = 0, DA_max
+            normalized_numbers = [(x - min_val) / (max_val - min_val) for x in numbers]
+            return normalized_numbers
+        
+        if self.DA_poinc:
+            final_DAs = []
+            # retrieve final DA for each trajectory if the particle is not lost
+            # put it into a list
+            for elem in self.DA_all:
+                if len(elem) == self.nconvergence_points:
+                    final_DAs.append(elem[self.nconvergence_points - 1])
+                else:
+                    final_DAs.append(np.nan)
+            # normalized DA values for colormap
+            DA_norm_all = normalize(final_DAs)
+            cmap_object = mpl.colormaps[cmap].resampled(len(self.DA_all) ** 2)
+
 
         ax.set_xlabel(r"$\eta$")
         ax.set_ylabel(r"$s$")
         ax.set_xlim([0, 2 * np.pi])
         ax.set_ylim([0, 1])
         for i in range(len(self.etas_all)):
-            ax.scatter(
-                np.mod(self.etas_all[i], 2 * np.pi),
-                self.s_all[i],
-                marker="o",
-                s=0.5,
-                edgecolors="none",
+            if self.DA_poinc: 
+                ax.scatter(
+                    np.mod(self.etas_all[i], 2 * np.pi),
+                    self.s_all[i],
+                    marker="o",
+                    s=0.5,
+                    c=cmap_object(DA_norm_all[i]),
+                    edgecolors="none",
+                )
+            else:
+                ax.scatter(
+                    np.mod(self.etas_all[i], 2 * np.pi),
+                    self.s_all[i],
+                    marker="o",
+                    s=0.5,
+                    edgecolors="none",
+                )
+        if self.DA_poinc:
+            # make colorbar for DA values
+            max_val = DA_max
+            norm = plt.Normalize(0, max_val)
+            fig.colorbar(
+                ScalarMappable(norm=norm, cmap=mpl.colormaps[cmap]),
+                ax=ax,
+                orientation="vertical",
+                label="Digit Accuracy",
             )
         plt.savefig(filename)
 
@@ -3460,14 +3602,6 @@ class MapPhaseSpace:
             if len(paths) > 1:
 
                 def poly_area(verts):
-                    r"""
-                    Compute polygon area from ordered 2D vertices.
-
-                    Args:
-                        verts : Ordered polygon vertices with shape (N, 2).
-                    Returns:
-                        area : Polygon area.
-                    """
                     # verts: (N,2) array
                     x = verts[:, 0]
                     y = verts[:, 1]
