@@ -391,7 +391,7 @@ def test_timestep(
             mass=MASS,
             charge=CHARGE,
             tol=1e-9,
-            stopping_criteria=[IterationStoppingCriterion(0)],
+            stopping_criteria=[IterationStoppingCriterion(1)],
             forget_exact_path=True,
         )
 
@@ -475,7 +475,7 @@ def test_timestep(
                 charge=CHARGE,
                 Ekin=ENERGY,
                 tol=1e-9,
-                stopping_criteria=[IterationStoppingCriterion(0)],
+                stopping_criteria=[IterationStoppingCriterion(1)],
                 forget_exact_path=True,
             )
 
@@ -507,7 +507,7 @@ def test_timestep(
                 charge=CHARGE,
                 Ekin=ENERGY,
                 tol=1e-9,
-                stopping_criteria=[IterationStoppingCriterion(0)],
+                stopping_criteria=[IterationStoppingCriterion(1)],
                 forget_exact_path=True,
             )
 
