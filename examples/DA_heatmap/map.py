@@ -28,7 +28,7 @@ from firm3d.util.constants import (
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
 from firm3d.util.functions import proc0_print
-
+from os import makedirs
 try:
     from mpi4py import MPI
 
@@ -43,7 +43,8 @@ except ImportError:
 
 boozmn_filename = "boozmn_betaQH.nc"
 AE_filename = "QH_10harmonics_scale0_00464159.npy"
-folder = "figs"
+makedirs("DATA", exist_ok=True)
+makedirs("figs", exist_ok=True)
 harmonic = 7
 
 mpl.rcParams["font.size"] = 18  # base font size
@@ -232,7 +233,7 @@ if verbose:
     ax_left.set_ylabel(r"$s$")
 
     if isinstance(Phihat, tuple):
-        filename = f"{folder}/{harmonic}_{lam}_0.004_FF"
+        filename = f"figs/{harmonic}_{lam}_0.004_FF"
         ax_left.plot(Phihat[1][:-1], Phihat[0])
         a, lines_colors = map.plot_poincare(
             ax=ax_center,
@@ -251,7 +252,7 @@ if verbose:
         fig = ax_right.get_figure()
         fig.savefig(filename + ".png", dpi=400)
     else:
-        filename = f"{folder}/flat_{harmonic}_{lam}_{round(Phihat, 0)}"
+        filename = f"figs/flat_{harmonic}_{lam}_{round(Phihat, 0)}"
         ax_left.plot([Phihat, Phihat], [0, 1])
         a, lines_colors = map.plot_poincare(
             ax=ax_center,

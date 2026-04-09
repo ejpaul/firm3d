@@ -4,6 +4,8 @@ Landreman, Matt, Stefan Buller, and Michael Drevlak. "Optimization of quasi-symm
 
 A single harmonic from one of the example SAWs is provded. The particles are instantiated at fixed E', and mapped as a function of the perturbed pitch angle (mu/E') and P_eta.
 
+The file map.py plots the phase space map with a poincare map and the pertbation strength. The file map_alone.py only plots the phase space map.
+
 Weighted Birkhoff Averaging is added as a setting to the Perturved Passing map and applied to particle momentum to create a numerical 
 metric (Digit Accuracy) of chaos, implemented as described in:
 

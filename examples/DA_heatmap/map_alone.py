@@ -28,7 +28,7 @@ from firm3d.util.constants import (
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
 from firm3d.util.functions import proc0_print
-
+from os import makedirs
 try:
     from mpi4py import MPI
 
@@ -43,8 +43,10 @@ except ImportError:
 
 boozmn_filename = "boozmn_betaQH.nc"
 AE_filename = "QH_10harmonics_scale0_001.npy"
-folder = "figs"
 harmonic = 0
+
+makedirs("DATA", exist_ok=True)
+makedirs("figs", exist_ok=True)
 
 mpl.rcParams["font.size"] = 14  # base font size
 mpl.rcParams["axes.labelsize"] = 14  # x/y labels
@@ -73,7 +75,7 @@ bri = BoozerRadialInterpolant(
     helicity_M=helicity_M,
     helicity_N=helicity_N,
     comm=comm,
-)  #
+)  
 field = InterpolatedBoozerField(
     bri,
     degree,
