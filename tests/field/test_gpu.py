@@ -80,10 +80,13 @@ def sample_test_points(n_test_pts):
     return stz
 
 
-def test_interpolant(field, nfp, stz, saw_present=False, tol=1e-8):
-    srange, trange, zrange, quad_info, maxJ = construct_interpolant(
-        field, nfp, saw_present=saw_present
-    )
+def test_interpolant(field, nfp, stz, saw_present=False, tol=1e-8, quad_data=None):
+    if quad_data is None:
+        srange, trange, zrange, quad_info, maxJ = construct_interpolant(
+            field, nfp, saw_present=saw_present
+        )
+    else:
+        srange, trange, zrange, quad_info, maxJ = quad_data
 
     # evaluate interpolants
     if isinstance(field, ShearAlfvenWavesSuperposition):
@@ -188,9 +191,12 @@ def test_derivatives(
     saw_present=False,
     saw_filename=None,
     tol=1e-8,
+    quad_data=None,
 ):
-
-    srange, trange, zrange, quad_info, maxJ = construct_interpolant(field, nfp)
+    if quad_data is None:
+        srange, trange, zrange, quad_info, maxJ = construct_interpolant(field, nfp)
+    else:
+        srange, trange, zrange, quad_info, maxJ = quad_data
     ## evaluate derivatives
     if isinstance(field, ShearAlfvenWavesSuperposition):
         assert time is not None, (
@@ -369,10 +375,12 @@ def test_derivatives(
 
 
 def test_timestep(
-    field, nfp, stz, vpar, vtotal, psi0, time=None, saw_filename=None, tol=1e-8
+    field, nfp, stz, vpar, vtotal, psi0, time=None, saw_filename=None, tol=1e-8, quad_data=None
 ):
-
-    srange, trange, zrange, quad_info, maxJ = construct_interpolant(field, nfp)
+    if quad_data is None:
+        srange, trange, zrange, quad_info, maxJ = construct_interpolant(field, nfp)
+    else:
+        srange, trange, zrange, quad_info, maxJ = quad_data
 
     if isinstance(field, ShearAlfvenWavesSuperposition):
         assert saw_filename is not None, (
@@ -569,25 +577,28 @@ class TestGPUTracing(unittest.TestCase):
         vacuum = True
         bri, field, nfp = get_field(boozmn_filename, n_metagrid_pts, vacuum)
 
-        n_test_pts = 1000
+        n_test_pts = 10000
         stz = sample_test_points(n_test_pts)
 
         tol = 1e-8
+        quad_data = construct_interpolant(field, nfp)
 
         ### test interpolant
-        is_small = test_interpolant(field, nfp, stz, tol=tol)
+        is_small = test_interpolant(field, nfp, stz, tol=tol, quad_data=quad_data)
         self.assertTrue(is_small)
 
         ### test derivatives
         VELOCITY = np.sqrt(2 * ENERGY / MASS)
         vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (n_test_pts,))
         is_small = test_derivatives(
-            field, nfp, stz, vpar_init, VELOCITY, field.psi0, tol
+            field, nfp, stz, vpar_init, VELOCITY, field.psi0, tol, quad_data=quad_data
         )
         self.assertTrue(is_small)
 
         ### test timesteps
-        is_small = test_timestep(field, nfp, stz, vpar_init, VELOCITY, field.psi0, tol)
+        is_small = test_timestep(
+            field, nfp, stz, vpar_init, VELOCITY, field.psi0, tol, quad_data=quad_data
+        )
         self.assertTrue(is_small)
 
     def test_boozer_finite_beta(self):
@@ -598,25 +609,28 @@ class TestGPUTracing(unittest.TestCase):
         vacuum = False
         bri, field, nfp = get_field(boozmn_filename, n_metagrid_pts, vacuum)
 
-        n_test_pts = 1000
+        n_test_pts = 10000
         stz = sample_test_points(n_test_pts)
 
         tol = 1e-8
+        quad_data = construct_interpolant(field, nfp)
 
         ### test interpolant
-        is_small = test_interpolant(field, nfp, stz, tol)
+        is_small = test_interpolant(field, nfp, stz, tol=tol, quad_data=quad_data)
         self.assertTrue(is_small)
 
         ### test derivatives
         VELOCITY = np.sqrt(2 * ENERGY / MASS)
         vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (n_test_pts,))
         is_small = test_derivatives(
-            field, nfp, stz, vpar_init, VELOCITY, field.psi0, tol
+            field, nfp, stz, vpar_init, VELOCITY, field.psi0, tol, quad_data=quad_data
         )
         self.assertTrue(is_small)
 
         ### test timesteps
-        is_small = test_timestep(field, nfp, stz, vpar_init, VELOCITY, field.psi0, tol)
+        is_small = test_timestep(
+            field, nfp, stz, vpar_init, VELOCITY, field.psi0, tol, quad_data=quad_data
+        )
         self.assertTrue(is_small)
 
     def test_boozer_vacuum_saw(self):
@@ -638,12 +652,13 @@ class TestGPUTracing(unittest.TestCase):
             minor_radius_meters=1.7,
         )
 
-        n_test_pts = 1000
+        n_test_pts = 10000
         stz = sample_test_points(n_test_pts)
         tol = 1e-8
+        quad_data = construct_interpolant(saw, nfp)
 
         ### test interpolant
-        is_small = test_interpolant(saw, nfp, stz, saw_present=True, tol=tol)
+        is_small = test_interpolant(saw, nfp, stz, saw_present=True, tol=tol, quad_data=quad_data)
         self.assertTrue(is_small)
 
         ## test derivatives
@@ -661,6 +676,7 @@ class TestGPUTracing(unittest.TestCase):
             saw_present=True,
             saw_filename=saw_filename,
             tol=tol,
+            quad_data=quad_data,
         )
         self.assertTrue(is_small)
 
@@ -675,6 +691,7 @@ class TestGPUTracing(unittest.TestCase):
             time=time,
             saw_filename=saw_filename,
             tol=tol,
+            quad_data=quad_data,
         )
         self.assertTrue(is_small)
 
@@ -697,12 +714,13 @@ class TestGPUTracing(unittest.TestCase):
             minor_radius_meters=1.7,
         )
 
-        n_test_pts = 1000
+        n_test_pts = 10000
         stz = sample_test_points(n_test_pts)
         tol = 1e-8
+        quad_data = construct_interpolant(saw, nfp)
 
         ### test interpolant
-        is_small = test_interpolant(saw, nfp, stz, saw_present=True, tol=tol)
+        is_small = test_interpolant(saw, nfp, stz, saw_present=True, tol=tol, quad_data=quad_data)
         self.assertTrue(is_small)
 
         ## test derivatives
@@ -720,6 +738,7 @@ class TestGPUTracing(unittest.TestCase):
             saw_present=True,
             saw_filename=saw_filename,
             tol=tol,
+            quad_data=quad_data,
         )
         self.assertTrue(is_small)
 
@@ -734,6 +753,7 @@ class TestGPUTracing(unittest.TestCase):
             time=time,
             saw_filename=saw_filename,
             tol=tol,
+            quad_data=quad_data,
         )
         self.assertTrue(is_small)
 
