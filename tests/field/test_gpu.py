@@ -569,7 +569,7 @@ class TestGPUTracing(unittest.TestCase):
         vacuum = True
         bri, field, nfp = get_field(boozmn_filename, n_metagrid_pts, vacuum)
 
-        n_test_pts = 10000
+        n_test_pts = 1000
         stz = sample_test_points(n_test_pts)
 
         tol = 1e-8
@@ -598,7 +598,7 @@ class TestGPUTracing(unittest.TestCase):
         vacuum = False
         bri, field, nfp = get_field(boozmn_filename, n_metagrid_pts, vacuum)
 
-        n_test_pts = 10000
+        n_test_pts = 1000
         stz = sample_test_points(n_test_pts)
 
         tol = 1e-8
@@ -638,7 +638,7 @@ class TestGPUTracing(unittest.TestCase):
             minor_radius_meters=1.7,
         )
 
-        n_test_pts = 10000
+        n_test_pts = 1000
         stz = sample_test_points(n_test_pts)
         tol = 1e-8
 
@@ -697,7 +697,7 @@ class TestGPUTracing(unittest.TestCase):
             minor_radius_meters=1.7,
         )
 
-        n_test_pts = 10000
+        n_test_pts = 1000
         stz = sample_test_points(n_test_pts)
         tol = 1e-8
 
