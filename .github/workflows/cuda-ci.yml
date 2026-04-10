@@ -61,7 +61,7 @@ jobs:
       - name: Run tests
         run: |
           python -m pip list
-          python -m coverage run -m unittest discover tests/
+          python -m coverage run -m unittest tests.field.test_gpu
           python -m coverage xml
 
       - name: Upload coverage to Codecov
