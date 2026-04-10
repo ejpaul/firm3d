@@ -67,7 +67,7 @@ poinc = TrappedPoincare(
     Nmaps=Nmaps,
     comm=comm_world,
     solver_options={"reltol": tol, "abstol": tol, "axis": 0},
-    tmax=1e-4,
+    tmax=1e-2,
 )
 
 if verbose:
