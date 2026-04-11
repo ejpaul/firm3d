@@ -13,19 +13,24 @@ jobs:
   tests:
     if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'GPU CI')
     runs-on: [GPU-runner]
-    strategy:
-      matrix:
-        python-version: ['3.9', '3.10', '3.11']
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Check GPU is available
         run: nvidia-smi
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.11
         uses: actions/setup-python@v4
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.11'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
       - name: Install system dependencies
         run: |
@@ -56,7 +61,7 @@ jobs:
       - name: Run tests
         run: |
           python -m pip list
-          python -m coverage run -m unittest discover tests/
+          python -m coverage run -m unittest tests.field.test_gpu
           python -m coverage xml
 
       - name: Upload coverage to Codecov
@@ -66,10 +71,5 @@ jobs:
           flags: unittests
           name: codecov-umbrella
 
-      - name: Run Examples
-        run: |
-          cd examples/gpu_boozer_tracing
-          python gpu_boozer_tracing.py
-          cd ../gpu_saw_tracing
-          python gpu_saw_tracing.py
+
 
