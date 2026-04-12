@@ -817,7 +817,6 @@ class TrappedPoincare:
             point[1] = self.chi(res_hit[3], res_hit[4])
             point[2] = self.eta(res_hit[3], res_hit[4])
             time = res_hit[0]
-            #return point, time
         else:
             raise RuntimeError("Alternative stopping criterion reached in passing_map.")
 
@@ -832,11 +831,10 @@ class TrappedPoincare:
         vpar_path = res_tys[0][:, 4]
 
         # set points for trajectories:
-        points_traj = np.zeros((len(time_momentum), 4))
+        points_traj = np.zeros((len(time_momentum), 3))
         points_traj[:, 0] = s_path
         points_traj[:, 1] = theta_path
         points_traj[:, 2] = zeta_path
-        points_traj[:, 3] = time_momentum
 
         peta = compute_peta(
             self.field,
@@ -850,7 +848,7 @@ class TrappedPoincare:
             self.helicity_Np,
         )
         peta = np.column_stack((time_momentum, peta))
-        return point, time, self.eta(res_hit[3], res_hit[4]), peta
+        return point, time, peta
 
     def initialize_trapped_map(self):
         r"""
