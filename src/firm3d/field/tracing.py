@@ -1,4 +1,3 @@
-from math import sqrt
 from warnings import warn
 
 import numpy as np
