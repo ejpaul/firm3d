@@ -90,7 +90,7 @@ poinc = PassingPerturbedPoincare(
     comm=comm_world,
 )
 
-if verbose:
+if verbose and not in_github_actions:
     poinc.plot_poincare()
 
 time2 = time.time()
