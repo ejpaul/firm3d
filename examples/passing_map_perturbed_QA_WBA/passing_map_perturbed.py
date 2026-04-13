@@ -13,7 +13,7 @@ from firm3d.util.constants import (
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
-from firm3d.util.functions import proc0_print, setup_logging
+from firm3d.util.functions import in_github_actions, proc0_print, setup_logging
 from firm3d.util.mpi import comm_size, comm_world, verbose
 
 boozmn_filename = "../inputs/boozmn_beta2.5_QA.nc"
@@ -22,17 +22,17 @@ charge = ALPHA_PARTICLE_CHARGE
 mass = ALPHA_PARTICLE_MASS
 Ekin = FUSION_ALPHA_PARTICLE_ENERGY
 
-resolution = 50  # Resolution for field interpolation
+resolution = 10 if in_github_actions else 50  # Resolution for field interpolation
 sign_vpar = 1.0  # sign(vpar). should be +/- 1.
 lam = 0.1  # lambda = v_perp^2/(v^2 B) = const. along trajectory
 nchi_poinc = 1  # Number of chi initial conditions for poincare
-ns_poinc = 100  # Number of s initial conditions for poincare
-Nmaps = 1000  # Number of Poincare return maps to compute
+ns_poinc = 5 if in_github_actions else 100  # Number of s initial conditions for poincare
+Nmaps = 5 if in_github_actions else 1000  # Number of Poincare return maps to compute
 ns_interp = resolution  # number of radial grid points for interpolation
 ntheta_interp = resolution  # number of poloidal grid points for interpolation
 nzeta_interp = resolution  # number of toroidal grid points for interpolation
 order = 3  # order for interpolation
-tol = 1e-8  # Tolerance for ODE solver
+tol = 1e-4 if in_github_actions else 1e-8  # Tolerance for ODE solver
 degree = 3  # Degree for Lagrange interpolation
 helicity_M = 1  # field strength helicity (QA)
 helicity_N = 0  # field strength helicity (QA)

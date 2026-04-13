@@ -12,7 +12,7 @@ from firm3d.util.constants import (
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
-from firm3d.util.functions import proc0_print, setup_logging
+from firm3d.util.functions import in_github_actions, proc0_print, setup_logging
 from firm3d.util.mpi import comm_size, comm_world, verbose
 
 boozmn_filename = "../inputs/boozmn_aten_rescaled.nc"
@@ -21,17 +21,17 @@ charge = ALPHA_PARTICLE_CHARGE
 mass = ALPHA_PARTICLE_MASS
 Ekin = FUSION_ALPHA_PARTICLE_ENERGY
 
-resolution = 48  # Resolution for field interpolation
+resolution = 10 if in_github_actions else 48  # Resolution for field interpolation
 sign_vpar = 1.0  # sign(vpar). should be +/- 1.
 lam = 0  # lambda = v_perp^2/(v^2 B) = const. along trajectory
 ntheta_poinc = 1  # Number of zeta initial conditions for poincare
-ns_poinc = 120  # Number of s initial conditions for poincare
-Nmaps = 100  # Number of Poincare return maps to compute
+ns_poinc = 5 if in_github_actions else 120  # Number of s initial conditions for poincare
+Nmaps = 5 if in_github_actions else 100  # Number of Poincare return maps to compute
 ns_interp = resolution  # number of radial grid points for interpolation
 ntheta_interp = resolution  # number of poloidal grid points for interpolation
 nzeta_interp = resolution  # number of toroidal grid points for interpolation
 order = 3  # order for interpolation
-tol = 1e-8  # Tolerance for ODE solver
+tol = 1e-4 if in_github_actions else 1e-8  # Tolerance for ODE solver
 degree = 3  # Degree for Lagrange interpolation
 
 # Setup logging to redirect output to file

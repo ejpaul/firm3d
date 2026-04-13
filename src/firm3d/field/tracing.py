@@ -216,9 +216,9 @@ def trace_particles_boozer_perturbed(
             np.asarray([[stz_inits[0, 0]], [stz_inits[0, 1]], [stz_inits[0, 2]], [0]]).T
         )
         B0 = perturbed_field.B0.modB()[0, 0]
-        speed_total = sqrt(speed_par[0] ** 2 + 2 * mus[0] * B0)
+        speed_total = float(np.sqrt(speed_par[0] ** 2 + 2 * mus[0] * B0))
     else:
-        speed_total = sqrt(2 * Ekin / m)
+        speed_total = float(np.sqrt(2 * Ekin / m))
 
     if mode is not None:
         mode = mode.lower()
@@ -239,22 +239,22 @@ def trace_particles_boozer_perturbed(
     for i in range(first, last):
         res_ty, res_hit = sopp.particle_guiding_center_boozer_perturbed_tracing(
             perturbed_field,
-            stz_inits[i, :],
-            m,
-            charge,
-            speed_total,
-            speed_par[i],
-            mus[i],
-            tmax,
-            abstol,
-            reltol,
+            stz_inits[i, :].tolist(),
+            float(m),
+            float(charge),
+            float(speed_total),
+            float(speed_par[i]),
+            float(mus[i]),
+            float(tmax),
+            float(abstol),
+            float(reltol),
             vacuum=(mode == "gc_vac"),
             noK=(mode == "gc_nok"),
-            phases=phases,
-            n_zetas=n_zetas,
-            m_thetas=m_thetas,
-            omegas=omegas,
-            vpars=vpars,
+            phases=[float(p) for p in phases],
+            n_zetas=[float(x) for x in n_zetas],
+            m_thetas=[float(x) for x in m_thetas],
+            omegas=[float(x) for x in omegas],
+            vpars=[float(x) for x in vpars],
             stopping_criteria=stopping_criteria,
             dt_save=dt_save,
             phases_stop=phases_stop,
