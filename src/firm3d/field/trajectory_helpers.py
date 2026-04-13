@@ -1379,9 +1379,13 @@ class PassingPerturbedPoincare:
                 helicity_M,
                 helicity_N,
             )
-            self.Eprime = float(
-                self.nprime * Ekin - self.omega * float(Peta0.squeeze())
-            )
+            Peta0_arr = np.asarray(Peta0)
+            if Peta0_arr.size != 1:
+                raise ValueError(
+                    f"Peta0 must be scalar-like (size 1), got shape "
+                    f"{Peta0_arr.shape} and size {Peta0_arr.size}"
+                )
+            self.Eprime = float(self.nprime * Ekin - self.omega * Peta0_arr.item())
         else:
             raise ValueError(
                 "Either Eprime and mu must be provided, or Ekin, lam, and p0 "

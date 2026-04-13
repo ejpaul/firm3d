@@ -188,16 +188,11 @@ def trace_particles_boozer_perturbed(
     """
     if stopping_criteria is None:
         stopping_criteria = []
-    if vpars is None:
-        vpars = []
-    if phases is None:
-        phases = []
-    if n_zetas is None:
-        n_zetas = []
-    if m_thetas is None:
-        m_thetas = []
-    if omegas is None:
-        omegas = []
+    phases = [float(p) for p in (phases or [])]
+    vpars = [float(x) for x in (vpars or [])]
+    n_zetas = [float(x) for x in (n_zetas or [])]
+    m_thetas = [float(x) for x in (m_thetas or [])]
+    omegas = [float(x) for x in (omegas or [])]
     if reltol is None:
         reltol = tol
     if abstol is None:
@@ -249,11 +244,11 @@ def trace_particles_boozer_perturbed(
             float(reltol),
             vacuum=(mode == "gc_vac"),
             noK=(mode == "gc_nok"),
-            phases=[float(p) for p in phases],
-            n_zetas=[float(x) for x in n_zetas],
-            m_thetas=[float(x) for x in m_thetas],
-            omegas=[float(x) for x in omegas],
-            vpars=[float(x) for x in vpars],
+            phases=phases,
+            n_zetas=n_zetas,
+            m_thetas=m_thetas,
+            omegas=omegas,
+            vpars=vpars,
             stopping_criteria=stopping_criteria,
             dt_save=dt_save,
             phases_stop=phases_stop,
