@@ -1379,7 +1379,9 @@ class PassingPerturbedPoincare:
                 helicity_M,
                 helicity_N,
             )
-            self.Eprime = float(self.nprime * Ekin - self.omega * float(Peta0.squeeze()))
+            self.Eprime = float(
+                self.nprime * Ekin - self.omega * float(Peta0.squeeze())
+            )
         else:
             raise ValueError(
                 "Either Eprime and mu must be provided, or Ekin, lam, and p0 "

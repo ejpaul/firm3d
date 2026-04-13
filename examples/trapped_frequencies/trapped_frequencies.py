@@ -23,7 +23,7 @@ Ekin = FUSION_ALPHA_PARTICLE_ENERGY
 
 resolution = 10 if in_github_actions else 48  # Resolution for field interpolation
 neta_poinc = 1  # Number of eta initial conditions for poincare
-ns_poinc = 5 if in_github_actions else 120  # Number of s initial conditions for poincare
+ns_poinc = 5 if in_github_actions else 120  # Number of s initial conditions
 Nmaps = 5 if in_github_actions else 1000  # Number of Poincare return maps to compute
 ns_interp = resolution  # number of radial grid points for interpolation
 ntheta_interp = resolution  # number of poloidal grid points for interpolation
