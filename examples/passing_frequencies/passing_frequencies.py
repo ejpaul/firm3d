@@ -72,7 +72,7 @@ points[:, 0] = s_prof
 field.set_points(points)
 iota = field.iota()[:, 0]
 
-if verbose:
+if verbose and not in_github_actions:
     import matplotlib
 
     matplotlib.use("Agg")  # Don't use interactive backend

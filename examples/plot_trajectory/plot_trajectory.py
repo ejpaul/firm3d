@@ -88,13 +88,13 @@ proc0_print("Elapsed time for tracing: ", time2 - time1)
 
 ax = plot_trajectory_overhead_cyl(traj_booz[0], field)
 
-if verbose:
+if verbose and not in_github_actions:
     fig = ax.figure
     fig.savefig("trajectory_overhead_cyl.png", dpi=300, bbox_inches="tight")
 
 ax = plot_trajectory_poloidal(traj_booz[0], helicity_N=nfp)
 
-if verbose:
+if verbose and not in_github_actions:
     fig = ax.figure
     fig.savefig("trajectory_poloidal.png", dpi=300, bbox_inches="tight")
 

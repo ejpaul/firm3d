@@ -89,7 +89,7 @@ poinc = PassingPerturbedPoincare(
     solver_options={"reltol": tol, "abstol": tol},
 )
 
-if verbose:
+if verbose and not in_github_actions:
     poinc.plot_poincare()
 
 time2 = time.time()

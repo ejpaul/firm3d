@@ -115,7 +115,7 @@ time2 = time.time()
 proc0_print("Elapsed time for tracing = ", time2 - time1)
 
 ## Post-process results to obtain lost particles
-if verbose:
+if verbose and not in_github_actions:
     from firm3d.field.trajectory_helpers import compute_loss_fraction
 
     times, loss_frac = compute_loss_fraction(res_tys, tmin=1e-5, tmax=1e-2)

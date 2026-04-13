@@ -75,7 +75,7 @@ poinc = TrappedPoincare(
 
 omega_eta_prof, omega_b_prof, s_prof = poinc.compute_frequencies()
 
-if verbose:
+if verbose and not in_github_actions:
     import matplotlib
 
     matplotlib.use("Agg")  # Don't use interactive backend
