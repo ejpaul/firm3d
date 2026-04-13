@@ -296,7 +296,7 @@ class VMECCoordinateTransformer:
                 coordinates
         """
         # Get nfp from VMEC file
-        with netcdf_file(self.wout_filename, "r") as f:
+        with netcdf_file(self.wout_filename, "r", mmap=False) as f:
             self._nfp = int(f.variables["nfp"][()])
 
         # Create coordinate grids
@@ -372,7 +372,7 @@ class VMECCoordinateTransformer:
             raise ValueError("Input arrays cannot be empty")
 
         # Load VMEC data for objective function
-        with netcdf_file(self.wout_filename, "r") as f:
+        with netcdf_file(self.wout_filename, "r", mmap=False) as f:
             rmnc = f.variables["rmnc"][:]
             zmns = f.variables["zmns"][:]
             xm = f.variables["xm"][:]
@@ -826,7 +826,7 @@ def vmec_to_cylindrical(wout_filename, points_vmec):
         raise ValueError("Input arrays cannot be empty")
 
     # Load VMEC data
-    with netcdf_file(wout_filename, "r") as f:
+    with netcdf_file(wout_filename, "r", mmap=False) as f:
         rmnc = f.variables["rmnc"][:]  # R harmonics (cos)
         zmns = f.variables["zmns"][:]  # Z harmonics (sin)
         xm = f.variables["xm"][:]  # poloidal mode numbers

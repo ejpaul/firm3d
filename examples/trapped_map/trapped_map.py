@@ -56,18 +56,18 @@ poinc = TrappedPoincare(
     field,
     helicity_M,
     helicity_N,
-    s_mirror,
-    theta_mirror,
-    zeta_mirror,
     mass,
     charge,
     Ekin,
+    s_mirror,
+    theta_mirror,
+    zeta_mirror,
     ns_poinc=ns_poinc,
     neta_poinc=neta_poinc,
     Nmaps=Nmaps,
     comm=comm_world,
     solver_options={"reltol": tol, "abstol": tol, "axis": 0},
-    tmax=1e-4,
+    tmax=1e-2,
 )
 
 if verbose:
