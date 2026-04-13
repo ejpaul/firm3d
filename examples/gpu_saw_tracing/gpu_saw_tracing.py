@@ -12,14 +12,15 @@ from firm3d.saw.ae3d import AE3DEigenvector
 from firm3d.util.constants import ALPHA_PARTICLE_CHARGE as CHARGE
 from firm3d.util.constants import ALPHA_PARTICLE_MASS as MASS
 from firm3d.util.constants import FUSION_ALPHA_PARTICLE_ENERGY as ENERGY
+from firm3d.util.functions import in_github_actions
 from firm3d.util.gpu_utils import boozer_saw_interpolant
 from firm3d.util.sampling import sample_stz
 
 np.random.seed(1800)
 
 ### tracing parameters
-nparticles = 25000
-tmax = 1e-3
+nparticles = 100 if in_github_actions else 25000  # Number of particles to trace
+tmax = 1e-4 if in_github_actions else 1e-3  # Time for integration
 
 
 ### CREATE A FIELD FOR TRACING
@@ -28,7 +29,7 @@ bri = BoozerRadialInterpolant(boozmn_filename, 3, enforce_vacuum=True)
 
 nfp = bri.nfp
 degree = 3
-n_metagrid_pts = 15
+n_metagrid_pts = 5 if in_github_actions else 15  # Resolution for field interpolation
 srange = (0, 1, n_metagrid_pts)
 thetarange = (0, np.pi, n_metagrid_pts)
 zetarange = (0, 2 * np.pi / nfp, n_metagrid_pts)
@@ -64,6 +65,7 @@ VELOCITY = np.sqrt(2 * ENERGY / MASS)
 vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (nparticles,))
 stz = np.ascontiguousarray(stz_inits)
 
+tol = 1e-4 if in_github_actions else 1e-9  # Tolerance for ODE solver
 last_time = trace_particles_boozer_gpu(
     saw,
     stz,
@@ -72,7 +74,7 @@ last_time = trace_particles_boozer_gpu(
     MASS,
     CHARGE,
     np.sqrt(2 * ENERGY / MASS),
-    1e-9,
+    tol,
     n_metagrid_pts,
     n_metagrid_pts,
     n_metagrid_pts,
