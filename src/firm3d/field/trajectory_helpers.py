@@ -100,6 +100,30 @@ def compute_trajectory_cylindrical(res_ty, field):
 
     return R_traj, phi_traj, Z_traj
 
+def min_volumemodB(B0):
+    r"""
+    Estimate minimum magnetic-field magnitude over sampled surfaces.
+
+    Returns:
+        min_modB : Approximate minimum value of modB in the sampled volume.
+    """
+    resolution = 100
+    points = np.zeros((resolution * resolution, 3))
+
+    for surface in np.linspace(0, 0.99, resolution):
+        if surface == 0:
+            points = initialize_position_uniform_surf(
+                B0, resolution, surface
+            )
+        else:
+            sampled_surface = initialize_position_uniform_surf(
+                B0, resolution, surface
+            )
+            points = np.concatenate((points, sampled_surface), axis=0)
+
+    B0.set_points(points)
+    modB = B0.modB()[:, 0]
+    return np.min(modB)
 
 class PassingPoincare:
     """
@@ -2208,6 +2232,624 @@ class PassingPerturbedPoincare:
             self.DA_times,
         )
 
+class MapEquilibrium:
+    def __init__(
+        self,
+        B0,
+        mass,
+        charge,
+        Ekin,
+        helicity_N,
+        helicity_M,
+        helicity_Mp=None,
+        helicity_Np=None,
+        mu_max=None,
+        sign=1,
+        ns_points=30,
+        particles_per_surface=15,
+        nlambda_points=30,
+        savedata=(False, "DATA/"),
+        randomize_particles=False,
+        number_of_particles=10000,
+        initial_conditions=None,
+        initial_vpar=None,
+        min_timestep=1e-6,
+        nconvergence_points=20,
+        s_lims=None,
+        mean=True,
+        comm=None,
+        tmax=1e-2,
+        tol=1e-10,
+        solver_options=None,
+    ):
+        """
+        Initialize phase-space sampling, particle tracing, and diagnostic evaluation
+        for guiding-center orbits in an equilibrium Boozer magnetic field.
+
+        This class generates or accepts a collection of initial particle conditions
+        and traces the corresponding guiding-center orbits in the equilibrium field.
+        Per-particle diagnostics such as digit accuracy or effective diffusion, wall-loss
+        status, and phase-space coordinates used for plotting are computed and stored.
+
+        The sampled phase space is parameterized by Boozer coordinates together with
+        either:
+            - a fixed total kinetic energy Ekin, or
+            - a fixed shifted-energy slice Eprime.
+
+        If Eprime is provided, the initialization solves for vpar from the invariant
+        constraint rather than sampling vpar directly from fixed Ekin. This uses a
+        reference kinetic energy Ekin for computing mu from vperp.
+
+        Initial conditions may be supplied directly or generated internally in one of
+        two ways:
+            - randomly throughout the plasma volume, or
+            - on a structured grid in surface label and pitch coordinate, with multiple
+              particles sampled on each surface.
+        """
+        if savedata is None:
+            savedata = [True, "DATA/"]
+        if solver_options is None:
+            solver_options = {}
+        if s_lims is None:
+            s_lims = [0.05, 0.95]
+
+
+        self.B0 = B0
+        self.mass = mass
+        self.charge = charge
+        self.Ekin = Ekin
+        self.helicity_N = helicity_N
+        self.helicity_M = helicity_M
+        self.min_volmodB = min_volumemodB(self.B0)
+
+        if mu_max is None:
+            mu_max = (Ekin * 0.99) / self.min_volmodB
+        self.mu_max = mu_max
+
+        if helicity_Mp is None and helicity_Np is None:
+            # If modB contours close poloidally, then use theta as mapping coordinate
+            if helicity_M == 0:
+                helicity_Mp = 1
+                helicity_Np = 0
+            # Otherwise, use zeta as mapping coordinate
+            else:
+                helicity_Mp = 0
+                helicity_Np = -1
+        else:
+            if (helicity_Mp * helicity_N) == (helicity_Np * helicity_M):
+                raise ValueError(
+                    "Chosen helicities (N, M, N', M') do not create a well "
+                    "defined Jacobian."
+                )
+        
+        self.helicity_Mp = helicity_Mp
+        self.helicity_Np = helicity_Np
+        self.tol = tol
+
+        # set timing parameters
+        self.tmax = tmax
+        self.min_timestep = min_timestep
+        self.vtotal = np.sqrt(2 * self.Ekin / mass)
+
+        # set communicator parameters
+        self.comm = comm
+        self.verbose = False
+        if self.comm is None or self.comm.rank == 0:
+            self.verbose = True
+        
+        self.sign = sign
+
+        self.s_min = s_lims[0]
+        self.s_max = s_lims[1]
+
+        # plotting settings
+        self.mean = mean
+        self.savedata = savedata[0]
+        self.savepath = savedata[1]
+        self.convergence_points = nconvergence_points
+
+        gridded = True
+        
+        #@TODO: add option for random sampling of initial conditions
+
+        if initial_conditions is None:
+            if exists(self.savepath + "_initial_conditions.txt"):
+                initial_conditions = np.loadtxt(
+                    self.savepath + "_initial_conditions.txt"
+                )
+                s, thetas, zetas, vpar, mu = (
+                    initial_conditions[:, 0],
+                    initial_conditions[:, 1],
+                    initial_conditions[:, 2],
+                    initial_conditions[:, 3],
+                    initial_conditions[:, 4],
+                )
+            else:
+                if gridded:
+                    self.ns_points = ns_points
+                    self.particles_per_surface = particles_per_surface
+                    self.nlambda_points = nlambda_points
+                    self.nParticles = ns_points * particles_per_surface * nlambda_points
+                    s, thetas, zetas, vpar, mu = self.initialize_gridded_particles()
+
+                    np.savetxt(
+                    self.savepath + "initial_conditions.txt",
+                    np.column_stack((s, thetas, zetas, vpar, mu)),
+                    )
+        
+        self.s, self.thetas, self.zetas, self.vpar, self.mu =  s, thetas, zetas, vpar, mu
+
+        self.final_filepaths = {
+            "DA": self.savepath + "DA.txt",
+            "wall_lost": self.savepath + "wall_lost.txt",
+        }
+        self.res_filepaths = {
+            "tys": self.savepath + "res_tys.txt",
+            "hits": self.savepath + "res_hits.txt",
+        }
+
+        self.expected_length = int(self.tmax / self.min_timestep)
+        self.expected_step = int(self.expected_length / self.convergence_points)
+        self.WBA_transit_indicies = np.linspace(
+            self.expected_step, self.expected_length - 1, num=self.convergence_points, dtype=int
+        ).tolist()
+        self.convergence_plot = self.convergence_points > 1
+         
+        self.trace_particles()
+        return
+
+
+    def initialize_gridded_particles(self):
+        mus = np.linspace(0, self.mu_max, self.nlambda_points)
+        
+        s_linspace = np.linspace(self.s_min, self.s_max, self.ns_points)
+
+        surfaces, mus = np.meshgrid(s_linspace, mus)
+
+        surfaces_flat = surfaces.flatten()
+        mus_flat = mus.flatten()
+
+        s = []
+        thetas = []
+        zetas = []
+        vpars = []
+        mus_tot = []
+        for particle_index in range(len(surfaces_flat)):
+            points_temp = initialize_position_uniform_surf(
+                    self.B0,
+                    self.particles_per_surface,
+                    surfaces_flat[particle_index],
+                    comm=self.comm,
+                )
+
+            self.B0.set_points(points_temp)
+            modB = self.B0.modB()[:,0]
+
+            mu = np.ones_like(modB) * mus_flat[particle_index] 
+            # if self.verbose: print(f"mu shape {mu.shape}")
+
+            vpar_energy = self.Ekin - (mu * modB)
+
+            # remove unphysical points 
+            neg_idx = np.where(vpar_energy < 0)[0]
+            vpar_energy = np.delete(vpar_energy, neg_idx)
+            points_temp = np.delete(points_temp, neg_idx, axis=0)
+            mu = np.delete(mu, neg_idx, axis=0)
+
+            
+            vpar = self.sign * np.sqrt((2 * vpar_energy)/self.mass)
+            vpar_list = vpar.tolist()
+
+            vpars += vpar_list
+            s += list(points_temp[:, 0])
+            thetas += list(points_temp[:, 1])
+            zetas += list(points_temp[:, 2])
+            mus_tot += mu.tolist()
+            
+        return s, thetas, zetas, vpars, mus_tot
+    
+
+    def check_filepaths(self, filepaths):
+        r"""
+        Check whether all provided output file paths exist.
+
+        Args:
+            filepaths : Dictionary of file labels to filesystem paths.
+        Returns:
+            exists_all : True if every path exists, otherwise False.
+        """
+        return all(exists(fp) for fp in filepaths.values())
+
+    def trace_particles(self):
+        """
+        Trace particles in the equilibrium field and compute diagnostics.
+
+        Returns:
+            da_values : List of digit accuracy values for each particle.
+            wall_lost : List of booleans indicating whether each particle is lost to the wall.
+            surfaces : List of surface labels for each particle.
+            pitch_angles : List of pitch angles for each particle.
+        """
+        import pickle
+
+        if self.check_filepaths(self.res_filepaths):
+            if self.verbose:
+                print("Reading File", flush=True)
+            with open(self.res_filepaths["tys"], "rb") as f:
+                res_tys = pickle.load(f)
+            with open(self.res_filepaths["hits"], "rb") as f:
+                res_hits = pickle.load(f)
+            if self.verbose:
+                print("Read Files", flush=True)
+            self.build_lists(res_tys, res_hits)
+            return
+        
+        first, last = parallel_loop_bounds(self.comm, len(self.s))
+        gc_tys = []
+        gc_hits = []
+
+        for itrj in range(first, last):
+            point = np.zeros((1, 3))  # initialize with t = 0
+            point[:, 0] = self.s[itrj]
+            point[:, 1] = self.thetas[itrj]
+            point[:, 2] = self.zetas[itrj]
+
+            vpar = [self.vpar[itrj]]
+            mu = self.mu[itrj]
+            res_tys, res_zeta_hits = trace_particles_boozer(
+                self.B0,
+                point,
+                vpar,
+                tmax=self.tmax,
+                mass=self.mass,
+                charge=self.charge,
+                comm=self.comm,
+                Ekin=self.Ekin,
+                stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
+                forget_exact_path=False,
+                abstol=self.tol,
+                reltol=self.tol,
+            )
+            points_trajectory = res_tys[0]
+
+            if isinstance(points_trajectory, list):
+                print(f'points trajectory is list: {points_trajectory=}')
+                continue
+            else:
+                print(f'points trajectory is not list: {points_trajectory.shape=}')
+
+            if points_trajectory.ndim != 2:
+                continue
+            time_momentum, s_path, theta_path, zeta_path, vpar_path = (
+                points_trajectory[:, 0],
+                points_trajectory[:, 1],
+                points_trajectory[:, 2],
+                points_trajectory[:, 3],
+                points_trajectory[:, 4],
+            )
+            points_trajectory = np.column_stack(
+                (s_path, theta_path, zeta_path)
+            )
+            idx_wall = np.argmax(s_path >= 1) if np.any(s_path >= 1) else None
+            if idx_wall is not None and s_path[idx_wall] >= 1:
+                idx_wall -= 1
+                points_trajectory = points_trajectory[:idx_wall, :]
+                vpar_path = vpar_path[:idx_wall]
+                time_momentum = time_momentum[:idx_wall]
+
+
+            Peta_values = compute_peta(
+                self.B0,
+                points_trajectory,
+                vpar_path,
+                self.mass,
+                self.charge,
+                self.helicity_M,
+                self.helicity_N,
+                self.helicity_Mp,
+                self.helicity_Np,
+            )
+            #print(f"{Peta_values.shape=}")
+
+            v_par_signs = np.sign(vpar_path)
+
+            mask = v_par_signs != 0
+            v = v_par_signs[mask]
+            orig_idx = np.where(mask)[0]
+
+            bounce_local = np.where(v[1:] * v[:-1] < 0)[0]
+            bounce_indices = orig_idx[bounce_local + 1]
+
+            bounces = len(bounce_indices) if len(v) > 1 else 0
+
+            zeta_path=np.mod(points_trajectory[:, 2], 2 * np.pi)
+            dzeta = np.diff(zeta_path)
+            wrap_idx = np.where(dzeta < -np.pi)[0]
+
+            true_passes = []
+
+            for passing_index in range(len(wrap_idx)-1):
+                pass1 = wrap_idx[passing_index]
+                pass2 = wrap_idx[passing_index + 1]
+                if not np.any((bounce_indices > pass1) & (bounce_indices < pass2)):
+                    true_passes.append(wrap_idx[passing_index])
+
+            true_passes = np.array(true_passes)
+            passes = len(true_passes) if len(dzeta) > 0 else 0
+
+            # start_state = [s, theta, zeta, vpar, p_eta_0, mu]
+            start_state = [
+                points_trajectory[-1, 0], 
+                points_trajectory[-1, 1], 
+                points_trajectory[-1, 2],
+                vpar[0], 
+                Peta_values[0], 
+                mu]
+
+            # end_state = [time, s, theta, zeta, vpar, p_eta_f, bounces, passes, DA]
+            if len(Peta_values)>10:
+                stack_data = np.column_stack((time_momentum, Peta_values))
+                time_eval, DA_eval = return_DA(stack_data)
+                final_DA = DA_eval
+            else:
+                #print('Not enough points to evaluate DA, setting to NaN')
+                final_DA = np.nan
+            
+            end_state = [
+                time_momentum[-1], 
+                points_trajectory[-1, 0], 
+                points_trajectory[-1, 1], 
+                points_trajectory[-1, 2], 
+                vpar_path[-1], 
+                Peta_values[-1],
+                bounces, 
+                passes, 
+                final_DA]
+
+            convergence_times = []
+            convergence_petas = []
+            convergence_bounces = []
+            convergence_passes = []
+            convergence_DAs = []
+
+            for conv_index, timing_index in enumerate(self.WBA_transit_indicies):
+                if timing_index > len(time_momentum):
+                    break
+                convergence_times.append(time_momentum[timing_index])
+                convergence_petas.append(Peta_values[timing_index])
+
+                bounce_enum = np.sum(bounce_indices < timing_index)
+                pass_enum = np.sum(true_passes < timing_index)
+                
+                convergence_bounces.append(bounce_enum)
+                convergence_passes.append(pass_enum)
+
+                stack_data = np.column_stack((time_momentum[:timing_index], Peta_values[:timing_index]))
+                time_eval, DA_eval = return_DA(stack_data)
+                convergence_DAs.append(DA_eval)
+
+            convergence_data = [
+                convergence_times,
+                convergence_petas,
+                convergence_bounces,
+                convergence_passes,
+                convergence_DAs,
+            ]
+
+            gc_tys.append([start_state, end_state, convergence_data])
+            gc_hits.append(res_zeta_hits[0])
+        print(f"{self.comm.rank=} done tracing particles", flush=True)
+        if self.comm is not None:
+            res_tys = [i for o in self.comm.allgather(gc_tys) for i in o]
+            res_hits = [i for o in self.comm.allgather(gc_hits) for i in o]
+        
+        with open(self.res_filepaths["tys"], "wb") as f:
+            pickle.dump(res_tys, f)
+        with open(self.res_filepaths["hits"], "wb") as f:
+            pickle.dump(res_hits, f)
+        
+        self.build_lists(res_tys, res_hits)
+        return
+
+    
+    def build_lists(self, res_tys, res_hits):
+        DAs_at_loss = []
+
+        DA_tfinal = []
+
+        lost_total = []
+        final_times = []
+        trapped = []
+        Peta_start = []
+        pitch = []
+
+        convergence_bounces = []
+        convergence_passes = []
+        convergence_times = []
+        convergence_petas = []
+        convergence_DAs = []
+
+        for i in range(len(res_tys)):
+            # start_state = [s, theta, zeta, vpar, p_eta_0, mu]
+            # end_state = [time, s, theta, zeta, vpar, p_eta_f, bounces, passes, DA]
+            
+            start_state = res_tys[i][0]
+            end_state = res_tys[i][1]
+            convergence_data = res_tys[i][2]
+            
+
+            try:
+                pitch.append(start_state[5]/self.Ekin)
+                Peta_start.append(start_state[4])
+                final_time = end_state[0]
+                final_times.append(final_time)
+                DAs_at_loss.append(end_state[8])
+                trapped.append(end_state[6])
+
+                # params that depend on loss
+                if final_time < (self.tmax - (5 * self.min_timestep)):
+                    lost_total.append(1)
+                    DA_tfinal.append(np.nan)
+                else:
+                    lost_total.append(0)
+                    DA_tfinal.append(end_state[8])
+                convergence_times.append(convergence_data[0])
+                convergence_petas.append(convergence_data[1])
+                convergence_bounces.append(convergence_data[2])
+                convergence_passes.append(convergence_data[3])
+                convergence_DAs.append(convergence_data[4])
+            except:
+                if self.verbose: 
+                    print(f"Error processing trajectory {i}, {start_state=} ")
+        
+        self.DAs_at_loss = DAs_at_loss
+        self.DA_at_tfinal = DA_tfinal
+
+        self.lost_total = lost_total
+        self.final_times = final_times
+        self.trapped = trapped
+        self.Peta_start = Peta_start
+        self.pitch = pitch
+
+        self.convergence_bounces = convergence_bounces
+        self.convergence_passes = convergence_passes
+        self.convergence_times = convergence_times
+        self.convergence_petas = convergence_petas
+        self.convergence_DAs = convergence_DAs
+
+        if self.verbose:
+            print("Done Building Lists", flush=True)
+    
+    def plot_surfaces(
+            self,
+            nx=20,
+            ny=20,
+            savepath="heatmap_digit_accuracy.png",
+            plot_at_loss=True,
+            ax=None,
+            DA_max=7,
+            plot_losses=False,
+    ):
+        import matplotlib as mpl
+        import matplotlib.pyplot as plt
+        from matplotlib.cm import ScalarMappable
+        from scipy.stats import binned_statistic_2d
+
+        if plot_at_loss:
+            fDA = np.array(self.DAs_at_loss)
+        else:
+            fDA = np.array(self.DA_at_tfinal)
+
+        mpl.use("Agg")  # Don't use interactive backend
+
+        try:
+            import cmcrameri.cm as cmc  # noqa: F401
+            cmap = "cmc.managua"
+        except ImportError:
+            cmap = "viridis"
+
+        if ax is None:
+            fig, ax = plt.subplots()
+        else:
+            fig = ax.get_figure()
+
+
+        normalized_pitch = np.array(self.pitch) * self.min_volmodB * self.sign
+        peta_start = np.array(self.Peta_start)
+
+        if self.verbose: print(f'{fDA.shape=} \t {normalized_pitch.shape=} \t {np.array(peta_start).shape=}')
+
+        stat, x_edges, y_edges, binnumber = binned_statistic_2d(
+            normalized_pitch,
+            peta_start,
+            fDA,
+            statistic="mean",
+            bins=[nx, ny],
+        )
+        norm = mpl.colors.Normalize(vmin=0, vmax=DA_max)
+        X2, Y2 = np.meshgrid(x_edges, y_edges)
+        im2 = ax.pcolormesh(X2, Y2, stat.T, shading="auto", cmap=cmap, norm=norm)
+        ax.set_xlabel(r"$\lambda = \frac{\mu}{E} \text{sign}(v_{||})$")
+        ax.set_ylabel(r"$P_\eta$")
+        plt.savefig(savepath, dpi=300)
+
+        def vpar_func(point, p_a, sgn):
+            self.B0.set_points(point)
+            modB = self.B0.modB()[0, 0]
+            if 1 - p_a * modB < 0:
+                return np.nan
+            else:
+                return sgn * self.vtotal * np.sqrt(1 - p_a * modB)
+
+        peta_coords = []        
+
+        def trapped_passing_function(s, pitch):
+            resolution = 100
+            points_temp = initialize_position_uniform_surf(
+                    self.B0,
+                    resolution,
+                    s,
+                    comm=self.comm,
+            )
+            self.B0.set_points(points_temp)
+            modB = self.B0.modB()[:, 0]
+
+          
+            #mu = (pitch * self.Ekin) / self.min_volmodB
+            if np.any(1 - (pitch * modB/self.min_volmodB) < 0):
+                return 1
+            return 0
+        
+        def s_peta_map(s, mu, sign):
+            r"""
+            Map a point to canonical momentum p_eta using current settings.
+
+            Args:
+                s : Radial-like coordinate.
+                mu : Magnetic moment.
+                sign : Desired sign for parallel velocity.
+            Returns:
+                peta : Canonical momentum value at the requested point.
+            """
+            if np.isscalar(s):
+                points = np.zeros((3, 1))
+            else:
+                points = np.zeros((3, len(s)))
+            points[0, :] = s
+
+            vp_temp = self.vpar_func_perturbed(
+                points[0, 0], points[0, 1], points[0, 2], mu, sign
+            )
+
+            peta = compute_peta(
+                self.B0,
+                points,
+                vp_temp,
+                self.mass,
+                self.charge,
+                self.helicity_M,
+                self.helicity_N,
+            )
+            return peta
+        
+        '''
+        f_vec = np.vectorize(trapped_passing_function)
+
+
+        s = np.linspace(0,1,50)
+        pa_TPB = np.linspace(min(normalized_pitch), max(normalized_pitch), 50)
+        S = s_peta_map(s, )
+
+        indexes, R = np.meshgrid(s, pa_TPB, indexing="xy")
+        Z = f_vec(indexes, R)
+
+        ax.contour(indexes, R, Z, levels=[0.5], colors='k')
+        '''
+
+
+
+
+    
 
 class MapPhaseSpace:
     def __init__(
@@ -2470,32 +3112,7 @@ class MapPhaseSpace:
 
         self.solver_options = solver_options
 
-        def min_volumemodB():
-            r"""
-            Estimate minimum magnetic-field magnitude over sampled surfaces.
-
-            Returns:
-                min_modB : Approximate minimum value of modB in the sampled volume.
-            """
-            resolution = 100
-            points = np.zeros((resolution * resolution, 3))
-
-            for surface in np.linspace(0, 0.99, resolution):
-                if surface == 0:
-                    points = initialize_position_uniform_surf(
-                        self.B0, resolution, surface
-                    )
-                else:
-                    sampled_surface = initialize_position_uniform_surf(
-                        self.B0, resolution, surface
-                    )
-                    points = np.concatenate((points, sampled_surface), axis=0)
-
-            self.B0.set_points(points)
-            modB = self.B0.modB()[:, 0]
-            return np.min(modB)
-
-        self.min_volmodB = min_volumemodB()
+        self.min_volmodB = min_volumemodB(self.B0)
 
         # plotting settings
         self.mean = mean
@@ -2535,7 +3152,7 @@ class MapPhaseSpace:
                     s, thetas, zetas, vpar, mu = self.instantiate_gridded_particles()
 
                 np.savetxt(
-                    self.savepath + "_initial_conditions.txt",
+                    self.savepath + "initial_conditions.txt",
                     np.column_stack((s, thetas, zetas, vpar, mu)),
                 )
         else:
@@ -2552,7 +3169,6 @@ class MapPhaseSpace:
                 )
 
         # set parameters for convergence plot
-        self.diffusion = diffusion
         expected_length = int(self.tmax / self.min_timestep)
         expected_step = int(expected_length / self.convergence_points)
         self.WBA_transit_steps = np.linspace(
@@ -2565,23 +3181,10 @@ class MapPhaseSpace:
         initial_point[:, 2] = zetas
 
         if self.savedata:
-            self.IC_filepaths = {
-                "s0": self.savepath + "_s0.txt",
-                "theta0": self.savepath + "_theta0.txt",
-                "zeta0": self.savepath + "_zeta0.txt",
-                "vpar0": self.savepath + "_vpar0.txt",
-                "mu_per_mass": self.savepath + "_mu_per_mass.txt",
+            self.final_filepaths = {
+                "D": self.savepath + "DA.txt",
+                "wall_lost": self.savepath + "wall_lost.txt",
             }
-            if diffusion:
-                self.final_filepaths = {
-                    "D": self.savepath + "Deff.txt",
-                    "wall_lost": self.savepath + "wall_lost.txt",
-                }
-            else:
-                self.final_filepaths = {
-                    "D": self.savepath + "DA.txt",
-                    "wall_lost": self.savepath + "wall_lost.txt",
-                }
             self.res_filepaths = {
                 "tys": self.savepath + "res_tys.txt",
                 "hits": self.savepath + "res_hits.txt",
@@ -3105,7 +3708,7 @@ class MapPhaseSpace:
 
             v_par_signs = np.sign(vpar_path)
             v = v_par_signs[v_par_signs != 0]
-            bounces = np.sum(v[1:] * v[:-1] < 0) if len(v) > 2 else 1
+            bounces = np.sum(v[1:] * v[:-1] < 0) if len(v) > 2 else 0
 
             start_phasespace = [
                 vpar_path[0],
@@ -3277,17 +3880,20 @@ class MapPhaseSpace:
         Returns:
             ax : Matplotlib axis containing the rendered plot.
         """
-        import cmcrameri.cm as cmc
         import matplotlib as mpl
         import matplotlib.pyplot as plt
         from scipy.stats import binned_statistic_2d
 
+        try:
+            import cmcrameri.cm as cmc  # noqa: F401
+            cmap = "cmc.managua"
+        except ImportError:
+            cmap = "viridis"
         if ax is None:
             fig, ax = plt.subplots(figsize=(16, 12))
         else:
             fig = ax.get_figure()
 
-        # def surf_trapped_s(pitch_angle, surface):
 
         def surf_trapped_func(pitch_angle, surface):
             r"""
@@ -3361,14 +3967,12 @@ class MapPhaseSpace:
             else:
                 return ((E - mu * mmbB) < 0).astype(int).tolist(), peta.tolist()
 
-        if self.diffusion:
-            norm = mpl.colors.Normalize(
-                vmin=min(self.DA_final), vmax=max(self.DA_final)
-            )
-            cmap = "viridis"
-        else:
-            norm = mpl.colors.Normalize(vmin=0, vmax=DA_max)
+        norm = mpl.colors.Normalize(vmin=0, vmax=DA_max)
+        try:
+            import cmcrameri.cm as cmc  # noqa: F401
             cmap = "cmc.managua"
+        except ImportError:
+            cmap = "viridis"
 
         stat, x_edges, y_edges, binnumber = binned_statistic_2d(
             np.array(self.pitch_angles),
@@ -3532,7 +4136,7 @@ class MapPhaseSpace:
                 zorder=10,
             )
         if self.Eprime_slice:
-            ax.set_xlabel(r"$\lambda = \frac{\mu}{E^\prime} \text{sign}(v_{||})$")
+            ax.set_xlabel(r"$\lambda^\prime = \frac{\mu}{E^\prime} \text{sign}(v_{||})$")
         else:
             ax.set_xlabel(r"$\lambda = \frac{\mu}{E} \text{sign}(v_{||})$")
         if self.plot_s:
