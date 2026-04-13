@@ -22,7 +22,7 @@ from firm3d.util.constants import (
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
-from firm3d.util.functions import proc0_print
+from firm3d.util.functions import in_github_actions, proc0_print
 
 try:
     from mpi4py import MPI
@@ -37,14 +37,14 @@ except ImportError:
 
 time1 = time.time()
 
-resolution = 48  # Resolution for field interpolation
-nParticles = 5000  # Number of particles to trace
-reltol = 1e-8  # Relative tolerance for the ODE solver
-abstol = 1e-8  # Absolute tolerance for the ODE solver
+resolution = 10 if in_github_actions else 48  # Resolution for field interpolation
+nParticles = 50 if in_github_actions else 5000  # Number of particles to trace
+reltol = 1e-4 if in_github_actions else 1e-8  # Relative tolerance for the ODE solver
+abstol = 1e-4 if in_github_actions else 1e-8  # Absolute tolerance for the ODE solver
 order = 3  # Order for radial interpolation
 degree = 3  # Degree for 3d interpolation
 boozmn_filename = "../inputs/boozmn_ariescs.nc"
-tmax = 1e-2  # Time for integration
+tmax = 1e-4 if in_github_actions else 1e-2  # Time for integration
 ns_interp = resolution
 ntheta_interp = resolution
 nzeta_interp = resolution
