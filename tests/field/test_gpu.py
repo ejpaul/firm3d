@@ -910,11 +910,16 @@ class TestGPUTracing(unittest.TestCase):
             pt[0, 2] = (pt[0, 2] - 0.5) * 2 * zrange[1]
 
             # particle is outside the surface or too close to the surface
-            while sc_particle.evaluate_rphiz(pt) <= 0.2:
+            max_iters = 1000
+            for _ in range(max_iters):
+                if sc_particle.evaluate_rphiz(pt) > 0.2:
+                    break
                 pt = np.random.uniform(low=0, high=1, size=(1, 3))
                 pt[0, 0] = pt[0, 0] * (rrange[1] - rrange[0]) + rrange[0]
                 pt[0, 1] *= 2 * np.pi
                 pt[0, 2] = (pt[0, 2] - 0.5) * 2 * zrange[1]
+            else:
+                raise RuntimeError("Could not sample a valid point inside the surface")
             rphiz[i, :] = pt
         xyz = np.empty((nparticles, 3))
         xyz[:, 0] = rphiz[:, 0] * np.cos(rphiz[:, 1])

@@ -69,7 +69,6 @@ tmax = 1e-5
 last_time = trace_particles_cartesian_gpu(
     bsh,
     sc_particle,
-    surf.nfp,
     xyz,
     vpar_inits,
     tmax=tmax,

@@ -142,7 +142,6 @@ def trace_particles_boozer_gpu(
 def trace_particles_cartesian_gpu(
     field,
     surface_classifier,
-    nfp,
     xyz_inits,
     parallel_speeds,
     tmax,
@@ -161,7 +160,7 @@ def trace_particles_cartesian_gpu(
         rrange=r_range,
         phirange=phi_range,
         zrange=z_range,
-        stz_init=xyz_inits,
+        xyz_init=xyz_inits,
         m=mass,
         q=charge,
         vtotal=vtotal,

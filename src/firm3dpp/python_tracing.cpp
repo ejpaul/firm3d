@@ -38,7 +38,7 @@ extern "C" py::array_t<double> test_derivatives_saw_nok(py::array_t<double> quad
         py::array_t<double> loc, py::array_t<double> vpar, py::array_t<double> time, double v_total, double m, double q,  double psi0, int n_points);
 
 extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, py::array_t<double> rrange,
-        py::array_t<double> phirange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        py::array_t<double> phirange, py::array_t<double> zrange, py::array_t<double> loc_init, double m, double q, double vtotal, py::array_t<double> vtang,
         double tol, int nparticles);
 
 extern "C" vector<double> test_timestep_boozer(py::array_t<double> quad_pts, py::array_t<double> srange,
@@ -134,7 +134,7 @@ void init_tracing(py::module_ &m){
         py::arg("rrange"),
         py::arg("phirange"),
         py::arg("zrange"),
-        py::arg("stz_init"),
+        py::arg("xyz_init"),
         py::arg("m"),
         py::arg("q"),
         py::arg("vtotal"),
