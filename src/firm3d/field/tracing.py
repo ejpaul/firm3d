@@ -1,4 +1,3 @@
-from math import sqrt
 from warnings import warn
 
 import numpy as np
@@ -189,16 +188,11 @@ def trace_particles_boozer_perturbed(
     """
     if stopping_criteria is None:
         stopping_criteria = []
-    if vpars is None:
-        vpars = []
-    if phases is None:
-        phases = []
-    if n_zetas is None:
-        n_zetas = []
-    if m_thetas is None:
-        m_thetas = []
-    if omegas is None:
-        omegas = []
+    phases = [float(p) for p in (phases or [])]
+    vpars = [float(x) for x in (vpars or [])]
+    n_zetas = [float(x) for x in (n_zetas or [])]
+    m_thetas = [float(x) for x in (m_thetas or [])]
+    omegas = [float(x) for x in (omegas or [])]
     if reltol is None:
         reltol = tol
     if abstol is None:
@@ -216,9 +210,9 @@ def trace_particles_boozer_perturbed(
             np.asarray([[stz_inits[0, 0]], [stz_inits[0, 1]], [stz_inits[0, 2]], [0]]).T
         )
         B0 = perturbed_field.B0.modB()[0, 0]
-        speed_total = sqrt(speed_par[0] ** 2 + 2 * mus[0] * B0)
+        speed_total = float(np.sqrt(speed_par[0] ** 2 + 2 * mus[0] * B0))
     else:
-        speed_total = sqrt(2 * Ekin / m)
+        speed_total = float(np.sqrt(2 * Ekin / m))
 
     if mode is not None:
         mode = mode.lower()
@@ -239,15 +233,15 @@ def trace_particles_boozer_perturbed(
     for i in range(first, last):
         res_ty, res_hit = sopp.particle_guiding_center_boozer_perturbed_tracing(
             perturbed_field,
-            stz_inits[i, :],
-            m,
-            charge,
-            speed_total,
-            speed_par[i],
-            mus[i],
-            tmax,
-            abstol,
-            reltol,
+            stz_inits[i, :].tolist(),
+            float(m),
+            float(charge),
+            float(speed_total),
+            float(speed_par[i]),
+            float(mus[i]),
+            float(tmax),
+            float(abstol),
+            float(reltol),
             vacuum=(mode == "gc_vac"),
             noK=(mode == "gc_nok"),
             phases=phases,

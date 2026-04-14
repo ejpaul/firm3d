@@ -18,7 +18,12 @@ from firm3d.util.constants import (
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
+from firm3d.util.functions import in_github_actions
 from firm3d.util.mpi import comm_world
+
+resolution = 5 if in_github_actions else 15  # Resolution for field interpolation
+nparticles = 100 if in_github_actions else 1000  # Number of particles to trace
+tol = 1e-4 if in_github_actions else 1e-8  # Tolerance for ODE solver
 
 ### CREATE A FIELD FOR TRACING
 boozmn_filename = "../inputs/boozmn_aten_rescaled.nc"
@@ -27,15 +32,12 @@ bri = BoozerRadialInterpolant(boozmn_filename, 3, comm=comm_world, enforce_vacuu
 field = InterpolatedBoozerField(
     bri,
     3,
-    ns_interp=15,
-    ntheta_interp=15,
-    nzeta_interp=15,
+    ns_interp=resolution,
+    ntheta_interp=resolution,
+    nzeta_interp=resolution,
 )
 # set seed for consistency
 np.random.seed(8)
-
-# trace particles
-nparticles = 1000
 
 # Define fusion birth distribution
 # Bader, A., et al. "Modeling of energetic particle transport in optimized
@@ -74,10 +76,10 @@ last_time = trace_particles_boozer_gpu(
     mass=mass,
     charge=charge,
     vtotal=vpar0,
-    tol=1e-8,
-    ns=15,
-    ntheta=15,
-    nzeta=15,
+    tol=tol,
+    ns=resolution,
+    ntheta=resolution,
+    nzeta=resolution,
 )
 particle_data = pd.DataFrame(
     {

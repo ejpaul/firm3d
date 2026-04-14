@@ -37,15 +37,16 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libboost-all-dev libopenmpi-dev libnetcdf-dev libhdf5-dev libnetcdf-c++4-dev libgsl-dev pkg-config nvidia-cuda-toolkit
+          sudo apt-get install -y --no-install-recommends cmake ninja-build libboost-all-dev libopenmpi-dev libnetcdf-dev libhdf5-dev libnetcdf-c++4-dev libgsl-dev pkg-config nvidia-cuda-toolkit
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install netCDF4 cmake ninja "pybind11<=2.13.6" setuptools wheel pandas
-          NVCC_PATH=$(which nvcc)          
-          echo "Using NVCC at: $NVCC_PATH"
-
-          export CUDACXX=$NVCC_PATH
+          NVCC_PATH=$(command -v nvcc 2>/dev/null \
+            || find /usr/local/cuda* -maxdepth 3 -name nvcc -type f 2>/dev/null | head -1 \
+            || true)
+          echo "Using NVCC at: ${NVCC_PATH:-not found}"
+          export CUDACXX=${NVCC_PATH}
           pip install -v --no-build-isolation -e ".[dev]" 2>&1 | tee install.log
           pip install coverage
         env:
@@ -73,14 +74,9 @@ jobs:
           flags: unittests
           name: codecov-umbrella
 
-      - name: Run Examples
+      - name: Run GPU examples
         run: |
-          cd examples/gpu_boozer_tracing
-          python gpu_boozer_tracing.py
-
-          cd ../gpu_saw_tracing
-          python gpu_saw_tracing.py
-
-          cd ../gpu_cartesian_tracing
-          python gpu_cartesian_tracing.py
+          (cd examples/gpu_boozer_tracing && python gpu_boozer_tracing.py)
+          (cd examples/gpu_saw_tracing && python gpu_saw_tracing.py)
+          (cd examples/gpu_cartesian_tracing && python gpu_cartesian_tracing.py)
 
