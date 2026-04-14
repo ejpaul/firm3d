@@ -2,7 +2,6 @@
 import unittest
 
 import numpy as np
-import simsopt
 from simsopt.field import (
     BiotSavart,
     InterpolatedField,
@@ -11,7 +10,6 @@ from simsopt.field import (
     load_coils_from_makegrid_file,
     trace_particles,
 )
-from simsopt.field.sampling import draw_uniform_on_surface
 from simsopt.geo import SurfaceRZFourier
 
 import firm3dpp

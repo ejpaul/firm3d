@@ -1,18 +1,14 @@
-import time
-
 import numpy as np
 import pandas as pd
 from simsopt.field import (
     BiotSavart,
     InterpolatedField,
-    LevelsetStoppingCriterion,
     SurfaceClassifier,
     coils_via_symmetries,
     load_coils_from_makegrid_file,
 )
 from simsopt.field.sampling import draw_uniform_on_surface
 from simsopt.geo import SurfaceRZFourier
-from simsopt.util import comm_world, proc0_print
 from simsopt.util.constants import (
     ALPHA_PARTICLE_CHARGE,
     ALPHA_PARTICLE_MASS,
