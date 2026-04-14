@@ -48,12 +48,12 @@ The ``TrappedPoincare`` class computes Poincaré maps for trapped particles that
         field,
         helicity_M,
         helicity_N,
-        s_mirror,
-        theta_mirror,
-        zeta_mirror,
         mass=ALPHA_PARTICLE_MASS,
         charge=ALPHA_PARTICLE_CHARGE,
         Ekin=FUSION_ALPHA_PARTICLE_ENERGY,
+        s_mirror=s_mirror,
+        theta_mirror=theta_mirror,
+        zeta_mirror=zeta_mirror,
         ns_poinc=120,      # number of s initial conditions
         neta_poinc=5,      # number of eta initial conditions
         Nmaps=1000,        # number of return maps

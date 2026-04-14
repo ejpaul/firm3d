@@ -86,7 +86,7 @@ def cartesian_rhs(position, vpar, field, mass, charge, velocity):
     field.set_points_cyl(position.reshape(-1, 3))
     B = field.B()
     GradAbsB = field.GradAbsB()
-    AbsB = np.linalg.norm(B)
+    AbsB = np.linalg.norm(B[0])
 
     BcrossGradAbsB = [0] * 3
     BcrossGradAbsB[0] = B[0, 1] * GradAbsB[0, 2] - B[0, 2] * GradAbsB[0, 1]
@@ -253,7 +253,6 @@ def test_derivatives(
             stz.shape[0],
         )
         gpu_derivs = np.reshape(gpu_derivs, (stz.shape[0], 4))
-
         cpu_derivs = np.empty((stz.shape[0], 4))
         for i in range(stz.shape[0]):
             cpu_derivs[i, :] = cartesian_rhs(
@@ -463,7 +462,7 @@ def test_timestep(
             charge=CHARGE,
             Ekin=ENERGY,
             tol=1e-9,
-            stopping_criteria=[simsopt.field.IterationStoppingCriterion(1)],
+            stopping_criteria=[IterationStoppingCriterion(1)],
             forget_exact_path=True,
         )
         cpu_positions = np.array([x[-1] for x in gc_tys])
@@ -832,6 +831,7 @@ class TestGPUTracing(unittest.TestCase):
         self.assertTrue(is_small)
 
     def test_cartesian_vacuum(self):
+        np.random.seed(0)
         degree = 3 # degree of interpolant
         n = 16 # resolution of interpolant
         order = 12 # order of coil curves

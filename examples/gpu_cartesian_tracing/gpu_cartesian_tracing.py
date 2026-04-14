@@ -66,9 +66,6 @@ last_time = trace_particles_cartesian_gpu(
     charge=ALPHA_PARTICLE_CHARGE,
     vtotal=vpar0,
     tol=1e-8,
-    nr=15,
-    nphi=15,
-    nz=15,
 )
 particle_data = pd.DataFrame(
     {
@@ -87,10 +84,6 @@ particle_data = pd.DataFrame(
 particle_data.to_csv("./particle_data.csv")
 
 
-did_leave = [t < tmax for t in particle_data["last_time"]]
-loss_frac = sum(did_leave) / len(did_leave)
-print(f"Number of particles= {nparticles}")
-print(f"Loss fraction: {loss_frac:.3f}")
 did_leave = [t < tmax for t in particle_data["last_time"]]
 loss_frac = sum(did_leave) / len(did_leave)
 print(f"Number of particles= {nparticles}")

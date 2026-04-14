@@ -149,9 +149,6 @@ def trace_particles_cartesian_gpu(
     charge,
     vtotal,
     tol,
-    nr,
-    nphi,
-    nz,
     dt=None,
 ):
 
@@ -159,8 +156,8 @@ def trace_particles_cartesian_gpu(
     r_range, phi_range, z_range, quad_info = cartesian_interpolant(field, surface_classifier)
     last_time = firm3dpp.cartesian_gpu_tracing(
         quad_pts=quad_info,
-        xrange=r_range,
-        yrange=phi_range,
+        rrange=r_range,
+        phirange=phi_range,
         zrange=z_range,
         stz_init=xyz_inits,
         m=mass,
