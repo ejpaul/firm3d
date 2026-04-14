@@ -24,9 +24,9 @@ from firm3d.field.tracing_helpers import (
     initialize_velocity_uniform,
 )
 
-degree = 3 # degree of interpolant
-n = 16 # resolution of interpolant
-order = 12 # order of coil curves
+degree = 3  # degree of interpolant
+n = 16  # resolution of interpolant
+order = 12  # order of coil curves
 
 filename = "../inputs/coils.curves_22_7_21"
 wout_filename = "../inputs/wout_vmec.nc"
@@ -51,9 +51,9 @@ rs = np.linalg.norm(surf.gamma()[:, :, 0:2], axis=2)
 zs = surf.gamma()[:, :, 2]
 
 rrange = (np.min(rs), np.max(rs), n)
-phirange = (0, 2*np.pi/surf.nfp, n*2)
+phirange = (0, 2 * np.pi / surf.nfp, n * 2)
 # exploit stellarator symmetry and only consider positive z values:
-zrange = (0, np.max(zs), n//2)
+zrange = (0, np.max(zs), n // 2)
 bsh = InterpolatedField(
     bs, degree, rrange, phirange, zrange, True, nfp=surf.nfp, stellsym=True
 )

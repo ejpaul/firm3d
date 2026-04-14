@@ -139,7 +139,6 @@ def trace_particles_boozer_gpu(
     return last_time
 
 
-
 def trace_particles_cartesian_gpu(
     field,
     surface_classifier,
@@ -153,7 +152,6 @@ def trace_particles_cartesian_gpu(
     tol,
     dt=None,
 ):
-
     nparticles = xyz_inits.shape[0]
     r_range, phi_range, z_range, quad_info = cartesian_interpolant(
         field, surface_classifier
