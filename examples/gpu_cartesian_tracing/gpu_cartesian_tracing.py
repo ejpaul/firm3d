@@ -1,17 +1,28 @@
 import time
-import numpy as np
 
-from simsopt.field import (BiotSavart, InterpolatedField,
-                           SurfaceClassifier, LevelsetStoppingCriterion, load_coils_from_makegrid_file, coils_via_symmetries)
+import numpy as np
+import pandas as pd
+from simsopt.field import (
+    BiotSavart,
+    InterpolatedField,
+    LevelsetStoppingCriterion,
+    SurfaceClassifier,
+    coils_via_symmetries,
+    load_coils_from_makegrid_file,
+)
 from simsopt.field.sampling import draw_uniform_on_surface
 from simsopt.geo import SurfaceRZFourier
-from simsopt.util import proc0_print, comm_world
-from simsopt.util.constants import ALPHA_PARTICLE_MASS, ALPHA_PARTICLE_CHARGE, FUSION_ALPHA_PARTICLE_ENERGY
+from simsopt.util import comm_world, proc0_print
+from simsopt.util.constants import (
+    ALPHA_PARTICLE_CHARGE,
+    ALPHA_PARTICLE_MASS,
+    FUSION_ALPHA_PARTICLE_ENERGY,
+)
+
+from firm3d.catapult.tracing import trace_particles_cartesian_gpu
 from firm3d.field.tracing_helpers import (
     initialize_velocity_uniform,
 )
-from firm3d.catapult.tracing import trace_particles_cartesian_gpu
-import pandas as pd
 
 degree = 3 # degree of interpolant
 n = 16 # resolution of interpolant
@@ -26,7 +37,7 @@ coils = load_coils_from_makegrid_file(filename, order, ppp=20, group_names=None)
 
 curves = []
 currents = []
-for i, coil in enumerate(coils):
+for _i, coil in enumerate(coils):
     curves.append(coil.curve)
     currents.append(coil.current)
 

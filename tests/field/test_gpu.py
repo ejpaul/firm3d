@@ -2,8 +2,24 @@
 import unittest
 
 import numpy as np
+import simsopt
+from simsopt.field import (
+    BiotSavart,
+    InterpolatedField,
+    SurfaceClassifier,
+    coils_via_symmetries,
+    load_coils_from_makegrid_file,
+    trace_particles,
+)
+from simsopt.field.sampling import draw_uniform_on_surface
+from simsopt.geo import SurfaceRZFourier
 
 import firm3dpp
+from firm3d.catapult.utils import (
+    boozer_interpolant,
+    boozer_saw_interpolant,
+    cartesian_interpolant,
+)
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
@@ -24,15 +40,6 @@ from firm3d.util.constants import (
 from firm3d.util.constants import (
     FUSION_ALPHA_PARTICLE_ENERGY as ENERGY,
 )
-from firm3d.catapult.utils import boozer_interpolant, boozer_saw_interpolant, cartesian_interpolant
-from simsopt.field import (BiotSavart, InterpolatedField,
-                           SurfaceClassifier, load_coils_from_makegrid_file, coils_via_symmetries)
-from simsopt.field.sampling import draw_uniform_on_surface
-from simsopt.geo import SurfaceRZFourier
-from simsopt.field import (
-    trace_particles,
-)
-import simsopt
 
 HAS_CUDA = hasattr(firm3dpp, "test_gpu_interpolation")
 
@@ -105,11 +112,15 @@ def cartesian_rhs(position, vpar, field, mass, charge, velocity):
     return out
 
 
-def test_interpolant(field, nfp, stz, saw_present=False, surf_classifier=None, tol=1e-8):
+def test_interpolant(
+    field, nfp, stz, saw_present=False, surf_classifier=None, tol=1e-8
+):
 
     # if in Cartesian coordinates
     if isinstance(field, InterpolatedField):
-        rrange, phirange, zrange, quad_info = cartesian_interpolant(field, surf_classifier)
+        rrange, phirange, zrange, quad_info = cartesian_interpolant(
+            field, surf_classifier
+        )
         field.set_points_cyl(stz)
         # Quantities to interpolate
         B = field.B_cyl()
@@ -202,7 +213,8 @@ def test_interpolant(field, nfp, stz, saw_present=False, surf_classifier=None, t
                 # evaluate GPU interpolant
                 stz = np.ascontiguousarray(stz)
                 gpu_interpolation = firm3dpp.test_gpu_interpolation(
-                    quad_info, srange, trange, zrange, stz.copy(), "boozer", stz.shape[0]
+                    quad_info, srange, trange, zrange,
+                    stz.copy(), "boozer", stz.shape[0]
                 )
 
         gpu_interpolation = np.reshape(gpu_interpolation, (stz.shape[0], -1))
@@ -238,8 +250,10 @@ def test_derivatives(
     surf_classifier=None,
     tol=1e-8,
 ):
-    if isinstance(field, InterpolatedField): # Cartesian
-        rrange, phirange, zrange, quad_info = cartesian_interpolant(field, surf_classifier)
+    if isinstance(field, InterpolatedField):  # Cartesian
+        rrange, phirange, zrange, quad_info = cartesian_interpolant(
+            field, surf_classifier
+        )
         gpu_derivs = firm3dpp.test_derivatives_cartesian(
             quad_info,
             rrange,
@@ -287,7 +301,8 @@ def test_derivatives(
             elif field.B0.field_type == "nok":  # NoK tracing
                 for i in range(stz.shape[0]):
                     cpu_derivs[i, :] = firm3dpp.simsopt_derivs_saw(
-                        field, stz[i, :], MASS, CHARGE, vtotal, vpar[i], time[i], "nok_saw"
+                        field, stz[i, :], MASS, CHARGE,
+                        vtotal, vpar[i], time[i], "nok_saw"
                     )
             else:
                 ValueError("Field type not recognized for SAW derivatives")
@@ -427,10 +442,13 @@ def test_derivatives(
 
 
 def test_timestep(
-    field, nfp, stz, vpar, vtotal, psi0=0, time=None, saw_filename=None, tol=1e-8, surf_classifier=None
+    field, nfp, stz, vpar, vtotal, psi0=0, time=None,
+    saw_filename=None, tol=1e-8, surf_classifier=None
 ):
-    if isinstance(field, InterpolatedField): # Cartesian
-        rrange, phirange, zrange, quad_info = cartesian_interpolant(field, surf_classifier)
+    if isinstance(field, InterpolatedField):  # Cartesian
+        rrange, phirange, zrange, quad_info = cartesian_interpolant(
+            field, surf_classifier
+        )
         last_time = firm3dpp.test_timestep_cartesian(
             quad_pts=quad_info,
             rrange=rrange,
@@ -466,7 +484,7 @@ def test_timestep(
             forget_exact_path=True,
         )
         cpu_positions = np.array([x[-1] for x in gc_tys])
-    
+
     else:
         srange, trange, zrange, quad_info, maxJ = construct_interpolant(field, nfp)
 
@@ -845,14 +863,12 @@ class TestGPUTracing(unittest.TestCase):
 
         curves = []
         currents = []
-        for i, coil in enumerate(coils):
+        for _i, coil in enumerate(coils):
             curves.append(coil.curve)
             currents.append(coil.current)
 
         coils_full = coils_via_symmetries(curves, currents, surf.nfp, True)
         bs = BiotSavart(coils_full)
-
-        surf_launch = SurfaceRZFourier.from_wout(wout_filename, s=0.3)
 
         sc_particle = SurfaceClassifier(surf, h=0.1, p=2)
         rs = np.linalg.norm(surf.gamma()[:, :, 0:2], axis=2)
@@ -875,7 +891,8 @@ class TestGPUTracing(unittest.TestCase):
             pt[0,1] *= 2*np.pi
             pt[0,2] = (pt[0,2] - 0.5) *2*zrange[1]
 
-            while sc_particle.evaluate_rphiz(pt) <=  0.2: # particle is outside the surface or too close to the surface
+            # particle is outside the surface or too close to the surface
+            while sc_particle.evaluate_rphiz(pt) <= 0.2:
                 pt = np.random.uniform(low=0, high=1, size=(1,3))
                 pt[0,0] = pt[0, 0]*(rrange[1] - rrange[0]) + rrange[0]
                 pt[0,1] *= 2*np.pi
@@ -888,17 +905,25 @@ class TestGPUTracing(unittest.TestCase):
 
 
         # test interpolant
-        is_small = test_interpolant(bsh, surf.nfp, rphiz, surf_classifier=sc_particle, tol=1e-8)
+        is_small = test_interpolant(
+            bsh, surf.nfp, rphiz, surf_classifier=sc_particle, tol=1e-8
+        )
         self.assertTrue(is_small)
 
         # test rhs
         VELOCITY = np.sqrt(2 * ENERGY / MASS)
         vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (nparticles,))
-        is_small = test_derivatives(bsh, surf.nfp, rphiz, vpar_init, VELOCITY, surf_classifier=sc_particle, tol=1e-8)
+        is_small = test_derivatives(
+            bsh, surf.nfp, rphiz, vpar_init, VELOCITY,
+            surf_classifier=sc_particle, tol=1e-8
+        )
         self.assertTrue(is_small)
 
         # test timestep
-        is_small = test_timestep(bsh, surf.nfp, rphiz, vpar_init, VELOCITY, surf_classifier=sc_particle, tol=1e-8)
+        is_small = test_timestep(
+            bsh, surf.nfp, rphiz, vpar_init, VELOCITY,
+            surf_classifier=sc_particle, tol=1e-8
+        )
         self.assertTrue(is_small)
 
 
