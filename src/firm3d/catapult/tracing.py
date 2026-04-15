@@ -1,4 +1,4 @@
-__all__ = ["trace_particles_boozer_gpu"]
+__all__ = ["trace_particles_boozer_gpu", "trace_particles_cartesian_gpu"]
 import numpy as np
 
 import firm3dpp
