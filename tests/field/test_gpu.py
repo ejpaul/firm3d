@@ -14,6 +14,9 @@ try:
         load_coils_from_makegrid_file,
         trace_particles,
     )
+    from simsopt.field.tracing import (
+        IterationStoppingCriterion as SimsoptIterationStoppingCriterion,
+    )
     from simsopt.geo import SurfaceRZFourier
 
     HAS_SIMSOPT = True
@@ -502,7 +505,7 @@ def test_timestep(
             charge=CHARGE,
             Ekin=ENERGY,
             tol=1e-9,
-            stopping_criteria=[IterationStoppingCriterion(1)],
+            stopping_criteria=[SimsoptIterationStoppingCriterion(1)],
             forget_exact_path=True,
         )
         cpu_positions = np.array([x[-1] for x in gc_tys])
