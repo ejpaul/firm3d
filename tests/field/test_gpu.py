@@ -2,17 +2,23 @@
 import unittest
 
 import numpy as np
-from simsopt.field import (
-    BiotSavart,
-    InterpolatedField,
-    SurfaceClassifier,
-    coils_via_symmetries,
-    load_coils_from_makegrid_file,
-    trace_particles,
-)
-from simsopt.geo import SurfaceRZFourier
 
 import firm3dpp
+
+try:
+    from simsopt.field import (
+        BiotSavart,
+        InterpolatedField,
+        SurfaceClassifier,
+        coils_via_symmetries,
+        load_coils_from_makegrid_file,
+        trace_particles,
+    )
+    from simsopt.geo import SurfaceRZFourier
+
+    HAS_SIMSOPT = True
+except ImportError:
+    HAS_SIMSOPT = False
 from firm3d.catapult.utils import (
     boozer_interpolant,
     boozer_saw_interpolant,
@@ -864,6 +870,7 @@ class TestGPUTracing(unittest.TestCase):
         )
         self.assertTrue(is_small)
 
+    @unittest.skipUnless(HAS_SIMSOPT, "simsopt not available")
     def test_cartesian_vacuum(self):
         np.random.seed(0)
         degree = 3  # degree of interpolant
