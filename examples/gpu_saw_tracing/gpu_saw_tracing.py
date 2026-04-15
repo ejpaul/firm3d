@@ -1,7 +1,7 @@
 import numpy as np
-from firm3d.util.gpu_utils import boozer_saw_interpolant
 
 from firm3d.catapult.tracing import trace_particles_boozer_gpu
+from firm3d.catapult.utils import boozer_saw_interpolant
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
