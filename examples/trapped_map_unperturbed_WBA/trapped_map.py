@@ -22,9 +22,9 @@ mass = ALPHA_PARTICLE_MASS
 Ekin = FUSION_ALPHA_PARTICLE_ENERGY
 
 resolution = 48  # Resolution for field interpolation
-neta_poinc = 5  # Number of eta initial conditions for poincare
+neta_poinc = 10  # Number of eta initial conditions for poincare
 ns_poinc = 120  # Number of s initial conditions for poincare
-Nmaps = 1500  # Number of Poincare return maps to compute
+Nmaps = 2000  # Number of Poincare return maps to compute
 ns_interp = resolution  # number of radial grid points for interpolation
 ntheta_interp = resolution  # number of poloidal grid points for interpolation
 nzeta_interp = resolution  # number of toroidal grid points for interpolation
