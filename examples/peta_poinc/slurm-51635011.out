@@ -1,0 +1,17 @@
+Phin=-2	Phim=-1 	 omega=133000.0
+Traceback (most recent call last):
+  File "/pscratch/sd/a/alachman/simsopt_installs/equilibrium_maps/firm3d/examples/peta_poinc/run.py", line 165, in <module>
+    poinc_pert = PassingPerturbedPetaPoincare(
+        saw,
+    ...<14 lines>...
+        solver_options={'axis':0}
+    )
+  File "/pscratch/sd/a/alachman/simsopt_installs/equilibrium_maps/firm3d/src/firm3d/field/trajectory_helpers.py", line 7224, in __init__
+    ) = self.compute_passing_map()
+        ~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/pscratch/sd/a/alachman/simsopt_installs/equilibrium_maps/firm3d/src/firm3d/field/trajectory_helpers.py", line 7510, in compute_passing_map
+    vpars_traj = [tr[2][0]]
+                  ~~~~~^^^
+IndexError: invalid index to scalar variable.
+srun: error: nid006281: task 0: Exited with exit code 1
+srun: Terminating StepId=51635011.0

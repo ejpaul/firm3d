@@ -1,0 +1,8 @@
+Phin=-2	Phim=-1 	 omega=133000.0
+Traceback (most recent call last):
+  File "/pscratch/sd/a/alachman/simsopt_installs/equilibrium_maps/firm3d/examples/peta_poinc/run.py", line 146, in <module>
+    vpar = sign * v0 * np.sqrt(1 - lam * modB)  # Parallel velocity
+           ^^^^
+NameError: name 'sign' is not defined
+srun: error: nid006312: task 0: Exited with exit code 1
+srun: Terminating StepId=51634437.0

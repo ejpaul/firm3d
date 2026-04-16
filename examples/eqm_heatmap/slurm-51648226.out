@@ -1,0 +1,516 @@
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fd51f93db50>
+self.comm.rank=0 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fa361b19af0>
+self.comm.rank=1 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f2416905af0>
+self.comm.rank=128 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f3ab419daf0>
+self.comm.rank=2 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fd509849af0>
+self.comm.rank=129 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fc2110d1af0>
+self.comm.rank=5 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f3c4ce3daf0>
+self.comm.rank=130 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f31f4e49af0>
+self.comm.rank=7 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7ff25b409af0>
+self.comm.rank=133 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f112bef9af0>
+self.comm.rank=8 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f07c52b9af0>
+self.comm.rank=134 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f308a96daf0>
+self.comm.rank=10 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f2b4f5b5af0>
+self.comm.rank=135 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f2a7ba45af0>
+self.comm.rank=11 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f143178daf0>
+self.comm.rank=136 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f5be789daf0>
+self.comm.rank=13 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f440abc9af0>
+self.comm.rank=139 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f2228a39af0>
+self.comm.rank=14 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f4ff65d5af0>
+self.comm.rank=141 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f83cceb5af0>
+self.comm.rank=16 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f663d735af0>
+self.comm.rank=143 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fbee01c9af0>
+self.comm.rank=17 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f70eb235af0>
+self.comm.rank=144 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fac069f9af0>
+self.comm.rank=19 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f74fca39af0>
+self.comm.rank=145 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fb3fb0e1af0>
+self.comm.rank=20 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f1a476e5af0>
+self.comm.rank=147 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f7c49519af0>
+self.comm.rank=21 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f14a68bdaf0>
+self.comm.rank=148 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f1cbd125af0>
+self.comm.rank=22 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f42b9c55af0>
+self.comm.rank=150 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f16dbf09af0>
+self.comm.rank=23 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f1aa32edaf0>
+self.comm.rank=151 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fc288849af0>
+self.comm.rank=25 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f3499de9af0>
+self.comm.rank=152 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f1b8a825af0>
+self.comm.rank=26 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f85a6919af0>
+self.comm.rank=153 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f0b6cbc1af0>
+self.comm.rank=27 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f526c1c1af0>
+self.comm.rank=155 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f6cad371af0>
+self.comm.rank=29 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f92e5d15af0>
+self.comm.rank=157 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f33b9e05af0>
+self.comm.rank=32 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f1644721af0>
+self.comm.rank=161 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fe5c3e05af0>
+self.comm.rank=33 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f3bd49b1af0>
+self.comm.rank=163 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fd0cdfc1af0>
+self.comm.rank=35 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fcf27299af0>
+self.comm.rank=164 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f50d8945af0>
+self.comm.rank=36 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f29ffe39af0>
+self.comm.rank=167 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fd8948fdaf0>
+self.comm.rank=37 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f9b3f3c1af0>
+self.comm.rank=170 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f8d53355af0>
+self.comm.rank=38 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7feb53cc9af0>
+self.comm.rank=172 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f946ae45af0>
+self.comm.rank=39 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f76f6979af0>
+self.comm.rank=173 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fd019c5daf0>
+self.comm.rank=40 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f806ec35af0>
+self.comm.rank=175 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f48749f9af0>
+self.comm.rank=41 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f41a6cc5af0>
+self.comm.rank=176 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f0fb8ac9af0>
+self.comm.rank=42 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f58486f5af0>
+self.comm.rank=178 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7ff665f6daf0>
+self.comm.rank=44 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7efc9f789af0>
+self.comm.rank=179 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fb54c919af0>
+self.comm.rank=45 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f1ea1d4daf0>
+self.comm.rank=182 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7eff7849daf0>
+self.comm.rank=46 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f15ec19daf0>
+self.comm.rank=183 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fbc3d91daf0>
+self.comm.rank=47 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f1d15dbdaf0>
+self.comm.rank=184 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f7b3c545af0>
+self.comm.rank=48 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f0671acdaf0>
+self.comm.rank=189 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f5797305af0>
+self.comm.rank=50 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fa5c48a1af0>
+self.comm.rank=191 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7ff186ff1af0>
+self.comm.rank=51 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fa768eddaf0>
+self.comm.rank=192 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f474f145af0>
+self.comm.rank=52 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f9d8d3b9af0>
+self.comm.rank=193 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f7888519af0>
+self.comm.rank=54 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f177d919af0>
+self.comm.rank=194 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f5a254bdaf0>
+self.comm.rank=56 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f8164dbdaf0>
+self.comm.rank=195 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fea96705af0>
+self.comm.rank=60 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f4efcfa1af0>
+self.comm.rank=196 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f4b7f031af0>
+self.comm.rank=61 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f5857881af0>
+self.comm.rank=198 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f60cbe41af0>
+self.comm.rank=63 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7febc2c39af0>
+self.comm.rank=199 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f5749891af0>
+self.comm.rank=64 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f3fe9229af0>
+self.comm.rank=201 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7ff507a9daf0>
+self.comm.rank=66 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f22d9061af0>
+self.comm.rank=203 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fae8f149af0>
+self.comm.rank=67 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f6d493bdaf0>
+self.comm.rank=207 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f416e7b1af0>
+self.comm.rank=69 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fb4d3d89af0>
+self.comm.rank=208 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f92e1cd9af0>
+self.comm.rank=70 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f9ffff95af0>
+self.comm.rank=210 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f81044fdaf0>
+self.comm.rank=72 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f40ff739af0>
+self.comm.rank=211 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fa72cb31af0>
+self.comm.rank=73 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f8ca8f29af0>
+self.comm.rank=213 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f88135f1af0>
+self.comm.rank=75 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f1d8f0a9af0>
+self.comm.rank=214 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fc424039af0>
+self.comm.rank=77 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f1aba175af0>
+self.comm.rank=216 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f0338e91af0>
+self.comm.rank=78 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7febcbcf1af0>
+self.comm.rank=217 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f39bd8d9af0>
+self.comm.rank=79 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fbb2c1e5af0>
+self.comm.rank=219 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f0296435af0>
+self.comm.rank=80 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f86631f1af0>
+self.comm.rank=220 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7efc52775af0>
+self.comm.rank=82 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f4391821af0>
+self.comm.rank=222 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f1a8897daf0>
+self.comm.rank=83 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fd3f169daf0>
+self.comm.rank=223 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f97cffe9af0>
+self.comm.rank=85 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f4826b49af0>
+self.comm.rank=224 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f9e733cdaf0>
+self.comm.rank=86 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7ff351c91af0>
+self.comm.rank=225 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fd8b513daf0>
+self.comm.rank=88 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f5cc4725af0>
+self.comm.rank=226 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fabe661daf0>
+self.comm.rank=89 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f243899daf0>
+self.comm.rank=229 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fe38f8b9af0>
+self.comm.rank=91 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fa609e79af0>
+self.comm.rank=230 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f1e3e051af0>
+self.comm.rank=94 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f2c625bdaf0>
+self.comm.rank=232 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fee8db51af0>
+self.comm.rank=95 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f931f049af0>
+self.comm.rank=233 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fb639de5af0>
+self.comm.rank=97 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f02e57bdaf0>
+self.comm.rank=234 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fb5298cdaf0>
+self.comm.rank=98 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fe87224daf0>
+self.comm.rank=235 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f71d7c09af0>
+self.comm.rank=100 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fa06c41daf0>
+self.comm.rank=236 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f58fb68daf0>
+self.comm.rank=102 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fe69326daf0>
+self.comm.rank=237 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f39f0405af0>
+self.comm.rank=104 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fb50ba9daf0>
+self.comm.rank=238 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f5884321af0>
+self.comm.rank=105 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f2f42699af0>
+self.comm.rank=240 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f96fba99af0>
+self.comm.rank=107 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f50e7c89af0>
+self.comm.rank=241 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fc393e95af0>
+self.comm.rank=108 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f64ac869af0>
+self.comm.rank=242 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fad97175af0>
+self.comm.rank=109 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f17696a1af0>
+self.comm.rank=244 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fa05043daf0>
+self.comm.rank=110 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7febfa549af0>
+self.comm.rank=245 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f36f9245af0>
+self.comm.rank=111 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f070aea1af0>
+self.comm.rank=247 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7ff2d2b89af0>
+self.comm.rank=112 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f6ef9009af0>
+self.comm.rank=248 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f3801889af0>
+self.comm.rank=113 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fbe001c5af0>
+self.comm.rank=250 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f028f4bdaf0>
+self.comm.rank=114 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f02acab5af0>
+self.comm.rank=251 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7efebe741af0>
+self.comm.rank=117 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f0b6faa1af0>
+self.comm.rank=253 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fd8bd835af0>
+self.comm.rank=118 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fcb90dbdaf0>
+self.comm.rank=254 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fe10e9a1af0>
+self.comm.rank=119 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f9f11639af0>
+self.comm.rank=138 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f3e95455af0>
+self.comm.rank=120 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fad3f9f9af0>
+self.comm.rank=142 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f96b316daf0>
+self.comm.rank=122 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f8aaf9e5af0>
+self.comm.rank=154 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f92513b1af0>
+self.comm.rank=125 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f6b7cc51af0>
+self.comm.rank=180 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7fef6e3bdaf0>
+self.comm.rank=126 done tracing particles
+Running with 256 MPI processes.
+comm=<mpi4py.MPI.Intracomm object at 0x7f818f239af0>
+self.comm.rank=4 done tracing particles
+[2026-04-16T19:00:32.430] error: *** STEP 51648226.0 ON nid005126 CANCELLED AT 2026-04-16T19:00:32 DUE TO TIME LIMIT ***
+[2026-04-16T19:00:32.430] error: *** JOB 51648226 ON nid005126 CANCELLED AT 2026-04-16T19:00:32 DUE TO TIME LIMIT ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
