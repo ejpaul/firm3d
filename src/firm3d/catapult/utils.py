@@ -182,7 +182,7 @@ def boozer_saw_interpolant(field, nfp, ns, ntheta, nzeta):
 
 def cartesian_interpolant(field, surface_classifier):
     r"""
-    Set up a Boozer vacuum interpolant for tracing.
+    Set up a Cartesian vacuum interpolant for tracing.
 
     Args:
         field: MagneticField object
@@ -243,10 +243,6 @@ def cartesian_interpolant(field, surface_classifier):
                     + cell_z
                 )
 
-                # if cell_r == 24 and cell_phi == 22 and cell_z == 20:
-                #     print(row_start)
-
-                assert 3 * cell_r + i < r_range[2]
                 # iterate over spline locations for this cell
                 for i in range(4):
                     for j in range(4):

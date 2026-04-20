@@ -151,6 +151,19 @@ def trace_particles_cartesian_gpu(
     tol,
     dt=None,
 ):
+    """
+    Trace particles in Cartesian coordinates using CATAPULT
+    field: a magnetic field object representing the field in Cartesian coordinates
+    surface_classifier: a simsopt surface classifier object for detecting a surface
+    xyz_inits: initial conditions for particles in (x, y, z) coordinates
+    parallel_speeds: initial parallel speeds of the particles
+    tmax: maximum time to trace particles
+    mass: mass of each particle
+    charge: charge of each particle
+    vtotal: total velocity of each particle
+    tol: tolerance for the ODE solver
+    dt: the initial time step size for the solver (optional)
+    """
     nparticles = xyz_inits.shape[0]
     r_range, phi_range, z_range, quad_info = cartesian_interpolant(
         field, surface_classifier
