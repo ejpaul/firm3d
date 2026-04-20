@@ -11,7 +11,7 @@ from firm3d.util.constants import (
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
-from firm3d.util.functions import proc0_print, setup_logging
+from firm3d.util.functions import in_github_actions, proc0_print, setup_logging
 from firm3d.util.mpi import comm_size, comm_world, verbose
 
 boozmn_filename = "../inputs/boozmn_nfp3_rescaled.nc"
@@ -20,15 +20,15 @@ charge = ALPHA_PARTICLE_CHARGE
 mass = ALPHA_PARTICLE_MASS
 Ekin = FUSION_ALPHA_PARTICLE_ENERGY
 
-resolution = 48  # Resolution for field interpolation
+resolution = 10 if in_github_actions else 48  # Resolution for field interpolation
 neta_poinc = 5  # Number of eta initial conditions for poincare
-ns_poinc = 120  # Number of s initial conditions for poincare
-Nmaps = 1000  # Number of Poincare return maps to compute
+ns_poinc = 5 if in_github_actions else 120  # Number of s initial conditions
+Nmaps = 5 if in_github_actions else 1000  # Number of Poincare return maps to compute
 ns_interp = resolution  # number of radial grid points for interpolation
 ntheta_interp = resolution  # number of poloidal grid points for interpolation
 nzeta_interp = resolution  # number of toroidal grid points for interpolation
 order = 3  # order for interpolation
-tol = 1e-8  # Tolerance for ODE solver
+tol = 1e-4 if in_github_actions else 1e-8  # Tolerance for ODE solver
 s_mirror = 0.5  # flux surface for mirroring
 theta_mirror = 0  # poloidal angle for mirroring
 helicity_M = 0  # helicity of field strength contours
@@ -55,12 +55,12 @@ poinc = TrappedPoincare(
     field,
     helicity_M,
     helicity_N,
-    s_mirror,
-    theta_mirror,
-    zeta_mirror,
     mass,
     charge,
     Ekin,
+    s_mirror,
+    theta_mirror,
+    zeta_mirror,
     ns_poinc=ns_poinc,
     neta_poinc=neta_poinc,
     Nmaps=Nmaps,
@@ -69,7 +69,7 @@ poinc = TrappedPoincare(
     tmax=1e-4,
 )
 
-if verbose:
+if verbose and not in_github_actions:
     poinc.plot_poincare(filename="trapped_map_QI.pdf")
 
 time2 = time.time()

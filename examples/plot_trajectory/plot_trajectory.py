@@ -18,17 +18,17 @@ from firm3d.util.constants import (
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
-from firm3d.util.functions import proc0_print, setup_logging
+from firm3d.util.functions import in_github_actions, proc0_print, setup_logging
 from firm3d.util.mpi import comm_size, comm_world, verbose
 
 time1 = time.time()
 
 boozmn_filename = "../inputs/boozmn_aten_rescaled.nc"
 order = 3  # Order for radial interpolation
-reltol = 1e-8  # Relative tolerance for the ODE solver
-abstol = 1e-8  # Absolute tolerance for the ODE solver
+reltol = 1e-4 if in_github_actions else 1e-8  # Relative tolerance for the ODE solver
+abstol = 1e-4 if in_github_actions else 1e-8  # Absolute tolerance for the ODE solver
 tmax = 1e-4  # Time for integration
-resolution = 48  # Resolution for field interpolation
+resolution = 10 if in_github_actions else 48  # Resolution for field interpolation
 degree = 3  # Degree for 3d interpolation
 ns_interp = resolution
 ntheta_interp = resolution
@@ -85,13 +85,13 @@ proc0_print("Elapsed time for tracing: ", time2 - time1)
 
 ax = plot_trajectory_overhead_cyl(traj_booz[0], field)
 
-if verbose:
+if verbose and not in_github_actions:
     fig = ax.figure
     fig.savefig("trajectory_overhead_cyl.png", dpi=300, bbox_inches="tight")
 
 ax = plot_trajectory_poloidal(traj_booz[0], helicity_N=nfp)
 
-if verbose:
+if verbose and not in_github_actions:
     fig = ax.figure
     fig.savefig("trajectory_poloidal.png", dpi=300, bbox_inches="tight")
 

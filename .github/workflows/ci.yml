@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, gpu]
   pull_request:
     branches: [ main, master ]
 
@@ -77,6 +77,53 @@ jobs:
         file: ./coverage.xml
         flags: unittests
         name: codecov-umbrella
+
+  examples:
+    name: Examples
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          cmake ninja-build libboost-all-dev libopenmpi-dev \
+          libnetcdf-dev libhdf5-dev libnetcdf-c++4-dev libgsl-dev pkg-config
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install netCDF4
+        pip install -e ".[dev]"
+      env:
+        NETCDF_DIR: /usr
+        HDF5_DIR: /usr
+        GSL_DIR: /usr
+
+    - name: Run examples
+      run: |
+        (cd examples/fusion_distribution && python fusion_distribution.py)
+        (cd examples/fusion_distribution_perturbed && python fusion_distribution_perturbed.py)
+        (cd examples/uniform_surf_distribution && python uniform_surf_distribution.py)
+        (cd examples/uniform_vol_distribution && python uniform_vol_distribution.py)
+        (cd examples/plot_trajectory && python plot_trajectory.py)
+        (cd examples/orbit_classification && python fusion_distribution_classification.py)
+        (cd examples/passing_map_unperturbed && python passing_map.py)
+        (cd examples/passing_map_perturbed_QA && python passing_map_perturbed.py)
+        (cd examples/passing_map_perturbed_QA_WBA && python passing_map_perturbed.py)
+        (cd examples/passing_map_perturbed_QH && python passing_map_perturbed.py)
+        (cd examples/trapped_map && python trapped_map.py)
+        (cd examples/trapped_map_QI && python trapped_map_QI.py)
+        (cd examples/passing_frequencies && python passing_frequencies.py)
+        (cd examples/trapped_frequencies && python trapped_frequencies.py)
+        (cd examples/tracing_with_AE && python tracing_with_AE.py)
+        (cd examples/tracing_with_FAR3D_IVP && python tracing_with_FAR3D_AE.py)
 
   docs:
     name: Build Documentation

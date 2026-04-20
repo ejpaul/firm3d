@@ -480,7 +480,7 @@ class TestingFiniteBeta(unittest.TestCase):
                     iota=iota,
                 )
                 opt = minimize(theta_diff_bound, 0)
-                thetas_vmec[isurf] = opt.x
+                thetas_vmec[isurf] = opt.x[0]
 
             # Compute Z at theta_b = 0, zeta_b = pi/2  and compare with vmec result
             Z0pi = np.sum(

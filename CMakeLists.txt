@@ -2,6 +2,22 @@ cmake_minimum_required(VERSION 3.15)
 set(CMAKE_CXX_COMPILER_WORKS 1)
 project(firm3dpp)
 
+include(CheckLanguage)
+check_language(CUDA)
+
+if(CMAKE_CUDA_COMPILER)
+    enable_language(CUDA)
+    find_package(CUDAToolkit)
+    add_definitions(-DUSE_CUDA)
+
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=native")
+    set(CUDA_TARGETS  src/firm3dpp/cuda_kernel.cu src/firm3dpp/cuda_wrapper.cpp)
+    message(STATUS "CUDA found. GPU bindings will be compiled.")
+else()
+    set(CUDA_TARGETS) 
+    message(STATUS "CUDA not found. GPU bindings will be skipped.")
+endif()
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -169,6 +185,7 @@ pybind11_add_module(${PROJECT_NAME}
     src/firm3dpp/tracing.cpp
     src/firm3dpp/python_boozermagneticfield.cpp
     src/firm3dpp/boozerradialinterpolant.cpp
+    ${CUDA_TARGETS}
     ${GSL_TARGETS}
 )
 
