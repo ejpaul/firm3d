@@ -1113,6 +1113,7 @@ class BoozerSplineField(BoozerMagneticField):
             # G and I are evaluated on the s_half grid
             if self.field_type == "vac":
                 self.G_grid = np.ones(self.bx.ns_b) * np.mean(self.bx.Boozer_G_all)
+                self.I_grid = np.zeros(self.bx.ns_b)
             else:
                 self.G_grid = np.zeros(self.bx.ns_b)
                 self.G_grid = self.bx.Boozer_G_all
