@@ -43,12 +43,6 @@ except ImportError:
 
 
 
-print(f"Running with {comm_size} MPI processes.")
-print(f"{comm=}")
-# Setup logging to redirect output to file
-#setup_logging(f"stdout_trapped_map_{comm_size}.txt")
-
-
 boozmn_filename = "../inputs/boozmn_beta2.5_QA.nc"
 
 mpl.rcParams["font.size"] = 14  # base font size
@@ -89,16 +83,9 @@ field = InterpolatedBoozerField(
 
 # saw = ShearAlfvenHarmonic(Phihat, Phim=Phim, Phin=Phin,omega=omega, B0=field, phase=0)
 sign_vpar = 1  # 1 for co-passing, -1 for counter-passing
-p0_int = 0.5
 mass = ALPHA_PARTICLE_MASS
 charge = ALPHA_PARTICLE_CHARGE
 Ekin = FUSION_ALPHA_PARTICLE_ENERGY
-vtotal = np.sqrt(2 * Ekin / mass)
-nchi_poinc = 5
-ns_poinc = 200
-Nmaps = 1500
-p0 = np.zeros((1, 3))
-p0[0, 0] = p0_int  # s
 
 
 heat_map = MapEquilibrium(
@@ -111,14 +98,13 @@ heat_map = MapEquilibrium(
     helicity_M=helicity_M,
     helicity_Mp=helicity_Mp,
     helicity_Np=helicity_Np,
-    ns_points=20,
-    particles_per_surface=10,
-    nlambda_points=20,
+    ns_points=50,
+    particles_per_surface=15,
+    nlambda_points=50,
     comm=comm,
-    savedata=(False, "DATA_BETA/"),
+    savedata=(True, ""),
 )
 
-if comm is not None: comm.Barrier()
 if verbose:
-    heat_map.plot_surfaces(savepath="figs/full_field_QS.png")
+    heat_map.plot_surfaces(savepath="full_field_QS.png")
     plt.clf()
