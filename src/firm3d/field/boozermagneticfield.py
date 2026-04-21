@@ -4,11 +4,15 @@ from typing import Union
 
 import numpy as np
 from booz_xform import Booz_xform
-from scipy.interpolate import make_interp_spline
+from scipy.interpolate import CubicSpline, make_interp_spline
 
 import firm3dpp as sopp
 
-from .._core.util import align_and_pad, allocate_aligned_and_padded_array
+from .._core.util import (
+    align_and_pad,
+    allocate_aligned_and_padded_array,
+    parallel_loop_bounds,
+)
 from ..saw.ae3d import AE3DEigenvector
 from ..saw.far3d import FAR3DEigenvector
 from ..util.constants import (
@@ -22,10 +26,12 @@ __all__ = [
     "BoozerMagneticField",
     "BoozerAnalytic",
     "BoozerRadialInterpolant",
+    "BoozerSplineField",
     "InterpolatedBoozerField",
     "ShearAlfvenWave",
     "ShearAlfvenHarmonic",
     "ShearAlfvenWavesSuperposition",
+    "InterpolatedShearAlfvenWave",
 ]
 
 try:
@@ -887,6 +893,1006 @@ class BoozerAnalytic(BoozerMagneticField):
         psi = s * self.psi0
         r = np.sqrt(np.abs(2 * psi / self.Bbar))
         dKdzeta[:, 0] = -self.N * self.K1 * r * np.cos(thetas - self.N * zetas)
+
+
+class BoozerSplineField(BoozerMagneticField):
+    def __init__(
+        self,
+        equil,
+        mpol=32,
+        ntor=32,
+        ntheta=48,
+        nzeta=48,
+        helicity_M=None,
+        helicity_N=None,
+        enforce_vacuum=False,
+        no_K=True,
+        write_boozmn=True,
+        boozmn_name="boozmn.nc",
+        field_type=None,
+        comm=None,
+        spline_deriv=True,
+    ):
+        r"""
+        Initialize a BoozerSplineField object. The field is interpolated on the
+        VMEC half grid, with the number of angular grid points specified by ntheta
+        and nzeta, using :mod:`ndsplines` for 3D fields and
+        :class:`scipy.interpolate.CubicSpline` for 1D flux functions.
+
+        Args:
+            equil: instance of :class:`Booz_xform` or string containing the
+                filename of a boozmn_*.nc file (produced with booz_xform) or
+                wout_*.nc file (produced with VMEC). If a :class:`Booz_xform`
+                instance or boozmn_*.nc file is passed, the `compute_surfs` needs
+                to include all of the grid points in the half-radius grid of the
+                corresponding Vmec equilibrium. Otherwise, a ValueError is raised.
+            mpol: (int) number of poloidal mode numbers for BOOZXFORM (defaults to
+                32). Only used if a wout_*.nc file is passed.
+            ntor: (int) number of toroidal mode numbers for BOOZXFORM (defaults to
+                32). Only used if a wout_*.nc file is passed.
+            ntheta: (int) number of poloidal grid points.
+            nzeta: (int) number of toroidal grid points.
+            helicity_M : Poloidal helicity coefficient for enforcing field
+                quasi-symmetry If specified, then the non-symmetric Fourier
+                harmonics of :math:`B` and :math:`K` are filtered out, so the
+                field is a function of `chi = helicity_M*theta - helicity_N*zeta`.
+                If helicity is unspecified, all harmonics are kept.
+                (defaults to ``None``)
+            helicity_N : Toroidal helicity coefficient for enforcing field
+                quasi-symmetry If specified, then the non-symmetric Fourier
+                harmonics of :math:`B` and :math:`K` are filtered out, so the
+                field is a function of `chi = helicity_M*theta - helicity_N*zeta`.
+                If helicity is unspecified, all harmonics are kept.
+            enforce_vacuum: If True, a vacuum field is assumed, :math:`G` is
+                set to its mean value, :math:`I = 0`, and :math:`K = 0`.
+            no_K: (bool) If ``True``, the Boozer :math:`K` will not be computed or
+                interpolated.
+            write_boozmn: (bool) If ``True``, save the booz_xform transformation in
+                a filename specified by ``boozmn_name``. (defaults to ``True``)
+            boozmn_name: (string) Filename to save booz_xform transformation if
+                ``write_boozmn`` is ``True``.
+            field_type: A string identifying additional assumptions made on the
+                magnetic field. Can be
+                ``'vac'``, ``'nok'``, or ``''``.  By default, this is determined
+                from the options ``enforce_vacuum``
+                and ``no_K``.
+            comm: A MPI communicator to parallelize over, from which
+                the worker groups will be used for spline calculations. If ``comm`` is
+                ``None``, each MPI process will compute splines independently.
+            spline_deriv: (bool) If ``True``, field derivatives will be evaluated by
+                differentiating the spline field. Otherwise, Fourier derivatives are
+                evaluated for the angles, and centered differences are used for the
+                radial derivative. While ``False`` is more accurate, ``True`` is faster
+                due to a reduction in the number of spline evaluations.
+
+        Returns:
+            :class:`BoozerSplineField` object.
+        """
+
+        self.comm = comm
+        self.verbose = self.comm is None or self.comm.rank == 0
+        self.spline_deriv = spline_deriv
+
+        if field_type is not None:
+            field_type = field_type.lower()
+            assert field_type in ["vac", "nok", ""]
+            if self.verbose:
+                if enforce_vacuum != (field_type == "vac"):
+                    warnings.warn(
+                        f"Prescribed field_type is inconsistent with enforce_vacuum. "
+                        f"Proceeding with field_type={field_type}.",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                if no_K != (field_type == "nok"):
+                    warnings.warn(
+                        f"Prescribed field_type is inconsistent with no_K. "
+                        f"Proceeding with field_type={field_type}.",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+            self.field_type = field_type
+        else:
+            if enforce_vacuum:
+                self.field_type = "vac"
+            elif no_K:
+                self.field_type = "nok"
+            else:
+                self.field_type = ""
+
+        if isinstance(equil, str):
+            if self.verbose:
+                basename = os.path.basename(equil)
+                if basename[:4] == "wout":
+                    booz = Booz_xform()
+                    booz.read_wout(equil, True)
+                    booz.verbose = False
+                    booz.mboz = mpol
+                    booz.nboz = ntor
+                    booz.run()
+                    if write_boozmn:
+                        booz.write_boozmn(boozmn_name)
+                    self.bx = booz
+                elif basename[:4] == "booz":
+                    booz = Booz_xform()
+                    booz.verbose = False
+                    booz.read_boozmn(equil)
+                    self.bx = booz
+                    # Check if grid does not have correct size
+                    if self.bx.ns_in != len(self.bx.s_b):
+                        raise ValueError("booz filename has incorrect s grid!")
+                    # Check if grid does not match Vmec half grid
+                    s_in_full = np.linspace(0, 1, self.bx.ns_in + 1)
+                    s_in = 0.5 * (s_in_full[1::] + s_in_full[0:-1])
+                    if not np.allclose(s_in, self.bx.s_b):
+                        raise ValueError("booz filename has incorrect s grid!")
+                else:
+                    raise ValueError("Invalid filename")
+        elif isinstance(equil, Booz_xform):
+            if self.verbose:
+                self.bx = equil
+        else:
+            raise ValueError("Incorrect equil type passed to BoozerRadialInterpolant.")
+
+        self.helicity_M = helicity_M
+        self.helicity_N = helicity_N
+        self.enforce_qs = False
+        self.enforce_vacuum = enforce_vacuum
+        self.no_K = no_K
+        if (helicity_M is not None) and (helicity_N is not None):
+            if helicity_M % 1 != 0:
+                raise ValueError(
+                    "helicity_M must be an integer for field to be 2π-periodic "
+                    "in Boozer poloidal angle."
+                )
+
+            if helicity_N % 1 != 0:
+                raise ValueError(
+                    "helicity_N must be an integer for field to be 2π-periodic "
+                    "in Boozer toroidal angle."
+                )
+
+            self.helicity_M = helicity_M
+            self.helicity_N = helicity_N
+            self.enforce_qs = True
+        elif (helicity_M is not None) or (helicity_N is not None):
+            raise ValueError(
+                "Both helicity_M and helicity_N must be specified when "
+                "enforcing field symmetry."
+            )
+
+        # Only proc0 reads from file
+        if self.verbose:
+            self.asym = self.bx.asym  # Bool for stellarator asymmetry
+            self.psi0 = -self.bx.phi[-1] / (
+                2 * np.pi
+            )  # Sign flip to account for VMEC convention.
+            # See https://terpconnect.umd.edu/~mattland/assets/notes/vmec_signs.pdf
+            # for phiedge definition
+            self.nfp = self.bx.nfp
+            self.mpol = self.bx.mboz
+            self.ntor = self.bx.nboz
+            self.s_half_ext = np.zeros(self.bx.ns_b + 2)
+            self.s_half_ext[1:-1] = self.bx.s_b
+            self.s_half_ext[-1] = 1
+            self.s_half = self.bx.s_b
+            self.ns_half = self.bx.ns_b
+
+            self.xm_b = self.bx.xm_b
+            self.xn_b = self.bx.xn_b
+            self.ns_b = self.bx.ns_b
+            self.s_b = self.bx.s_b
+            self.bmnc_b = self.bx.bmnc_b
+            self.bmns_b = self.bx.bmns_b
+            # Define quantities on full grid
+
+            self.ds = self.bx.s_b[1] - self.bx.s_b[0]
+
+            self.s_full = np.linspace(0, 1, self.bx.ns_b + 1)
+            self.s_full_reduced = self.s_full[1:-1]
+            self.ds = self.s_full[1] - self.s_full[0]
+
+            # Defined on full grid
+            self.psip_grid = self.bx.chi / (2 * np.pi)
+
+            # Evaluate iota on s_half_ext grid
+            self.iota_grid = np.zeros(self.bx.ns_b)
+            self.iota_grid = self.bx.iota
+
+            sign_psip = np.sign(
+                ((self.psip_grid[1] - self.psip_grid[0]) / self.psi0)
+                / np.sign(self.iota_grid[1])
+            )
+            self.psip_grid *= sign_psip
+
+            # dGds and dIds are evaluated on the full grid
+            if not self.spline_deriv:
+                self.dGds_grid = np.zeros((self.ns_b - 1,))
+                self.dIds_grid = np.zeros((self.ns_b - 1,))
+
+            # G and I are evaluated on the s_half grid
+            if self.field_type == "vac":
+                self.G_grid = np.ones(self.bx.ns_b) * np.mean(self.bx.Boozer_G_all)
+                self.I_grid = np.zeros(self.bx.ns_b)
+            else:
+                self.G_grid = np.zeros(self.bx.ns_b)
+                self.G_grid = self.bx.Boozer_G_all
+                self.I_grid = self.bx.Boozer_I_all
+                if not self.spline_deriv:
+                    self.dGds_grid = (
+                        self.bx.Boozer_G_all[1::] - self.bx.Boozer_G_all[0:-1]
+                    ) / self.ds
+                    self.dIds_grid = (
+                        self.bx.Boozer_I_all[1::] - self.bx.Boozer_I_all[0:-1]
+                    ) / self.ds
+
+            bmnc_filtered = self.bx.bmnc_b.copy()
+            if self.enforce_qs:
+                bmnc_filtered[
+                    self.helicity_M * self.xn_b != self.helicity_N * self.xm_b, :
+                ] = 0
+            if self.asym:
+                bmns_filtered = self.bx.bmns_b.copy()
+                if self.enforce_qs:
+                    bmns_filtered[
+                        self.helicity_M * self.xn_b != self.helicity_N * self.xm_b, :
+                    ] = 0
+
+            # Evaluate quantities on the s_half grid
+            self.bmnc = bmnc_filtered
+            self.numns = self.bx.numns_b
+            self.rmnc = self.bx.rmnc_b
+            self.zmns = self.bx.zmns_b
+
+            # Evaluate derivatives on the full grid
+            if not self.spline_deriv:
+                self.diotads_grid = (self.bx.iota[1::] - self.bx.iota[0:-1]) / self.ds
+                self.dbmncds = (
+                    self.bx.bmnc_b[:, 1::] - self.bx.bmnc_b[:, 0:-1]
+                ) / self.ds
+                self.dnumnsds = (
+                    self.bx.numns_b[:, 1::] - self.bx.numns_b[:, 0:-1]
+                ) / self.ds
+                self.drmncds = (
+                    self.bx.rmnc_b[:, 1::] - self.bx.rmnc_b[:, 0:-1]
+                ) / self.ds
+                self.dzmnsds = (
+                    self.bx.zmns_b[:, 1::] - self.bx.zmns_b[:, 0:-1]
+                ) / self.ds
+
+            if self.asym:
+                self.bmns = bmns_filtered
+                self.numnc = self.bx.numnc_b
+                self.rmns = self.bx.rmns_b
+                self.zmnc = self.bx.zmnc_b
+
+                if not self.spline_deriv:
+                    self.dbmnsds = (
+                        self.bx.bmns_b[:, 1::] - self.bx.bmns_b[:, 0:-1]
+                    ) / self.ds
+                    self.dnumncds = (
+                        self.bx.numnc_b[:, 1::] - self.bx.numnc_b[:, 0:-1]
+                    ) / self.ds
+                    self.drmnsds = (
+                        self.bx.rmns_b[:, 1::] - self.bx.rmns_b[:, 0:-1]
+                    ) / self.ds
+                    self.dzmncds = (
+                        self.bx.zmnc_b[:, 1::] - self.bx.zmnc_b[:, 0:-1]
+                    ) / self.ds
+        else:
+            self.xm_b = None
+            self.xn_b = None
+            self.psi0 = None
+            self.nfp = None
+            self.mpol = None
+            self.ntor = None
+            self.asym = None
+            self.s_half_ext = None
+            self.s_half = None
+            self.s_full_reduced = None
+            self.s_full = None
+            self.ns_half = None
+            self.ns_b = None
+            self.bmnc = None
+            self.rmnc = None
+            self.zmns = None
+            self.numns = None
+            self.G_grid = None
+            self.I_grid = None
+            self.iota_grid = None
+            self.psip_grid = None
+
+            if not self.spline_deriv:
+                self.dbmncds = None
+                self.dnumnsds = None
+                self.drmncds = None
+                self.dzmnsds = None
+                self.diotads_grid = None
+                self.dGds_grid = None
+                self.dIds_grid = None
+            # Initialize asymmetry-related attributes to None for non-proc0 processes
+            # They will be set to actual values after broadcasting from proc0
+            self.bmns = None
+            self.rmns = None
+            self.zmnc = None
+            self.numnc = None
+            if not self.spline_deriv:
+                self.dbmnsds = None
+                self.dnumnsds = None
+                self.drmnsds = None
+                self.dzmncds = None
+        if self.comm is not None:
+            self.xm_b = self.comm.bcast(self.xm_b, root=0)
+            self.xn_b = self.comm.bcast(self.xn_b, root=0)
+            self.psi0 = self.comm.bcast(self.psi0, root=0)
+            self.nfp = self.comm.bcast(self.nfp, root=0)
+            self.mpol = self.comm.bcast(self.mpol, root=0)
+            self.ntor = self.comm.bcast(self.ntor, root=0)
+            self.asym = self.comm.bcast(self.asym, root=0)
+            self.s_half_ext = self.comm.bcast(self.s_half_ext, root=0)
+            self.s_half = self.comm.bcast(self.s_half, root=0)
+            self.s_full = self.comm.bcast(self.s_full, root=0)
+            self.s_full_reduced = self.comm.bcast(self.s_full_reduced, root=0)
+            self.ns_half = self.comm.bcast(self.ns_half, root=0)
+            self.ns_b = self.comm.bcast(self.ns_b, root=0)
+            self.bmnc = self.comm.bcast(self.bmnc, root=0)
+            self.rmnc = self.comm.bcast(self.rmnc, root=0)
+            self.zmns = self.comm.bcast(self.zmns, root=0)
+            self.numns = self.comm.bcast(self.numns, root=0)
+            self.G_grid = self.comm.bcast(self.G_grid, root=0)
+            self.I_grid = self.comm.bcast(self.I_grid, root=0)
+            self.iota_grid = self.comm.bcast(self.iota_grid, root=0)
+            self.psip_grid = self.comm.bcast(self.psip_grid, root=0)
+            if not self.spline_deriv:
+                self.dGds_grid = self.comm.bcast(self.dGds_grid, root=0)
+                self.dIds_grid = self.comm.bcast(self.dIds_grid, root=0)
+                self.diotads_grid = self.comm.bcast(self.diotads_grid, root=0)
+                self.dbmncds = self.comm.bcast(self.dbmncds, root=0)
+                self.dnumnsds = self.comm.bcast(self.dnumnsds, root=0)
+                self.drmncds = self.comm.bcast(self.drmncds, root=0)
+                self.dzmnsds = self.comm.bcast(self.dzmnsds, root=0)
+            if self.asym:
+                self.bmns = self.comm.bcast(self.bmns, root=0)
+                self.rmns = self.comm.bcast(self.rmns, root=0)
+                self.zmnc = self.comm.bcast(self.zmnc, root=0)
+                self.numnc = self.comm.bcast(self.numnc, root=0)
+                if not self.spline_deriv:
+                    self.dbmnsds = self.comm.bcast(self.dbmnsds, root=0)
+                    self.dnumncds = self.comm.bcast(self.dnumncds, root=0)
+                    self.drmnsds = self.comm.bcast(self.drmnsds, root=0)
+                    self.dzmncds = self.comm.bcast(self.dzmncds, root=0)
+        self.ntheta = ntheta
+        self.nzeta = nzeta
+        if self.asym:
+            self.theta_grid = np.linspace(0, 2 * np.pi, ntheta, endpoint=False)
+        else:
+            self.theta_grid = np.linspace(0, np.pi, ntheta, endpoint=False)
+        self.zeta_grid = np.linspace(0, 2 * np.pi / self.nfp, nzeta, endpoint=False)
+
+        # Augment grid in either direction to ensure periodic boundary conditions
+        # np.insert returns a new array, so we must assign the result
+        dtheta = self.theta_grid[1] - self.theta_grid[0]
+        dzeta = self.zeta_grid[1] - self.zeta_grid[0]
+
+        # For theta: grid is [0, π), so add points before 0 and after π
+        # For zeta: grid is [0, 2π/nfp), so add points before 0 and after 2π/nfp
+        theta_max = np.max(self.theta_grid)
+        zeta_max = np.max(self.zeta_grid)
+
+        # Insert boundary points to enforce periodicity
+        self.theta_grid = np.insert(
+            self.theta_grid, len(self.theta_grid), theta_max + dtheta
+        )
+        self.theta_grid = np.insert(
+            self.theta_grid, len(self.theta_grid), theta_max + 2 * dtheta
+        )
+        self.theta_grid = np.insert(
+            self.theta_grid, len(self.theta_grid), theta_max + 3 * dtheta
+        )
+        self.theta_grid = np.insert(self.theta_grid, 0, -dtheta)
+        self.theta_grid = np.insert(self.theta_grid, 0, -2 * dtheta)
+        self.theta_grid = np.insert(self.theta_grid, 0, -3 * dtheta)
+        self.zeta_grid = np.insert(
+            self.zeta_grid, len(self.zeta_grid), zeta_max + dzeta
+        )
+        self.zeta_grid = np.insert(
+            self.zeta_grid, len(self.zeta_grid), zeta_max + 2 * dzeta
+        )
+        self.zeta_grid = np.insert(
+            self.zeta_grid, len(self.zeta_grid), zeta_max + 3 * dzeta
+        )
+        self.zeta_grid = np.insert(self.zeta_grid, 0, -dzeta)
+        self.zeta_grid = np.insert(self.zeta_grid, 0, -2 * dzeta)
+        self.zeta_grid = np.insert(self.zeta_grid, 0, -3 * dzeta)
+
+        self.ntheta_ext = len(self.theta_grid)
+        self.nzeta_ext = len(self.zeta_grid)
+
+        self.theta_grid_2d, self.zeta_grid_2d = np.meshgrid(
+            self.theta_grid, self.zeta_grid, indexing="ij"
+        )
+        self.s_grid_3d, self.theta_grid_3d, self.zeta_grid_3d = np.meshgrid(
+            self.s_full, self.theta_grid, self.zeta_grid, indexing="ij"
+        )
+
+        if not self.asym:
+            self.modB_spline = self.compute_spline(self.bmnc, "even", "half", "modB")
+            if not self.spline_deriv:
+                self.dmodBds_spline = self.compute_spline(
+                    self.dbmncds, "even", "full_reduced", "dmodBds"
+                )
+                self.dmodBdtheta_spline = self.compute_spline(
+                    -self.bmnc * self.xm_b[:, None], "odd", "half", "dmodBdtheta"
+                )
+                self.dmodBdzeta_spline = self.compute_spline(
+                    +self.bmnc * self.xn_b[:, None], "odd", "half", "dmodBdzeta"
+                )
+            self.R_spline = self.compute_spline(self.rmnc, "even", "half", "R")
+            if not self.spline_deriv:
+                self.dRds_spline = self.compute_spline(
+                    self.drmncds, "even", "full_reduced", "dRds"
+                )
+                self.dRdtheta_spline = self.compute_spline(
+                    -self.rmnc * self.xm_b[:, None], "odd", "half", "dRdtheta"
+                )
+                self.dRdzeta_spline = self.compute_spline(
+                    +self.rmnc * self.xn_b[:, None], "odd", "half", "dRdzeta"
+                )
+            self.Z_spline = self.compute_spline(self.zmns, "odd", "half", "Z")
+            if not self.spline_deriv:
+                self.dZds_spline = self.compute_spline(
+                    self.dzmnsds, "odd", "full_reduced", "dZds"
+                )
+                self.dZdtheta_spline = self.compute_spline(
+                    self.zmns * self.xm_b[:, None], "even", "half", "dZdtheta"
+                )
+                self.dZdzeta_spline = self.compute_spline(
+                    -self.zmns * self.xn_b[:, None], "even", "half", "dZdzeta"
+                )
+            self.nu_spline = self.compute_spline(self.numns, "odd", "half", "nu")
+            if not self.spline_deriv:
+                self.dnuds_spline = self.compute_spline(
+                    self.dnumnsds, "odd", "full_reduced", "dnuds"
+                )
+                self.dnudtheta_spline = self.compute_spline(
+                    self.numns * self.xm_b[:, None], "even", "half", "dnudtheta"
+                )
+                self.dnudzeta_spline = self.compute_spline(
+                    -self.numns * self.xn_b[:, None], "even", "half", "dnudzeta"
+                )
+        else:
+            self.modB_spline = self.compute_spline(
+                (self.bmnc, self.bmns), "even_odd", "half", "modB"
+            )
+            if not self.spline_deriv:
+                self.dmodBds_spline = self.compute_spline(
+                    (self.dbmncds, self.dbmnsds), "even_odd", "full_reduced", "dmodBds"
+                )
+                self.dmodBdtheta_spline = self.compute_spline(
+                    (self.bmns * self.xm_b[:, None], -self.bmnc * self.xm_b[:, None]),
+                    "even_odd",
+                    "half",
+                    "dmodBdtheta",
+                )
+                self.dmodBdzeta_spline = self.compute_spline(
+                    (-self.bmns * self.xn_b[:, None], self.bmnc * self.xn_b[:, None]),
+                    "even_odd",
+                    "half",
+                    "dmodBdzeta",
+                )
+            self.R_spline = self.compute_spline(
+                (self.rmnc, self.rmns), "even_odd", "half", "R"
+            )
+            self.Z_spline = self.compute_spline(
+                (self.zmnc, self.zmns), "even_odd", "half", "Z"
+            )
+            if not self.spline_deriv:
+                self.dRds_spline = self.compute_spline(
+                    (self.drmncds, self.drmnsds), "even_odd", "full_reduced", "dRds"
+                )
+                self.dRdtheta_spline = self.compute_spline(
+                    (self.rmns * self.xm_b[:, None], -self.rmnc * self.xm_b[:, None]),
+                    "even_odd",
+                    "half",
+                    "dRdtheta",
+                )
+                self.dRdzeta_spline = self.compute_spline(
+                    (-self.rmns * self.xn_b[:, None], +self.rmnc * self.xn_b[:, None]),
+                    "even_odd",
+                    "half",
+                    "dRdzeta",
+                )
+                self.dZds_spline = self.compute_spline(
+                    (self.dzmncds, self.dzmnsds), "even_odd", "full_reduced", "dZds"
+                )
+                self.dZdtheta_spline = self.compute_spline(
+                    (+self.zmns * self.xm_b[:, None], -self.zmnc * self.xm_b[:, None]),
+                    "even_odd",
+                    "half",
+                    "dZdtheta",
+                )
+                self.dZdzeta_spline = self.compute_spline(
+                    (-self.zmns * self.xn_b[:, None], +self.zmnc * self.xn_b[:, None]),
+                    "even_odd",
+                    "half",
+                    "dZdzeta",
+                )
+            self.nu_spline = self.compute_spline(
+                (self.numnc, self.numns), "even_odd", "half", "nu"
+            )
+            if not self.spline_deriv:
+                self.dnuds_spline = self.compute_spline(
+                    (self.dnumncds, self.dnumnsds), "even_odd", "full_reduced", "dnuds"
+                )
+                self.dnudtheta_spline = self.compute_spline(
+                    (
+                        +self.numns * self.xm_b[:, None],
+                        -self.numnc * self.xm_b[:, None],
+                    ),
+                    "even_odd",
+                    "half",
+                    "dnudtheta",
+                )
+                self.dnudzeta_spline = self.compute_spline(
+                    (
+                        -self.numns * self.xn_b[:, None],
+                        +self.numnc * self.xn_b[:, None],
+                    ),
+                    "even_odd",
+                    "half",
+                    "dnudzeta",
+                )
+
+        self.G_spline = self.compute_spline(self.G_grid, "flux", "half", "G")
+        if not self.spline_deriv:
+            self.dGds_spline = self.compute_spline(
+                self.dGds_grid, "flux", "full_reduced", "dGds"
+            )
+            self.dIds_spline = self.compute_spline(
+                self.dIds_grid, "flux", "full_reduced", "dIds"
+            )
+            self.diotads_spline = self.compute_spline(
+                self.diotads_grid, "flux", "full_reduced", "diotads"
+            )
+        self.I_spline = self.compute_spline(self.I_grid, "flux", "half", "I")
+        self.iota_spline = self.compute_spline(self.iota_grid, "flux", "half", "iota")
+        self.psip_spline = self.compute_spline(self.psip_grid, "flux", "full", "psip")
+
+        BoozerMagneticField.__init__(
+            self, self.psi0, self.field_type, self.nfp, self.asym == 0
+        )
+
+        if self.field_type == "":
+            self.K_grid = np.zeros(
+                (len(self.s_full), len(self.theta_grid), len(self.zeta_grid))
+            )
+            self.compute_K(self.K_grid)
+            self.K_spline = self._build_3d_interpolator(self.s_full, self.K_grid)
+
+    def compute_spline(self, harmonics, even_odd, half_full="half", field_name=None):
+        r"""
+        Compute the spline field for the given harmonics.
+        Args:
+            harmonics: array-like (n_harmonics, n_s) or list of arrays with this
+                shape. If stellaratory symmetry is present, only one array is needed,
+                while both even and odd harmonics are present if no symmetry is
+                present.
+            even_odd: string, "even", "odd", "even_odd", or "flux". If stellaratory
+                symmetry is present, the harmonics are either even or odd (sin or cos).
+                Otherwise, both even and odd harmonics are present. Use "flux" for
+                flux functions that depend only on s.
+            half_full: string, "half", "full", or "full_reduced". Whether to use
+                the half grid, full grid, or full reduced grid (excluding boundary
+                points).
+            field_name: string, optional. If provided, the grid data will be saved
+                for later use in direct interpolation.
+        Returns:
+            spline: :class:`ndsplines.NDSpline` object for 3D fields or
+                :class:`scipy.interpolate.CubicSpline` object for flux functions.
+        """
+        if half_full == "half":
+            s_grid = self.s_half
+        elif half_full == "full":
+            s_grid = self.s_full
+        elif half_full == "full_reduced":
+            s_grid = self.s_full_reduced
+        else:
+            raise ValueError("half_full must be 'half', 'full', or 'full_reduced'")
+
+        if even_odd == "flux":
+            field_grid = harmonics
+        else:
+            field_grid = np.zeros((len(s_grid), self.ntheta_ext, self.nzeta_ext))
+            if even_odd == "even_odd":
+                harmonics_even = harmonics[0]
+                self.compute_full_grid_IFT(
+                    harmonics_even, "even", field_grid, half_full
+                )
+                harmonics_odd = harmonics[1]
+                self.compute_full_grid_IFT(harmonics_odd, "odd", field_grid, half_full)
+            else:
+                self.compute_full_grid_IFT(harmonics, even_odd, field_grid, half_full)
+
+        if even_odd == "flux":
+            spline = CubicSpline(s_grid, harmonics)
+        else:
+            spline = self._build_3d_interpolator(s_grid, field_grid)
+
+        return spline
+
+    def _build_3d_interpolator(self, s_grid, field_grid):
+        import ndsplines as nds
+
+        return nds.make_interp_spline(
+            [s_grid, self.theta_grid, self.zeta_grid], field_grid, degrees=3
+        )
+
+    def _eval_3d_spline(self, spline, points):
+        return spline(points)
+
+    def _eval_3d_spline_deriv(self, spline, points, nus):
+        nus_arr = np.asarray(nus, dtype=int)
+        return spline(points, nus=nus_arr)
+
+    def compute_full_grid_IFT(self, harmonics, even_odd, field_grid, half_full="half"):
+        r"""
+        Compute the full grid inverse Fourier transform for the given harmonics.
+        Args:
+            harmonics: array-like (n_harmonics, n_s) field harmonics to transform.
+            even_odd: string, "even" or "odd". Whether to perform inverse
+                cos or sin transform.
+            field_grid: array-like (n_s, n_theta, n_zeta) output array to store the
+                transformed field values.
+            half_full: string, "half", "full", or "full_reduced". Whether to use the
+                half grid, full grid, or full reduced grid (excluding boundary points).
+        Returns:
+            field_grid: array-like (n_s, n_theta, n_zeta)
+                The field grid (modified in place).
+        """
+        if even_odd == "even":
+            inverse_fourier = sopp.inverse_fourier_transform_even
+        elif even_odd == "odd":
+            inverse_fourier = sopp.inverse_fourier_transform_odd
+        else:
+            raise ValueError("even_odd must be 'even' or 'odd'")
+
+        # Parallelize over surfaces
+        if half_full == "half":
+            first, last = parallel_loop_bounds(self.comm, self.ns_half)
+        elif half_full == "full":
+            first, last = parallel_loop_bounds(self.comm, self.ns_half + 1)
+        elif half_full == "full_reduced":
+            first, last = parallel_loop_bounds(self.comm, self.ns_half - 1)
+        else:
+            raise ValueError("half_full must be 'half' or 'full' or 'full_reduced'")
+
+        # Pre-flatten theta and zeta grids for efficiency
+        # meshgrid with indexing="ij" creates (ntheta, nzeta) arrays
+        # flatten() preserves C-order (row-major), so theta varies fastest
+        theta_flat = self.theta_grid_2d.flatten(order="C")
+        zeta_flat = self.zeta_grid_2d.flatten(order="C")
+        ntheta = self.ntheta_ext
+        nzeta = self.nzeta_ext
+        npoints = ntheta * nzeta
+
+        # Pre-allocate aligned buffer and prepare aligned arrays for C++ function
+        # Align arrays once outside the loop for better performance
+        buffer = allocate_aligned_and_padded_array((npoints,))
+        xm_aligned = align_and_pad(self.xm_b)
+        xn_aligned = align_and_pad(self.xn_b)
+        theta_aligned = align_and_pad(theta_flat)
+        zeta_aligned = align_and_pad(zeta_flat)
+        # Pre-allocate aligned buffer for harmonics (reused for each surface)
+        harmonics_buffer = allocate_aligned_and_padded_array((len(self.xm_b),))
+
+        # Each process computes its assigned surfaces
+        for isurf in range(first, last):
+            # Copy harmonics for this surface to aligned buffer
+            harmonics_buffer[: len(self.xm_b)] = harmonics[:, isurf]
+            # Clear output buffer for this surface
+            buffer.fill(0)
+            # Call optimized C++ inverse Fourier transform
+            inverse_fourier(
+                buffer,
+                harmonics_buffer,
+                xm_aligned,
+                xn_aligned,
+                theta_aligned,
+                zeta_aligned,
+                self.ntor,
+                self.nfp,
+                True,
+            )
+            # Extract only the actual data (excluding padding) and reshape
+            # buffer has padding, so we must slice to npoints before reshaping
+            # Reshape to (ntheta, nzeta) matching the original grid structure
+            field_grid[isurf, :, :] += buffer[:npoints].reshape(
+                (ntheta, nzeta), order="C"
+            )
+        # Accumulate all field_grid data to all processes
+        if self.comm is not None:
+            # Ensure field_grid is contiguous for MPI operations
+            if not field_grid.flags["C_CONTIGUOUS"]:
+                field_grid_contig = np.ascontiguousarray(field_grid)
+            else:
+                field_grid_contig = field_grid
+            # Use Allreduce to sum contributions from all processes
+            recv_buffer = np.empty_like(field_grid_contig)
+            self.comm.Allreduce(
+                [field_grid_contig, MPI.DOUBLE], recv_buffer, op=MPI.SUM
+            )
+            field_grid[:, :, :] = recv_buffer
+
+    def _modB_impl(self, modB):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        modB[:, 0] = self._eval_3d_spline(self.modB_spline, points_sym)
+
+    def _dmodBds_impl(self, dmodBds):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        if not self.spline_deriv:
+            dmodBds[:, 0] = self._eval_3d_spline(self.dmodBds_spline, points_sym)
+        else:
+            dmodBds[:, 0] = self._eval_3d_spline_deriv(
+                self.modB_spline, points_sym, (1, 0, 0)
+            )
+
+    def _dmodBdtheta_impl(self, dmodBdtheta):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        if not self.spline_deriv:
+            dmodBdtheta[:, 0] = self._eval_3d_spline(
+                self.dmodBdtheta_spline, points_sym
+            )
+        else:
+            dmodBdtheta[:, 0] = self._eval_3d_spline_deriv(
+                self.modB_spline, points_sym, (0, 1, 0)
+            )
+        dmodBdtheta[flip, 0] = -dmodBdtheta[flip, 0]
+
+    def _dmodBdzeta_impl(self, dmodBdzeta):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        if not self.spline_deriv:
+            dmodBdzeta[:, 0] = self._eval_3d_spline(self.dmodBdzeta_spline, points_sym)
+        else:
+            dmodBdzeta[:, 0] = self._eval_3d_spline_deriv(
+                self.modB_spline, points_sym, (0, 0, 1)
+            )
+        dmodBdzeta[flip, 0] = -dmodBdzeta[flip, 0]
+
+    def _R_impl(self, R):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        R[:, 0] = self._eval_3d_spline(self.R_spline, points_sym)
+
+    def _dRds_impl(self, dRds):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        if not self.spline_deriv:
+            dRds[:, 0] = self._eval_3d_spline(self.dRds_spline, points_sym)
+        else:
+            dRds[:, 0] = self._eval_3d_spline_deriv(
+                self.R_spline, points_sym, (1, 0, 0)
+            )
+
+    def _dRdtheta_impl(self, dRdtheta):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        if not self.spline_deriv:
+            dRdtheta[:, 0] = self._eval_3d_spline(self.dRdtheta_spline, points_sym)
+        else:
+            dRdtheta[:, 0] = self._eval_3d_spline_deriv(
+                self.R_spline, points_sym, (0, 1, 0)
+            )
+        dRdtheta[flip, 0] = -dRdtheta[flip, 0]
+
+    def _dRdzeta_impl(self, dRdzeta):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        if not self.spline_deriv:
+            dRdzeta[:, 0] = self._eval_3d_spline(self.dRdzeta_spline, points_sym)
+        else:
+            dRdzeta[:, 0] = self._eval_3d_spline_deriv(
+                self.R_spline, points_sym, (0, 0, 1)
+            )
+        dRdzeta[flip, 0] = -dRdzeta[flip, 0]
+
+    def _Z_impl(self, Z):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        Z[:, 0] = self._eval_3d_spline(self.Z_spline, points_sym)
+        Z[flip, 0] = -Z[flip, 0]
+
+    def _dZds_impl(self, dZds):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        if not self.spline_deriv:
+            dZds[:, 0] = self._eval_3d_spline(self.dZds_spline, points_sym)
+        else:
+            dZds[:, 0] = self._eval_3d_spline_deriv(
+                self.Z_spline, points_sym, (1, 0, 0)
+            )
+        dZds[flip, 0] = -dZds[flip, 0]
+
+    def _dZdtheta_impl(self, dZdtheta):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        if not self.spline_deriv:
+            dZdtheta[:, 0] = self._eval_3d_spline(self.dZdtheta_spline, points_sym)
+        else:
+            dZdtheta[:, 0] = self._eval_3d_spline_deriv(
+                self.Z_spline, points_sym, (0, 1, 0)
+            )
+
+    def _dZdzeta_impl(self, dZdzeta):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        if not self.spline_deriv:
+            dZdzeta[:, 0] = self._eval_3d_spline(self.dZdzeta_spline, points_sym)
+        else:
+            dZdzeta[:, 0] = self._eval_3d_spline_deriv(
+                self.Z_spline, points_sym, (0, 0, 1)
+            )
+
+    def _nu_impl(self, nu):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        nu[:, 0] = self._eval_3d_spline(self.nu_spline, points_sym)
+        nu[flip, 0] = -nu[flip, 0]
+
+    def _dnuds_impl(self, dnuds):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        if not self.spline_deriv:
+            dnuds[:, 0] = self._eval_3d_spline(self.dnuds_spline, points_sym)
+        else:
+            dnuds[:, 0] = self._eval_3d_spline_deriv(
+                self.nu_spline, points_sym, (1, 0, 0)
+            )
+        dnuds[flip, 0] = -dnuds[flip, 0]
+
+    def _dnudtheta_impl(self, dnudtheta):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        if not self.spline_deriv:
+            dnudtheta[:, 0] = self._eval_3d_spline(self.dnudtheta_spline, points_sym)
+        else:
+            dnudtheta[:, 0] = self._eval_3d_spline_deriv(
+                self.nu_spline, points_sym, (0, 1, 0)
+            )
+
+    def _dnudzeta_impl(self, dnudzeta):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        if not self.spline_deriv:
+            dnudzeta[:, 0] = self._eval_3d_spline(self.dnudzeta_spline, points_sym)
+        else:
+            dnudzeta[:, 0] = self._eval_3d_spline_deriv(
+                self.nu_spline, points_sym, (0, 0, 1)
+            )
+
+    def _G_impl(self, G):
+        points = self.get_points_ref()
+        G[:, 0] = self.G_spline(points[:, 0])
+
+    def _dGds_impl(self, dGds):
+        points = self.get_points_ref()
+        if not self.spline_deriv:
+            dGds[:, 0] = self.dGds_spline(points[:, 0])
+        else:
+            dGds[:, 0] = self.G_spline.derivative()(points[:, 0])
+
+    def _iota_impl(self, iota):
+        points = self.get_points_ref()
+        iota[:, 0] = self.iota_spline(points[:, 0])
+
+    def _diotads_impl(self, diotads):
+        points = self.get_points_ref()
+        if not self.spline_deriv:
+            diotads[:, 0] = self.diotads_spline(points[:, 0])
+        else:
+            diotads[:, 0] = self.iota_spline.derivative()(points[:, 0])
+
+    def _I_impl(self, I):
+        points = self.get_points_ref()
+        I[:, 0] = self.I_spline(points[:, 0])
+
+    def _dIds_impl(self, dIds):
+        points = self.get_points_ref()
+        if not self.spline_deriv:
+            dIds[:, 0] = self.dIds_spline(points[:, 0])
+        else:
+            dIds[:, 0] = self.I_spline.derivative()(points[:, 0])
+
+    def _psip_impl(self, psip):
+        points = self.get_points_ref()
+        psip[:, 0] = self.psip_spline(points[:, 0])
+
+    def _K_impl(self, K):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        K[:, 0] = self._eval_3d_spline(self.K_spline, points_sym)
+        K[flip, 0] = -K[flip, 0]
+
+    def _dKdtheta_impl(self, dKdtheta):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        dKdtheta[:, 0] = self._eval_3d_spline_deriv(
+            self.K_spline, points_sym, (0, 1, 0)
+        )
+
+    def _dKdzeta_impl(self, dKdzeta):
+        points = self.get_points_ref()
+        points_sym, flip = self.map_points_symmetries(points)
+        dKdzeta[:, 0] = self._eval_3d_spline_deriv(self.K_spline, points_sym, (0, 0, 1))
+
+    def map_points_symmetries(self, points):
+        points_sym = points.copy()
+
+        points_sym[:, 1] = np.mod(points[:, 1], 2 * np.pi)
+        points_sym[:, 2] = np.mod(points[:, 2], 2 * np.pi / self.nfp)
+        # Apply stellarator symmetry
+        if self.stellsym:
+            mask = np.where(points_sym[:, 1] > np.pi)
+            points_sym[mask, 1] = 2 * np.pi - points_sym[mask, 1]
+            points_sym[mask, 2] = 2 * np.pi / self.nfp - points_sym[mask, 2]
+        else:
+            mask = np.zeros(points.shape[0], dtype=bool)
+
+        return points_sym, mask
+
+    def compute_K(self, K):
+        r"""
+        Compute the Boozer K field on the full grid.
+
+        Args:
+            K: array-like (n_s, n_theta, n_zeta) output array to store the computed
+                K values. The array should be pre-allocated with the correct shape
+                matching (len(self.s_full), len(self.theta_grid),
+                len(self.zeta_grid)).
+        """
+        points = np.zeros((len(self.theta_grid_3d.flatten()), 3))
+        points[:, 0] = self.s_grid_3d.flatten()
+        points[:, 1] = self.theta_grid_3d.flatten()
+        points[:, 2] = self.zeta_grid_3d.flatten()
+        self.set_points(points)
+        zeta = points[:, 2]
+        nu = self.nu()[:, 0]
+        dnuds = self.dnuds()[:, 0]
+        dnudtheta = self.dnudtheta()[:, 0]
+        dnudzeta = self.dnudzeta()[:, 0]
+        dRdtheta = self.dRdtheta()[:, 0]
+        dRds = self.dRds()[:, 0]
+        dRdzeta = self.dRdzeta()[:, 0]
+        dZdtheta = self.dZdtheta()[:, 0]
+        dZds = self.dZds()[:, 0]
+        dZdzeta = self.dZdzeta()[:, 0]
+        R = self.R()[:, 0]
+        G = self.G()[:, 0]
+        iota = self.iota()[:, 0]
+        I = self.I()[:, 0]
+        modB = self.modB()[:, 0]
+
+        phi = zeta - nu
+        dphids = -dnuds
+        dphidtheta = -dnudtheta
+        dphidzeta = 1 - dnudzeta
+        dXdtheta = dRdtheta * np.cos(phi) - R * np.sin(phi) * dphidtheta
+        dYdtheta = dRdtheta * np.sin(phi) + R * np.cos(phi) * dphidtheta
+        dXds = dRds * np.cos(phi) - R * np.sin(phi) * dphids
+        dYds = dRds * np.sin(phi) + R * np.cos(phi) * dphids
+        dXdzeta = dRdzeta * np.cos(phi) - R * np.sin(phi) * dphidzeta
+        dYdzeta = dRdzeta * np.sin(phi) + R * np.cos(phi) * dphidzeta
+        gstheta = dXdtheta * dXds + dYdtheta * dYds + dZdtheta * dZds
+        gszeta = dXdzeta * dXds + dYdzeta * dYds + dZdzeta * dZds
+        sqrtg = (G + iota * I) / (modB * modB)
+        K_flat = (gszeta + iota * gstheta) / (sqrtg * self.psi0)
+        # Reshape to match the 3D grid shape
+        K[:, :, :] = K_flat.reshape(
+            (len(self.s_full), len(self.theta_grid), len(self.zeta_grid))
+        )
 
 
 class BoozerRadialInterpolant(BoozerMagneticField):
@@ -2085,6 +3091,7 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             padded_zetas,
             self.ntor,
             self.nfp,
+            False,
         )
         chunk_mn, padded_thetas, padded_zetas = None, None, None
 
@@ -2147,6 +3154,7 @@ class BoozerRadialInterpolant(BoozerMagneticField):
             padded_zetas,
             self.ntor,
             self.nfp,
+            False,
         )
 
         # Copy result to output
@@ -2179,6 +3187,7 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
         nfp=None,
         stellsym=None,
         initialize=None,
+        comm=None,
     ):
         r"""
         Args:
@@ -2209,6 +3218,9 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
                 field quantity, e.g., `modB`, to be initialized when the
                 interpolant is created.
                 By default, this list is determined by field.field_type.
+            comm: (MPI.Comm, optional) MPI communicator for parallel interpolation.
+                If provided, interpolation operations will be parallelized across
+                MPI processes. Default is None (sequential).
         """
         if initialize is None:
             initialize = []
@@ -2314,9 +3326,153 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
             field_type,
         )
 
+        if comm is not None:
+            # Convert mpi4py communicator to Fortran handle using py2f()
+            comm_fortran = comm.py2f()
+            self.set_mpi_comm(comm_fortran)
+
         if initialize:
             for item in initialize:
                 getattr(self, item)()
+
+    @classmethod
+    def from_booz_xform(
+        cls,
+        equil,
+        degree=3,
+        mpol=32,
+        ntor=32,
+        ns=None,
+        ntheta=48,
+        nzeta=48,
+        helicity_M=None,
+        helicity_N=None,
+        enforce_vacuum=False,
+        no_K=True,
+        write_boozmn=True,
+        boozmn_name="boozmn.nc",
+        field_type=None,
+        comm=None,
+        spline_deriv=True,
+        extrapolate=True,
+        initialize=None,
+    ):
+        r"""
+        Create an InterpolatedBoozerField from a Booz_xform equilibrium.
+
+        This is a convenience class method that creates a :class:`BoozerSplineField`
+        from the equilibrium and then wraps it with an :class:`InterpolatedBoozerField`.
+        The resulting field is represented as a piecewise polynomial interpolant
+        on a regular grid in :math:`(s, \theta, \zeta)` coordinates.
+
+        Args:
+            equil: Instance of :class:`Booz_xform` or string containing the
+                filename of a boozmn_*.nc file (produced with booz_xform) or
+                wout_*.nc file (produced with VMEC). If a :class:`Booz_xform`
+                instance or boozmn_*.nc file is passed, the `compute_surfs` needs
+                to include all of the grid points in the half-radius grid of the
+                corresponding Vmec equilibrium. Otherwise, a ValueError is raised.
+            degree: The degree of the piecewise polynomial interpolant (default: 3).
+            mpol: Number of poloidal mode numbers for BOOZXFORM (default: 32).
+                Only used if a wout_*.nc file is passed.
+            ntor: Number of toroidal mode numbers for BOOZXFORM (default: 32).
+                Only used if a wout_*.nc file is passed.
+            ns: Number of grid points in the :math:`s` direction for interpolation.
+                If None, uses the number of flux surfaces from the equilibrium
+                (default: None).
+            ntheta: Number of grid points in the :math:`\theta` direction (default: 48).
+            nzeta: Number of grid points in the :math:`\zeta` direction (default: 48).
+            helicity_M: Poloidal helicity coefficient for enforcing field
+                quasi-symmetry. If specified, then the non-symmetric Fourier
+                harmonics of :math:`B` and :math:`K` are filtered out, so the
+                field is a function of :math:`\chi = M\theta - N\zeta`.
+                If helicity is unspecified, all harmonics are kept (default: None).
+            helicity_N: Toroidal helicity coefficient for enforcing field
+                quasi-symmetry. Must be specified together with helicity_M
+                (default: None).
+            enforce_vacuum: If True, a vacuum field is assumed, :math:`G` is
+                set to its mean value, :math:`I = 0`, and :math:`K = 0`
+                (default: False).
+            no_K: If True, the Boozer :math:`K` will not be computed or
+                interpolated (default: True).
+            write_boozmn: If True, save the booz_xform transformation in
+                a file specified by ``boozmn_name`` (default: True).
+            boozmn_name: Filename to save booz_xform transformation if
+                ``write_boozmn`` is True (default: "boozmn.nc").
+            field_type: A string identifying additional assumptions made on the
+                magnetic field. Can be ``'vac'``, ``'nok'``, or ``''``.
+                By default, this is determined from the options ``enforce_vacuum``
+                and ``no_K`` (default: None).
+            comm: MPI communicator for parallelization. If provided, the field
+                interpolation will be parallelized across MPI processes.
+                Should be an mpi4py communicator object (e.g., MPI.COMM_WORLD)
+                (default: None).
+            spline_deriv: If True, field derivatives will be evaluated by
+                differentiating the spline field. Otherwise, Fourier derivatives are
+                evaluated for the angles, and centered differences are used for the
+                radial derivative. While False is more accurate, True is faster
+                due to a reduction in the number of spline evaluations (default: True).
+            extrapolate: Whether to extrapolate the field when evaluating outside
+                the interpolation domain or to throw an error (default: True).
+            initialize: List of strings, each of which is the name of a field
+                quantity (e.g., ``'modB'``, ``'G'``, ``'I'``) to be initialized
+                when the interpolant is created. If None, the list is determined
+                by ``field_type`` (default: None).
+
+        Returns:
+            :class:`InterpolatedBoozerField`: An interpolated field instance
+            created from the specified equilibrium.
+
+        Examples:
+            .. code-block:: python
+
+                # Create from a boozmn file
+                field = InterpolatedBoozerField.from_booz_xform(
+                    "boozmn_aten.nc",
+                    degree=3,
+                    ns=48,
+                    ntheta=48,
+                    nzeta=48,
+                    comm=MPI.COMM_WORLD
+                )
+
+                # Create with vacuum field assumptions
+                field = InterpolatedBoozerField.from_booz_xform(
+                    "wout_aten.nc",
+                    enforce_vacuum=True,
+                    comm=comm
+                )
+        """
+        bsf = BoozerSplineField(
+            equil,
+            mpol=mpol,
+            ntor=ntor,
+            ntheta=ntheta,
+            nzeta=nzeta,
+            helicity_M=helicity_M,
+            helicity_N=helicity_N,
+            enforce_vacuum=enforce_vacuum,
+            no_K=no_K,
+            write_boozmn=write_boozmn,
+            boozmn_name=boozmn_name,
+            field_type=field_type,
+            comm=comm,
+            spline_deriv=spline_deriv,
+        )
+        if ns is None:
+            ns = bsf.ns_b
+        return cls(
+            bsf,
+            ns_interp=ns,
+            ntheta_interp=ntheta,
+            nzeta_interp=nzeta,
+            degree=degree,
+            extrapolate=extrapolate,
+            nfp=bsf.nfp,
+            stellsym=bsf.stellsym,
+            initialize=initialize,
+            comm=comm,
+        )
 
 
 class ShearAlfvenWave(sopp.ShearAlfvenWave):
@@ -2399,12 +3555,19 @@ class ShearAlfvenWave(sopp.ShearAlfvenWave):
 
     """
 
-    def __init__(self, B0):
+    def __init__(self, B0, omega):
         if not isinstance(B0, sopp.BoozerMagneticField):
             raise TypeError("B0 must be an instance of BoozerMagneticField.")
 
+        self.omega = omega
         # Call the constructor of the base C++ class
         super().__init__(B0)
+
+        # Initialize additional field attributes for perturbed tracing
+        if self.B0.field_type == "nok":
+            initialize = ["diotads"]
+            for item in initialize:
+                getattr(self.B0, item)()
 
 
 class ShearAlfvenHarmonic(sopp.ShearAlfvenHarmonic, ShearAlfvenWave):
@@ -2539,7 +3702,7 @@ class ShearAlfvenHarmonic(sopp.ShearAlfvenHarmonic, ShearAlfvenWave):
         sopp.ShearAlfvenHarmonic.__init__(
             self, phihat_object, Phim, Phin, omega, phase, B0
         )
-        ShearAlfvenWave.__init__(self, B0)
+        ShearAlfvenWave.__init__(self, B0, omega)
 
     def get_energy(self, grid_factor=10):
         r"""
@@ -2675,7 +3838,7 @@ class ShearAlfvenWavesSuperposition(
 
         # Initialize the base C++ class with the first wave as the base wave
         sopp.ShearAlfvenWavesSuperposition.__init__(self, SAWs[0])
-        ShearAlfvenWave.__init__(self, SAWs[0].B0)
+        ShearAlfvenWave.__init__(self, SAWs[0].B0, SAWs[0].omega)
 
         # Add subsequent waves to the superposition
         for SAW in SAWs[1:]:
@@ -3103,3 +4266,375 @@ class ShearAlfvenWavesSuperposition(
         self.set_points(original_points)
 
         return dE_energy, dB_energy, B0_energy
+
+
+class InterpolatedShearAlfvenWave(ShearAlfvenWave):
+    r"""
+    This class takes an existing :class:`ShearAlfvenWave` and interpolates it on a
+    regular grid in :math:`s, \theta, \zeta` using the C++
+    :class:`RegularGridInterpolant3D`.
+    The field is represented as a piecewise polynomial in (s, theta, zeta) of a given
+    degree. The number of nodes in each direction are defined by ns_interp,
+    ntheta_interp, and nzeta_interp. All quantities are time-dependent; the
+    interpolation is performed at t=0. When evaluating at t≠0, the underlying field
+    is used to get the correct time dependence. Note that waves generally break
+    rotational symmetry (nfp) and stellarator symmetry (stellsym), so these are not
+    automatically inherited from the field. It is recommended to use this field
+    representation in the tracing loop due to its speed in comparison to computing
+    the wave quantities directly from the underlying :class:`ShearAlfvenWave`.
+
+    This class implements all the methods of :class:`ShearAlfvenWave`:
+    `Phi`, `dPhidpsi`, `Phidot`, `dPhidtheta`, `dPhidzeta`, `alpha`, `alphadot`,
+    `dalphadtheta`, `dalphadpsi`, and `dalphadzeta`.
+    """
+
+    def __init__(
+        self,
+        field,
+        degree,
+        srange=None,
+        thetarange=None,
+        zetarange=None,
+        ns_interp=48,
+        ntheta_interp=48,
+        nzeta_interp=48,
+        extrapolate=True,
+        initialize=None,
+        comm=None,
+    ):
+        r"""
+        Args:
+            field: the underlying :class:`ShearAlfvenWave` to be interpolated.
+            degree: the degree of the piecewise polynomial interpolant.
+            ns_interp: number of grid points in the :math:`s` direction.
+            ntheta_interp: number of grid points in the :math:`\theta` direction.
+            nzeta_interp: number of grid points in the :math:`\zeta` direction.
+            srange: a 3-tuple of the form ``(smin, smax, ns)``. This means that
+                the interval ``[smin, smax]`` is split into ``ns`` many
+                subintervals.
+            thetarange: a 3-tuple of the form ``(thetamin, thetamax, ntheta)``.
+                thetamin must be >= 0, and thetamax must be <=2*pi.
+            zetarange: a 3-tuple of the form ``(zetamin, zetamax, nzeta)``.
+                zetamin must be >= 0, and zetamax must be <=2*pi.
+            extrapolate: whether to extrapolate the field when evaluated outside
+                         the integration domain or to throw an error.
+            initialize: A list of strings, each of which is the name of a
+                field quantity, e.g., `Phi`, to be initialized when the
+                interpolant is created. By default, all quantities are initialized.
+            comm: MPI communicator for parallelizing grid evaluation.
+                If None, evaluation is done serially.
+        """
+        if not isinstance(field, ShearAlfvenWave):
+            raise TypeError("field must be an instance of ShearAlfvenWave.")
+
+        # Determine field_type from the underlying B0 field
+        field_type = None
+        if hasattr(field, "B0") and hasattr(field.B0, "field_type"):
+            field_type = field.B0.field_type.lower()
+            assert field_type in ["", "vac", "nok"]
+
+        # Set default initialize list based on field_type if not provided
+        if initialize is None:
+            if field_type == "nok":
+                # For noK: dPhidpsi, dPhidtheta, dPhidzeta, alpha, alphadot,
+                #          dalphadpsi, dalphadtheta, dalphadzeta
+                initialize = [
+                    "dPhidpsi",
+                    "dPhidtheta",
+                    "dPhidzeta",
+                    "alpha",
+                    "alphadot",
+                    "dalphadpsi",
+                    "dalphadtheta",
+                    "dalphadzeta",
+                ]
+            elif field_type == "vac":
+                # For vacuum: dPhidpsi, dPhidtheta, dPhidzeta, alphadot,
+                #             dalphadpsi, dalphadtheta
+                initialize = [
+                    "dPhidpsi",
+                    "dPhidtheta",
+                    "dPhidzeta",
+                    "alphadot",
+                    "dalphadpsi",
+                    "dalphadtheta",
+                ]
+            else:
+                # Default: initialize all quantities (for general field_type)
+                initialize = [
+                    "Phi",
+                    "dPhidpsi",
+                    "Phidot",
+                    "dPhidtheta",
+                    "dPhidzeta",
+                    "alpha",
+                    "alphadot",
+                    "dalphadtheta",
+                    "dalphadpsi",
+                    "dalphadzeta",
+                ]
+
+        self.field = field
+        self.field_type = field_type
+        self.degree = degree
+        self.extrapolate = extrapolate
+        self.comm = comm
+
+        # Set up grid ranges
+        # Note: Waves generally break rotational and stellarator symmetry,
+        # so use explicit ranges rather than relying on symmetry.
+        if srange is None:
+            srange = (0, 1, ns_interp)
+        if thetarange is None:
+            # Default to full theta range [0, 2*pi] since waves break stellarator
+            # symmetry
+            thetarange = (0, 2 * np.pi, ntheta_interp)
+        if zetarange is None:
+            # Default to full zeta range for one field period
+            zetarange = (0, 2 * np.pi, nzeta_interp)
+
+        self.srange = srange
+        self.thetarange = thetarange
+        self.zetarange = zetarange
+
+        # Validate ranges
+        if np.any(np.asarray(thetarange[0:2]) < 0) or np.any(
+            np.asarray(thetarange[0:2]) > 2 * np.pi
+        ):
+            raise ValueError("thetamin and thetamax must be in [0,2*pi]")
+        if np.any(np.asarray(zetarange[0:2]) < 0) or np.any(
+            np.asarray(zetarange[0:2]) > 2 * np.pi
+        ):
+            raise ValueError("zetamin and zetamax must be in [0,2*pi]")
+
+        # Initialize the base class
+        ShearAlfvenWave.__init__(self, field.B0, field.omega)
+
+        # Create interpolation rule
+        self.rule = sopp.UniformInterpolationRule(degree)
+        self.B0 = field.B0
+        # Initialize interpolants dictionary
+        # For each quantity, we store two interpolants: one for the cos(omega*t)
+        # coefficient and one for the sin(omega*t) coefficient
+        self._interpolants_cos = {}  # Coefficient of cos(omega*t)
+        self._interpolants_sin = {}  # Coefficient of sin(omega*t)
+        self._status = {}
+
+        # Try to extract omega from the field if it's a ShearAlfvenHarmonic
+        self.omega = None
+        if hasattr(field, "omega"):
+            self.omega = field.omega
+        elif (
+            hasattr(field, "waves")
+            and len(field.waves) > 0
+            and hasattr(field.waves[0], "omega")
+        ):
+            # For superposition, use omega from first wave (assuming same omega)
+            self.omega = field.waves[0].omega
+
+        # Initialize requested quantities
+        if initialize:
+            for item in initialize:
+                self._initialize_quantity(item, srange, thetarange, zetarange)
+
+    def _initialize_quantity(self, quantity_name, srange, thetarange, zetarange):
+        """Initialize interpolation for a specific quantity using C++ 3D interpolant.
+
+        Different quantities have different parities with respect to the phase:
+        - sin-like: Phi, dPhidpsi, alpha, dalphadpsi
+          Q = Q_spatial * sin(m*theta - n*zeta + omega*t + phase)
+          At t=0: Q(0) = Q_spatial * sin(phase) = Q_sin_coeff
+          At t=pi/(2*omega): Q(pi/(2*omega)) = Q_spatial * cos(phase) = Q_cos_coeff
+
+        - cos-like: Phidot, dPhidtheta, dPhidzeta, alphadot, dalphadtheta, dalphadzeta
+          Q = Q_spatial * cos(m*theta - n*zeta + omega*t + phase)
+          At t=0: Q(0) = Q_spatial * cos(phase) = Q_cos_coeff
+          At t=pi/(2*omega): Q(pi/(2*omega)) = -Q_spatial * sin(phase) = -Q_sin_coeff
+
+        The time dependence is restored using:
+        Q(t) = Q_cos_coeff * cos(omega*t) + Q_sin_coeff * sin(omega*t)
+        """
+        if quantity_name in self._status and self._status[quantity_name]:
+            return
+
+        # Determine parity: sin-like or cos-like quantities
+        sin_like_quantities = ["Phi", "dPhidpsi", "alpha", "dalphadpsi"]
+        is_sin_like = quantity_name in sin_like_quantities
+
+        # Store original points
+        original_points = self.field.get_points()
+
+        # Create two interpolants: one for cos coefficient, one for sin
+        interpolant_cos = sopp.RegularGridInterpolant3D(
+            self.rule, srange, thetarange, zetarange, 1, self.extrapolate
+        )
+        interpolant_sin = sopp.RegularGridInterpolant3D(
+            self.rule, srange, thetarange, zetarange, 1, self.extrapolate
+        )
+
+        t_quarter_period = np.pi / (2.0 * self.omega)
+
+        def _fbatch(time_value, sign=1.0):
+            def fbatch(s_vals, theta_vals, zeta_vals):
+                pts = np.column_stack(
+                    (
+                        np.asarray(s_vals),
+                        np.asarray(theta_vals),
+                        np.asarray(zeta_vals),
+                        np.full_like(s_vals, time_value, dtype=float),
+                    )
+                )
+                self.field.set_points(pts)
+                values = getattr(self.field, quantity_name)()[:, 0]
+                return (sign * np.ascontiguousarray(values)).ravel()
+
+            return fbatch
+
+        if is_sin_like:
+            f_sin = _fbatch(0.0, 1.0)
+            f_cos = _fbatch(t_quarter_period, 1.0)
+        else:
+            f_cos = _fbatch(0.0, 1.0)
+            f_sin = _fbatch(t_quarter_period, -1.0)
+
+        if self.comm is not None:
+            comm_handle = self.comm.py2f()
+            interpolant_sin.interpolate_batch(f_sin, comm_handle)
+            interpolant_cos.interpolate_batch(f_cos, comm_handle)
+        else:
+            interpolant_sin.interpolate_batch(f_sin)
+            interpolant_cos.interpolate_batch(f_cos)
+
+        # Store both interpolants
+        self._interpolants_cos[quantity_name] = interpolant_cos
+        self._interpolants_sin[quantity_name] = interpolant_sin
+
+        self._status[quantity_name] = True
+
+        # Restore original points
+        self.field.set_points(original_points)
+
+    def _map_points_to_interpolation_range(self, stz):
+        """Map points to fall within [0, 2*pi] using periodic wrapping.
+
+        Since waves break rotational and stellarator symmetries, we only do
+        periodic wrapping to map theta and zeta to [0, 2*pi], which is their
+        natural periodic range.
+
+        Args:
+            stz: Array of shape (npoints, 3) with (s, theta, zeta) coordinates.
+
+        Returns:
+            stz_mapped: Array of shape (npoints, 3) with mapped coordinates.
+        """
+        stz_mapped = stz.copy()
+        theta = stz[:, 1]
+        zeta = stz[:, 2]
+
+        # Map theta to [0, 2*pi] using periodic wrapping
+        theta = np.mod(theta, 2 * np.pi)
+        stz_mapped[:, 1] = theta
+
+        # Map zeta to [0, 2*pi] using periodic wrapping
+        zeta = np.mod(zeta, 2 * np.pi)
+        stz_mapped[:, 2] = zeta
+
+        return stz_mapped
+
+    def _evaluate_interpolant(self, quantity_name):
+        """Evaluate an interpolated quantity at the current points.
+
+        Uses angle sum identities to restore time dependence, accounting for parity:
+        - For sin-like quantities (Phi, dPhidpsi, alpha, dalphadpsi):
+          Q = Q_spatial * sin(φ + omega*t) where φ = m*theta - n*zeta + phase
+          Using sin(α+β) = sin(α)cos(β) + cos(α)sin(β):
+          Q(t) = Q_sin_coeff * cos(omega*t) + Q_cos_coeff * sin(omega*t)
+        - For cos-like quantities (Phidot, dPhidtheta, dPhidzeta,
+          alphadot, dalphadtheta, dalphadzeta):
+          Q = Q_spatial * cos(φ + omega*t) where φ = m*theta - n*zeta + phase
+          Using cos(α+β) = cos(α)cos(β) - sin(α)sin(β):
+          Q(t) = Q_cos_coeff * cos(omega*t) - Q_sin_coeff * sin(omega*t)
+        """
+        if quantity_name not in self._status or not self._status[quantity_name]:
+            # Need to initialize this quantity
+            self._initialize_quantity(
+                quantity_name, self.srange, self.thetarange, self.zetarange
+            )
+
+        # Get current points
+        points = np.asarray(self.get_points())
+        npoints = points.shape[0]
+
+        # Extract s, theta, zeta coordinates and times
+        stz = points[:, [0, 1, 2]]
+        current_times = points[:, 3]
+
+        # Map points to interpolation range using periodic wrapping
+        stz_mapped = self._map_points_to_interpolation_range(stz)
+
+        # Evaluate cos and sin coefficients
+        result_cos = np.zeros((npoints, 1))
+        result_sin = np.zeros((npoints, 1))
+        self._interpolants_cos[quantity_name].evaluate_batch(stz_mapped, result_cos)
+        self._interpolants_sin[quantity_name].evaluate_batch(stz_mapped, result_sin)
+        # Determine parity and restore time dependence accordingly
+        sin_like_quantities = ["Phi", "dPhidpsi", "alpha", "dalphadpsi"]
+        is_sin_like = quantity_name in sin_like_quantities
+
+        cos_omega_t = np.cos(self.omega * current_times)[:, np.newaxis]
+        sin_omega_t = np.sin(self.omega * current_times)[:, np.newaxis]
+
+        if is_sin_like:
+            # For sin-like: Q(t) = Q_sin_coeff * cos(omega*t) +
+            # Q_cos_coeff * sin(omega*t)
+            # where Q_sin_coeff = Q_spatial * sin(φ) and
+            # Q_cos_coeff = Q_spatial * cos(φ)
+            result = result_sin * cos_omega_t + result_cos * sin_omega_t
+        else:
+            # For cos-like: Q(t) = Q_cos_coeff * cos(omega*t) -
+            # Q_sin_coeff * sin(omega*t)
+            # where Q_cos_coeff = Q_spatial * cos(φ) and
+            # Q_sin_coeff = Q_spatial * sin(φ)
+            result = result_cos * cos_omega_t - result_sin * sin_omega_t
+
+        return result
+
+    def _Phi_impl(self, Phi):
+        """Implementation of Phi using interpolation."""
+        Phi[:] = self._evaluate_interpolant("Phi")
+
+    def _dPhidpsi_impl(self, dPhidpsi):
+        """Implementation of dPhidpsi using interpolation."""
+        dPhidpsi[:] = self._evaluate_interpolant("dPhidpsi")
+
+    def _Phidot_impl(self, Phidot):
+        """Implementation of Phidot using interpolation."""
+        Phidot[:] = self._evaluate_interpolant("Phidot")
+
+    def _dPhidtheta_impl(self, dPhidtheta):
+        """Implementation of dPhidtheta using interpolation."""
+        dPhidtheta[:] = self._evaluate_interpolant("dPhidtheta")
+
+    def _dPhidzeta_impl(self, dPhidzeta):
+        """Implementation of dPhidzeta using interpolation."""
+        dPhidzeta[:] = self._evaluate_interpolant("dPhidzeta")
+
+    def _alpha_impl(self, alpha):
+        """Implementation of alpha using interpolation."""
+        alpha[:] = self._evaluate_interpolant("alpha")
+
+    def _alphadot_impl(self, alphadot):
+        """Implementation of alphadot using interpolation."""
+        alphadot[:] = self._evaluate_interpolant("alphadot")
+
+    def _dalphadtheta_impl(self, dalphadtheta):
+        """Implementation of dalphadtheta using interpolation."""
+        dalphadtheta[:] = self._evaluate_interpolant("dalphadtheta")
+
+    def _dalphadpsi_impl(self, dalphadpsi):
+        """Implementation of dalphadpsi using interpolation."""
+        dalphadpsi[:] = self._evaluate_interpolant("dalphadpsi")
+
+    def _dalphadzeta_impl(self, dalphadzeta):
+        """Implementation of dalphadzeta using interpolation."""
+        dalphadzeta[:] = self._evaluate_interpolant("dalphadzeta")

@@ -19,8 +19,8 @@ PYBIND11_MODULE(firm3dpp, m) {
     xt::import_numpy();
 
     init_boozermagneticfields(m);
-    init_tracing(m);
     init_interpolant(m);
+    init_tracing(m);
 
     m.def("fourier_transform_even", &fourier_transform_even);
     m.def("fourier_transform_odd", &fourier_transform_odd);

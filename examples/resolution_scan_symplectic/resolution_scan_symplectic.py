@@ -4,7 +4,6 @@ import numpy as np
 
 from firm3d._core.util import parallel_loop_bounds
 from firm3d.field.boozermagneticfield import (
-    BoozerRadialInterpolant,
     InterpolatedBoozerField,
 )
 from firm3d.field.tracing import (
@@ -48,16 +47,6 @@ vpar_init = initialize_velocity_uniform(
     nParticles,
 )
 
-## Setup radial interpolation with quasisymmetry explicitly enforced
-bri = BoozerRadialInterpolant(
-    boozmn_filename,
-    order,
-    no_K=True,
-    comm=comm_world,
-    helicity_M=helicity_M,
-    helicity_N=helicity_N,
-)
-
 resolutions = np.array([16, 32, 48, 64, 80, 96])
 dts = np.array([1e-7, 1e-8, 1e-9, 1e-10])
 
@@ -82,13 +71,16 @@ for i in range(len(resolutions)):
     ntheta_interp = resolution
     nzeta_interp = resolution
 
-    ## Setup 3d interpolation
-    field = InterpolatedBoozerField(
-        bri,
-        degree,
-        ns_interp=ns_interp,
-        ntheta_interp=ntheta_interp,
-        nzeta_interp=nzeta_interp,
+    ## Setup field interpolation with quasisymmetry explicitly enforced
+    field = InterpolatedBoozerField.from_booz_xform(
+        boozmn_filename,
+        degree=order,
+        ns=ns_interp,
+        ntheta=ntheta_interp,
+        nzeta=nzeta_interp,
+        helicity_M=helicity_M,
+        helicity_N=helicity_N,
+        comm=comm_world,
     )
 
     points_init = initialize_position_uniform_vol(

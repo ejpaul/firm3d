@@ -1,5 +1,5 @@
 Shear Alfvén Wave Field Classes
-==============================
+===============================
 
 Given an equilibrium field :math:`\textbf{B}_0`, a shear Alfvén wave is modeled through the perturbed electrostatic potential, :math:`\Phi`, and parameter :math:`\alpha` defining the perturbed vector potential :math:`\delta \textbf{A} = \alpha \textbf{B}_0`. The perturbed electric and magnetic fields then satisfy:
 
@@ -28,8 +28,43 @@ This class initializes a Shear Alfvén Wave with a scalar potential of the form:
 
 where :math:`\hat{\Phi}(s)` is a radial profile, :math:`m` is the poloidal mode number, :math:`n` is the toroidal mode number, :math:`\omega` is the frequency, and :math:`\phi_0` is the phase shift. The perturbed parallel vector potential parameter, :math:`\alpha`, is then determined by ideal Ohm's law. This representation is used to describe SAWs propagating in an equilibrium magnetic field :math:`\textbf{B}_0`.
 
+See Paul et al., JPP (2023; 89(5):905890515. doi:10.1017/S0022377823001095) for more details.
+
+Radial Profiles
+---------------
+
+The radial profile :math:`\hat{\Phi}(s)` can be specified in two ways:
+
+**1. Constant Profile (Uniform)**
+A single float value representing a uniform amplitude across all radial positions:
+
+.. code-block:: python
+
+   # Uniform amplitude across all s
+   Phihat = 0.01
+   saw = ShearAlfvenHarmonic(Phihat, m=2, n=1, omega=1.0, phase=0.0, B0=field)
+
+**2. Varying Profile (Tabulated)**
+A tuple of two lists defining the radial dependence: `(s_values, Phihat_values)`:
+
+.. code-block:: python
+
+   # Define varying radial profile
+   s_values = [0.0, 0.3, 0.5, 0.7, 1.0]
+   Phihat_values = [0.0, 0.005, 0.01, 0.005, 0.0]
+
+   # Create wave with varying profile
+   saw = ShearAlfvenHarmonic(
+       (s_values, Phihat_values),
+       m=2, n=1, omega=1.0, phase=0.0, B0=field
+   )
+
+.. note::
+   The `s_values` must be in the range [0, 1] and will be automatically sorted.
+   For non-zero poloidal mode numbers (m ≠ 0), the profile is automatically set to zero at s = 0.
+
 Usage Example
-~~~~~~~~~~~~
+~~~~~~~~~~~~~
 
 .. code-block:: python
 
@@ -61,10 +96,8 @@ This class models the superposition of multiple Shear Alfvén waves, combining t
 
 The superposition of waves is initialized with a base wave, which defines the reference equilibrium field :math:`\textbf{B}_0` for all subsequent waves added to the superposition. All added waves must have the same :math:`\textbf{B}_0` field.
 
-See Paul et al., JPP (2023; 89(5):905890515. doi:10.1017/S0022377823001095) for more details.
-
 Usage Example
-~~~~~~~~~~~~
+~~~~~~~~~~~~~
 
 .. code-block:: python
 
@@ -90,10 +123,62 @@ Usage Example
 
    saw_super.add_wave(wave2)
 
-Wave Evaluation
---------------
+InterpolatedShearAlfvenWave
+---------------------------
 
-Both wave classes provide methods to evaluate the perturbed fields. First, set the evaluation points, then evaluate the wave quantities:
+``InterpolatedShearAlfvenWave`` accelerates evaluation of wave quantities by
+interpolating a ``ShearAlfvenWave`` or ``ShearAlfvenWavesSuperposition`` on a
+regular grid in :math:`(s,\theta,\zeta)` using the C++ ``RegularGridInterpolant3D``.
+The interpolant is built at :math:`t=0`; time dependence is restored at
+evaluation time. Use it in tracing loops where repeated wave evaluations dominate
+runtime, especially for a large number of harmonics. 
+
+Usage Example 
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   from firm3d.field.boozermagneticfield import (
+       InterpolatedBoozerField,
+       ShearAlfvenWavesSuperposition,
+       InterpolatedShearAlfvenWave,
+   )
+   from firm3d.saw.ae3d import AE3DEigenvector
+   from firm3d.util.mpi import comm_world
+
+   # Equilibrium from Boozer transform file
+   field = InterpolatedBoozerField.from_booz_xform(
+       "boozmn.nc",
+       degree=3,
+       ns=48,
+       ntheta=48,
+       nzeta=48,
+       comm=comm_world,
+   )
+
+   # Wave from AE3D eigenvector
+   saw = ShearAlfvenWavesSuperposition.from_ae3d(
+       eigenvector=AE3DEigenvector.load_from_numpy("ae.npy"),
+       B0=field,
+       max_dB_normal_by_B0=5e-3,
+       minor_radius_meters=1.7,
+   )
+
+   # Interpolant for fast tracing 
+   saw_interp = InterpolatedShearAlfvenWave(
+       saw,
+       degree=3,
+       ns_interp=48,
+       ntheta_interp=48,
+       nzeta_interp=48,
+       extrapolate=True,
+       comm=comm_world,
+   )
+
+Wave Evaluation
+---------------
+
+ShearAlfvenWave classes provide methods to evaluate the perturbed fields. First, set the evaluation points, then evaluate the wave quantities:
 
 .. code-block:: python
 
@@ -120,36 +205,3 @@ Both wave classes provide methods to evaluate the perturbed fields. First, set t
    single_point = np.array([[0.5, 0.0, 0.0, 0.0]])  # shape (1, 4)
    saw.set_points(single_point)
    phi_single = saw.phi()[0]  # get first (and only) value
-
-Radial Profiles
---------------
-
-The radial profile :math:`\hat{\Phi}(s)` can be specified in two ways:
-
-**1. Constant Profile (Uniform)**
-A single float value representing a uniform amplitude across all radial positions:
-
-.. code-block:: python
-
-   # Uniform amplitude across all s
-   Phihat = 0.01
-   saw = ShearAlfvenHarmonic(Phihat, m=2, n=1, omega=1.0, phase=0.0, B0=field)
-
-**2. Varying Profile (Tabulated)**
-A tuple of two lists defining the radial dependence: `(s_values, Phihat_values)`:
-
-.. code-block:: python
-
-   # Define varying radial profile
-   s_values = [0.0, 0.3, 0.5, 0.7, 1.0]
-   Phihat_values = [0.0, 0.005, 0.01, 0.005, 0.0]
-
-   # Create wave with varying profile
-   saw = ShearAlfvenHarmonic(
-       (s_values, Phihat_values),
-       m=2, n=1, omega=1.0, phase=0.0, B0=field
-   )
-
-.. note::
-   The `s_values` must be in the range [0, 1] and will be automatically sorted.
-   For non-zero poloidal mode numbers (m ≠ 0), the profile is automatically set to zero at s = 0.

@@ -3,7 +3,6 @@ import time
 import numpy as np
 
 from firm3d.field.boozermagneticfield import (
-    BoozerRadialInterpolant,
     InterpolatedBoozerField,
 )
 from firm3d.field.trajectory_helpers import TrappedPoincare
@@ -40,18 +39,17 @@ setup_logging(f"stdout_trapped_map_QI_{resolution}_{comm_size}.txt")
 
 time1 = time.time()
 
-bri = BoozerRadialInterpolant(boozmn_filename, order, no_K=True, comm=comm_world)
-nfp = bri.nfp
+field = InterpolatedBoozerField.from_booz_xform(
+    boozmn_filename,
+    degree=order,
+    ns=ns_interp,
+    ntheta=ntheta_interp,
+    nzeta=nzeta_interp,
+    comm=comm_world,
+)
+nfp = field.nfp
 helicity_N = nfp  # helicity of field strength contours
 zeta_mirror = np.pi / (2 * nfp)  # poloidal angle for mirroring
-
-field = InterpolatedBoozerField(
-    bri,
-    degree,
-    ns_interp=ns_interp,
-    ntheta_interp=ntheta_interp,
-    nzeta_interp=nzeta_interp,
-)
 
 poinc = TrappedPoincare(
     field,

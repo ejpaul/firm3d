@@ -3,7 +3,6 @@ import time
 import numpy as np
 
 from firm3d.field.boozermagneticfield import (
-    BoozerRadialInterpolant,
     InterpolatedBoozerField,
     ShearAlfvenHarmonic,
 )
@@ -49,21 +48,15 @@ setup_logging(f"stdout_passing_map_{resolution}_{comm_size}.txt")
 
 time1 = time.time()
 
-bri = BoozerRadialInterpolant(
+field = InterpolatedBoozerField.from_booz_xform(
     boozmn_filename,
-    order,
-    no_K=True,
-    comm=comm_world,
+    degree=order,
+    ns=ns_interp,
+    ntheta=ntheta_interp,
+    nzeta=nzeta_interp,
     helicity_M=helicity_M,
     helicity_N=helicity_N,
-)
-
-field = InterpolatedBoozerField(
-    bri,
-    degree,
-    ns_interp=ns_interp,
-    ntheta_interp=ntheta_interp,
-    nzeta_interp=nzeta_interp,
+    comm=comm_world,
 )
 
 saw = ShearAlfvenHarmonic(Phihat, Phim, Phin, omega, phase, field)
