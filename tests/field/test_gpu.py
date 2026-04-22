@@ -189,7 +189,6 @@ def test_derivatives(
     saw_filename=None,
     tol=1e-8,
 ):
-
     srange, trange, zrange, quad_info, maxJ = construct_interpolant(field, nfp)
     ## evaluate derivatives
     if isinstance(field, ShearAlfvenWavesSuperposition):
@@ -371,7 +370,6 @@ def test_derivatives(
 def test_timestep(
     field, nfp, stz, vpar, vtotal, psi0, time=None, saw_filename=None, tol=1e-8
 ):
-
     srange, trange, zrange, quad_info, maxJ = construct_interpolant(field, nfp)
 
     if isinstance(field, ShearAlfvenWavesSuperposition):
@@ -391,7 +389,7 @@ def test_timestep(
             mass=MASS,
             charge=CHARGE,
             tol=1e-9,
-            stopping_criteria=[IterationStoppingCriterion(0)],
+            stopping_criteria=[IterationStoppingCriterion(1)],
             forget_exact_path=True,
         )
 
@@ -475,7 +473,7 @@ def test_timestep(
                 charge=CHARGE,
                 Ekin=ENERGY,
                 tol=1e-9,
-                stopping_criteria=[IterationStoppingCriterion(0)],
+                stopping_criteria=[IterationStoppingCriterion(1)],
                 forget_exact_path=True,
             )
 
@@ -507,7 +505,7 @@ def test_timestep(
                 charge=CHARGE,
                 Ekin=ENERGY,
                 tol=1e-9,
-                stopping_criteria=[IterationStoppingCriterion(0)],
+                stopping_criteria=[IterationStoppingCriterion(1)],
                 forget_exact_path=True,
             )
 

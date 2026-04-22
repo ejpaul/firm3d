@@ -1,10 +1,10 @@
 Stopping Criteria
-================
+=================
 
 Guiding center integration is continued until the maximum integration time, ``tmax``, is reached, or until one of the ``StoppingCriteria`` is hit. Stopping criteria are essential for controlling the integration process and avoiding numerical issues.
 
 Available Stopping Criteria
---------------------------
+---------------------------
 
 MaxToroidalFluxStoppingCriterion
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -125,7 +125,7 @@ You can combine multiple stopping criteria to create robust integration conditio
    )
 
 Interpreting Results
--------------------
+--------------------
 
 When stopping criteria are hit, the information is returned in the ``res_hits`` array. See :ref:`trajectory_saving` for more details. Each row contains:
 

@@ -1,8 +1,11 @@
 import builtins
 import logging
+import os
 import sys
 
 from .mpi import verbose
+
+in_github_actions = os.getenv("GITHUB_ACTIONS") == "true"
 
 
 def print(*args, **kwargs):

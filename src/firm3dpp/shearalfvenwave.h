@@ -162,6 +162,18 @@ public:
         return B0;
     }
 
+    void set_B0(shared_ptr<BoozerMagneticField> B0field) {
+        if (!B0field) {
+            throw std::invalid_argument("B0 field must be provided.");
+        }
+        B0 = B0field;
+        // Ensure B0 has the same points as the wave (s, theta, zeta).
+        if (points.size() > 0) {
+            Array2 p_b0 = xt::view(points, xt::all(), xt::range(0, 3));
+            B0->set_points(p_b0);
+        }
+    }
+
     Array2 Phi() { return Phi_ref(); }
     Array2 dPhidpsi() { return dPhidpsi_ref(); }
     Array2 Phidot() { return Phidot_ref(); }

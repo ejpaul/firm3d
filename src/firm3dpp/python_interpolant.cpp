@@ -9,6 +9,19 @@ using std::vector;
 
 namespace py = pybind11;
 #include "regular_grid_interpolant_3d.h"
+#include "mpi_utils.h"
+
+#ifdef USE_MPI
+using firm3dpp::mpi::get_mpi_comm_from_fortran;
+
+// Wrapper function for MPI version of interpolate_batch
+void interpolate_batch_mpi(RegularGridInterpolant3D<Array2>& self, 
+                           std::function<Vec(Vec, Vec, Vec)>& f, 
+                           long long fortran_handle) {
+    MPI_Comm comm = get_mpi_comm_from_fortran(fortran_handle);
+    self.interpolate_batch(f, comm);
+}
+#endif
 
 void init_interpolant(py::module_ &m){
 
@@ -32,7 +45,17 @@ void init_interpolant(py::module_ &m){
             )pbdoc")
         .def(py::init<InterpolationRule, RangeTriplet, RangeTriplet, RangeTriplet, int, bool, std::function<std::vector<bool>(Vec, Vec, Vec)>>())
         .def(py::init<InterpolationRule, RangeTriplet, RangeTriplet, RangeTriplet, int, bool>())
-        .def("interpolate_batch", &RegularGridInterpolant3D<Array2>::interpolate_batch, "Interpolate a function by evaluating the function on all interpolation nodes simultaneously.")
+        .def("interpolate_batch", 
+             py::overload_cast<std::function<Vec(Vec, Vec, Vec)>&>(&RegularGridInterpolant3D<Array2>::interpolate_batch),
+             "Interpolate a function by evaluating the function on all interpolation nodes simultanuously.")
+#ifdef USE_MPI
+        .def("interpolate_batch",
+             [](RegularGridInterpolant3D<Array2>& self, std::function<Vec(Vec, Vec, Vec)>& f, long long fortran_handle) {
+                 interpolate_batch_mpi(self, f, fortran_handle);
+             },
+             py::arg("f"), py::arg("comm_fortran"),
+             "Interpolate a function with MPI parallelization. 'comm_fortran' should be a Fortran MPI communicator handle (obtained from comm.py2f() in Python).")
+#endif
         .def("evaluate", &RegularGridInterpolant3D<Array2>::evaluate, "Evaluate the interpolant at a point.")
         .def("evaluate_batch", &RegularGridInterpolant3D<Array2>::evaluate_batch, "Evaluate the interpolant at multiple points (faster than `evaluate` as it uses prefetching).")
         // Serialization for InterpolatedBoozerField save/load

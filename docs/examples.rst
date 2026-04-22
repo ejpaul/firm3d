@@ -1,10 +1,10 @@
 Examples and Tutorials
-=====================
+======================
 
 FIRM3D comes with a comprehensive set of examples demonstrating various features and use cases. These examples are located in the ``examples/`` directory and provide practical demonstrations of the library's capabilities.
 
 Available Example Scripts
-------------------------
+-------------------------
 
 Fusion Distribution
 ~~~~~~~~~~~~~~~~~~~
@@ -130,7 +130,7 @@ Demonstrates the selection of an eigenmode from AE3D and postprocessing of the m
    python tracing_with_AE.py
 
 Running All Examples
--------------------
+--------------------
 
 A script is provided to run all examples:
 

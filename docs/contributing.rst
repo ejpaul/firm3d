@@ -1,5 +1,5 @@
 Contributing to FIRM3D
-=====================
+======================
 
 We welcome contributions to FIRM3D! This document provides guidelines for contributing to the project.
 
@@ -42,7 +42,7 @@ Install with ``pre-commit install`` to automatically run code quality checks bef
 **Note:** Ruff linting checks are configured as **informational only** and will not block commits. This allows you to commit your work while still having access to linting feedback. You can address linting issues at your convenience.
 
 Development Workflow
--------------------
+--------------------
 
 1. **Create a feature branch or fork** for your changes
 2. **Make your changes** following the style guidelines
