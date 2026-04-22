@@ -3376,7 +3376,7 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
         )
 
         return instance
-      
+
     @classmethod
     def from_booz_xform(
         cls,
