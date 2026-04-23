@@ -96,7 +96,8 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
           cmake ninja-build libboost-all-dev libopenmpi-dev \
-          libnetcdf-dev libhdf5-dev libnetcdf-c++4-dev libgsl-dev pkg-config
+          libnetcdf-dev libhdf5-dev libnetcdf-c++4-dev libgsl-dev \
+          nlohmann-json3-dev pkg-config
 
     - name: Install dependencies
       run: |
