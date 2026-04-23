@@ -522,6 +522,14 @@ void init_boozermagneticfields(py::module_ &m){
       .def_readwrite("status_Z_derivs",&InterpolatedBoozerField::status_Z_derivs)
       .def_readwrite("status_nu_derivs",&InterpolatedBoozerField::status_nu_derivs)
       .def_readwrite("status_modB_derivs",&InterpolatedBoozerField::status_modB_derivs)
+      .def(py::init<string>(), "Load from JSON file.")
+      .def("to_json", &InterpolatedBoozerField::to_json, "Save to JSON file.")
+      // Getters needed because C++ members are private; from_json() reads these in Python
+      .def("get_nfp", &InterpolatedBoozerField::get_nfp)
+      .def("get_stellsym", &InterpolatedBoozerField::get_stellsym)
+      .def("get_extrapolate", &InterpolatedBoozerField::get_extrapolate)
+      .def("get_psi0", &InterpolatedBoozerField::get_psi0)
+      .def("get_field_type", &InterpolatedBoozerField::get_field_type)
       ;
 
     // ShearAlfvenWave:

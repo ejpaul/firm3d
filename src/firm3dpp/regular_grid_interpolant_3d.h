@@ -2,6 +2,7 @@
 
 #include "simdhelpers.h"
 #include <unordered_map>
+#include <map>  
 #include <algorithm>
 #include <functional>
 #include <iostream>
@@ -241,7 +242,7 @@ class RegularGridInterpolant3D {
                     }
                 }
             }
-            // Now we need to figure out which of these dofs we keep, and which
+            // We need to figure out which of these dofs we keep, and which
             // to discard.  To do this, we loop over the cells, and for each
             // cell that shouldn't be skipped, we mark all dofs in that cell.
 
@@ -311,6 +312,13 @@ class RegularGridInterpolant3D {
         void evaluate_batch_1D(Array &xyz, Array &fxyz);
 
         std::pair<double, double> estimate_error(std::function<Vec(Vec, Vec, Vec)> &f, int samples);
+        
+        // Serialization for InterpolatedBoozerField save/load.
+        // get_interpolant_data(): exports vals array and grid params for JSON.
+        // set_interpolant_data(): restores vals and rebuilds all_local_vals_map
+        //                         (the cell-indexed lookup table for evaluation).
+        std::map<std::string, std::vector<double>> get_interpolant_data() const;
+        void set_interpolant_data(const std::map<std::string, std::vector<double>>& data);
 };
 
 class UniformInterpolationRule : public InterpolationRule {

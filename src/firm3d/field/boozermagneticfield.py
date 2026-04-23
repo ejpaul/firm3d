@@ -3336,6 +3336,48 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
                 getattr(self, item)()
 
     @classmethod
+    def from_json(cls, json_file_path):
+        """
+        Load an InterpolatedBoozerField from a JSON file.
+
+        This class method creates a new InterpolatedBoozerField instance by loading
+        pre-computed interpolant data from JSON file, avoiding recomputation.
+
+        Args:
+            json_file_path: Path to the JSON file containing the saved field data.
+
+        Returns:
+            InterpolatedBoozerField: A new instance loaded from the JSON file.
+
+        Example:
+            # First, create and save a field
+            field = InterpolatedBoozerField(bri, 4, srange, thetarange, zetarange, True)
+            field.to_json("field_data.json")
+            # Later, reload without recomputation
+            loaded_field = InterpolatedBoozerField.from_json("field_data.json")
+        """
+        # InterpolatedBoozerField inherits from both
+        # sopp.InterpolatedBoozerField (C++) and BoozerMagneticField (Python).
+        # We must initialize each parent separately since the normal __init__
+        # requires a BoozerRadialInterpolant which we don't have when loading.
+        instance = cls.__new__(cls)
+
+        # C++ side: reads JSON and restores all interpolants + status flags
+        sopp.InterpolatedBoozerField.__init__(instance, json_file_path)
+
+        # Python side needs psi0, field_type, nfp, stellsym. C++ keeps them private,
+        # so we use getters instead of attributes.
+        BoozerMagneticField.__init__(
+            instance,
+            instance.get_psi0(),
+            instance.get_field_type(),
+            instance.get_nfp(),
+            instance.get_stellsym(),
+        )
+
+        return instance
+
+    @classmethod
     def from_booz_xform(
         cls,
         equil,
