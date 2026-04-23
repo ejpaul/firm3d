@@ -182,20 +182,23 @@ def boozer_saw_interpolant(field, nfp, ns, ntheta, nzeta):
 
 def cartesian_interpolant(field, surface_classifier):
     r"""
-    Set up a Cartesian vacuum interpolant for tracing.
+    Set up a Cartesian (cylindrical) interpolant for GPU tracing.
 
     Args:
-        field: MagneticField object
-        nfp: Integer, number of field periods in the device
-        n_meta_grid_pts: Integer, number of cells in r, phi, zeta
-            to use for interpolation
+        field: InterpolatedField object (simsopt) defined in cylindrical
+            coordinates with ``r_range``, ``phi_range``, and ``z_range``
+            attributes.
+        surface_classifier: SurfaceClassifier object used to evaluate the
+            signed distance to the plasma boundary at each grid point.
 
     Returns:
-        r_range : (r_start, r_end, number of grid points in r for interpolation)
-        phi_range : same as r_range, but for phi
-        z_range : same as r_range, but for zeta
-        cell_quad_pts : The interpolant data. Each row is a point in the grid,
-         data is stored in columns B, GradAbsB, signed distance function
+        r_range : (r_start, r_end, number of grid points in r)
+        phi_range : (phi_start, phi_end, number of grid points in phi)
+        z_range : (z_start, z_end, number of grid points in z)
+        cell_quad_pts : Interpolant data reordered for GPU access. Shape is
+            ``(n_cells * 64, n_features)`` where columns contain the magnetic
+            field, gradient of |B|, and signed distance function values at
+            the spline quadrature nodes for each cell.
     """
 
     r_range = (field.r_range[0], field.r_range[1], 3 * field.r_range[2] + 1)
@@ -243,6 +246,10 @@ def cartesian_interpolant(field, surface_classifier):
                     + cell_z
                 )
 
+                # if cell_r == 24 and cell_phi == 22 and cell_z == 20:
+                #     print(row_start)
+
+                assert 3 * cell_r + i < r_range[2]
                 # iterate over spline locations for this cell
                 for i in range(4):
                     for j in range(4):

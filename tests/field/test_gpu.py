@@ -20,7 +20,7 @@ try:
     from simsopt.geo import SurfaceRZFourier
 
     HAS_SIMSOPT = True
-except ImportError:
+except Exception:
     HAS_SIMSOPT = False
 from firm3d.catapult.utils import (
     boozer_interpolant,
