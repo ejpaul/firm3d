@@ -22,6 +22,7 @@ try:
     HAS_SIMSOPT = True
 except Exception:
     HAS_SIMSOPT = False
+    InterpolatedField = type(None)
 from firm3d.catapult.utils import (
     boozer_interpolant,
     boozer_saw_interpolant,
