@@ -204,7 +204,7 @@ class OrbitClassification:
                   dchi < ripple_trapped_crit * dchi_predicted
                 * Banana trapped: otherwise
             - J_|| is computed using the trapezoidal rule as:
-              ∫ v_|| dζ / (B·∇ζ)
+              ∫ v_|| dζ / (b·∇ζ)
             - Mirror segments requires at least 2 bounces for classification;
               If no bounces, particle is classified as passing;
               If 1 bounce, classified as barely trapped if dchi_total > barely_trapped_crit.
@@ -351,7 +351,19 @@ class OrbitClassification:
             # it is barely trapped
             dchi_total = np.abs(chi[-1] - chi[0])
             if dchi_total > self.barely_trapped_crit:
+                # Only one mirror point — no full bounce segment exists.
+                # Treat the entire trajectory as a single pre-first-bounce segment:
+                # classify as barely trapped if the total chi excursion exceeds the
+                # threshold. All other per-segment quantities are undefined; insert
+                # zero placeholders so all arrays have consistent length (1 or 0).
                 status = np.array([1])
+                dchis = np.array([dchi_total])
+                dchis_predicted = np.insert(dchis_predicted, 0, 0)
+                gammacs = np.insert(gammacs, 0, 0)
+                Jpars = np.insert(Jpars, 0, 0)
+                s_means = np.insert(s_means, 0, 0)
+                dalphas = np.insert(dalphas, 0, 0)
+                dss = np.insert(dss, 0, 0)
                 banana_frac = 0.0
                 barely_trapped_frac = 1.0
                 ripple_trapped_frac = 0.0
@@ -427,7 +439,6 @@ class OrbitClassification:
             "lam": lam,
             "point0": point,
             "vpar0": vpar_init,
-            # All of these quantities have length nbounce-1
             "status": status,
             "dss": dss,
             "dalphas": dalphas,
