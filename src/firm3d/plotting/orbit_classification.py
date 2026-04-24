@@ -207,7 +207,8 @@ class OrbitClassification:
               ∫ v_|| dζ / (b·∇ζ)
             - Mirror segments requires at least 2 bounces for classification;
               If no bounces, particle is classified as passing;
-              If 1 bounce, classified as barely trapped if dchi_total > barely_trapped_crit.
+              If 1 bounce, classified as barely trapped if
+              dchi_total > barely_trapped_crit.
               When no classification is possible, returns zeros.
             - Requires at least 4 bounces for Jpar_var computation
         """
