@@ -155,7 +155,7 @@ class OrbitClassification:
                 - 'bounce_times' (list): Times when bounces occur
                   [seconds], length nbounce
                 - 'lam' (float): Trapping parameter
-                  λ = v_perp^2 / (v^2 * B), dimensionless
+                  λ = v_perp^2 / (v^2 * B), [1/Tesla]
                 - 'point0' (ndarray): Initial position [s, theta, zeta]
                 - 'vpar0' (float): Initial parallel velocity [m/s]
 
