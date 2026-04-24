@@ -381,7 +381,8 @@ class OrbitClassification:
             # Low variation indicates good adiabatic invariant
             if nbounce > 3:
                 # Sum consecutive half-bounces
-                Jpar_full = Jpars[0:-1] + Jpars[1::]
+                Jpars_arr = np.array(Jpars)
+                Jpar_full = Jpars_arr[0:-1] + Jpars_arr[1::]
                 # Normalized std deviation
                 Jpar_var = np.std(Jpar_full) / np.mean(Jpar_full)
             else:
