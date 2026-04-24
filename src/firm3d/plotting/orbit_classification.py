@@ -312,8 +312,8 @@ class OrbitClassification:
             dchis_predicted.append(dchi_predicted)
 
             # Compute parallel action variable J_|| = ∮ v_|| dℓ_|| / (2π)
-            # Using the canonical form: J_|| = ∫ v_|| dζ / (B·∇ζ)
-            # where B·∇ζ = B / (G + ιI) in Boozer coordinates
+            # Using the canonical form: J_|| = ∫ v_|| dζ / (b·∇ζ)
+            # where b·∇ζ = B / (G + ιI) in Boozer coordinates
             points = np.zeros((index_end - index_start + 1, 3))
             points[:, 0] = res_ty[index_start : index_end + 1, 1]
             points[:, 1] = res_ty[index_start : index_end + 1, 2]
