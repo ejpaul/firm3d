@@ -882,7 +882,7 @@ class TestGPUTracing(unittest.TestCase):
         order = 12  # order of coil curves
 
         filename = "examples/inputs/coils.curves_22_7_21"
-        wout_filename = "examples/inputs/wout_vmec.nc"
+        wout_filename = "examples/inputs/wout_aten_rescaled.nc"
 
         surf = SurfaceRZFourier.from_wout(wout_filename)
 

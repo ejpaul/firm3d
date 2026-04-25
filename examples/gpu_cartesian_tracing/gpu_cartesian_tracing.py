@@ -25,7 +25,7 @@ n = 16  # resolution of interpolant
 order = 12  # order of coil curves
 
 filename = "../inputs/coils.curves_22_7_21"
-wout_filename = "../inputs/wout_vmec.nc"
+wout_filename = "../inputs/wout_aten_rescaled.nc"
 
 surf = SurfaceRZFourier.from_wout(wout_filename)
 
