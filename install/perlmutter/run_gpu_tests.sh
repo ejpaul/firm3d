@@ -1,13 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=firm3d-gpu-ci
 #SBATCH --partition=gpu
-#SBATCH --constraint=gpu
-#SBATCH --qos=debug
+#SBATCH --qos=regular
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=1
 #SBATCH --cpus-per-task=16
-#SBATCH --time=00:30:00
-#SBATCH --licenses=scratch
+#SBATCH --time=01:00:00
 
 # Usage: sbatch run_gpu_tests.sh <work_dir>
 #   work_dir  - directory containing the firm3d checkout (e.g. $PSCRATCH/firm3d-ci/<sha>)
