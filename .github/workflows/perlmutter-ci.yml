@@ -35,7 +35,7 @@ jobs:
           JOB_ID=$(sbatch \
             --account="$NERSC_ACCOUNT" \
             --output="$WORK_DIR/slurm-%j.out" \
-            "$WORK_DIR/run_gpu_tests.sh" "$WORK_DIR" \
+            "$WORK_DIR/run_gpu_tests.sh" "$WORK_DIR" "$GITHUB_WORKSPACE" \
             | awk '{print $NF}')
           echo "Submitted SLURM job $JOB_ID"
 

@@ -7,21 +7,23 @@
 #SBATCH -c 32
 #SBATCH --time=01:00:00
 
-# Usage: sbatch run_gpu_tests.sh <work_dir>
-#   work_dir  - directory containing the firm3d checkout (e.g. $PSCRATCH/firm3d-ci/<sha>)
+# Usage: sbatch run_gpu_tests.sh <work_dir> <firm3d_dir>
+#   work_dir    - directory for output files (slurm log, coverage, exit code)
+#   firm3d_dir  - path to the firm3d checkout ($GITHUB_WORKSPACE on the runner)
 #
 # Expects a conda environment named "firm3d-ci" to already exist.
 # Create it once with install/perlmutter/setup_ci_env.sh.
 
 set -euo pipefail
 
-WORK_DIR="${1:?Usage: $0 <work_dir>}"
-FIRM3D_DIR="$WORK_DIR/firm3d"
+WORK_DIR="${1:?Usage: $0 <work_dir> <firm3d_dir>}"
+FIRM3D_DIR="${2:?Usage: $0 <work_dir> <firm3d_dir>}"
 EXIT_CODE_FILE="$WORK_DIR/test_exit_code.txt"
 
 echo "=== firm3d GPU CI on $(hostname) ==="
-echo "Work dir : $WORK_DIR"
-echo "Commit   : $(git -C $FIRM3D_DIR rev-parse HEAD)"
+echo "Work dir  : $WORK_DIR"
+echo "Firm3d dir: $FIRM3D_DIR"
+echo "Commit    : $(git -C $FIRM3D_DIR rev-parse HEAD)"
 echo "Started  : $(date)"
 
 # ── Modules ───────────────────────────────────────────────────────────────────
