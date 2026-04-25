@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=firm3d-gpu-ci
-#SBATCH --partition=gpu
-#SBATCH --qos=regular
-#SBATCH --nodes=1
-#SBATCH --gpus-per-node=1
-#SBATCH --cpus-per-task=16
+#SBATCH -C gpu
+#SBATCH -q shared
+#SBATCH --gpus-per-task=1
+#SBATCH -n 1
+#SBATCH -c 32
 #SBATCH --time=01:00:00
 
 # Usage: sbatch run_gpu_tests.sh <work_dir>
