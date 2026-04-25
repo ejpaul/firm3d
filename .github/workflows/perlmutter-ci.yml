@@ -1,0 +1,75 @@
+name: Perlmutter GPU CI
+
+# Runs GPU tests on NERSC Perlmutter via a self-hosted Actions runner.
+# The runner must be running on a Perlmutter login node; see
+# install/perlmutter/setup_ci_env.sh for the one-time environment setup.
+#
+# Required: NERSC_ACCOUNT GitHub secret (SLURM project account, e.g. m4505)
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    types: [labeled, synchronize]
+
+jobs:
+  perlmutter-gpu:
+    if: >
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.labels.*.name, 'GPU CI')
+    runs-on: [perlmutter]
+    timeout-minutes: 1440
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Submit SLURM job and wait
+        env:
+          NERSC_ACCOUNT: ${{ secrets.NERSC_ACCOUNT }}
+          GH_SHA: ${{ github.sha }}
+          WORK_DIR: ${{ runner.temp }}/firm3d-${{ github.sha }}
+        run: |
+          mkdir -p "$WORK_DIR"
+          cp install/perlmutter/run_gpu_tests.sh "$WORK_DIR/run_gpu_tests.sh"
+
+          JOB_ID=$(sbatch \
+            --account="$NERSC_ACCOUNT" \
+            --output="$WORK_DIR/slurm-%j.out" \
+            "$WORK_DIR/run_gpu_tests.sh" "$WORK_DIR" \
+            | awk '{print $NF}')
+          echo "Submitted SLURM job $JOB_ID"
+
+          echo "Polling job $JOB_ID every 60 s..."
+          while true; do
+            STATE=$(squeue -j "$JOB_ID" -h -o '%T' 2>/dev/null || true)
+            echo "  $(date '+%H:%M:%S')  state: ${STATE:-DONE}"
+            case "$STATE" in
+              PENDING|CONFIGURING|RUNNING|COMPLETING) sleep 60 ;;
+              FAILED|TIMEOUT|CANCELLED|OUT_OF_MEMORY)
+                cat "$WORK_DIR/slurm-$JOB_ID.out" || true
+                echo "::error::SLURM job ended in state: $STATE"
+                exit 1 ;;
+              *) break ;;
+            esac
+          done
+
+          cat "$WORK_DIR/slurm-$JOB_ID.out"
+
+          EXIT_CODE=$(cat "$WORK_DIR/test_exit_code.txt" | tr -d '[:space:]')
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "::error::GPU tests failed (exit $EXIT_CODE)"
+            exit 1
+          fi
+          echo "All GPU tests passed."
+
+      - name: Upload coverage to Codecov
+        if: hashFiles('${{ runner.temp }}/firm3d-${{ github.sha }}/coverage.xml') != ''
+        uses: codecov/codecov-action@v3
+        with:
+          file: ${{ runner.temp }}/firm3d-${{ github.sha }}/coverage.xml
+          flags: unittests
+          name: codecov-perlmutter
+
+      - name: Clean up work directory
+        if: always()
+        run: rm -rf "${{ runner.temp }}/firm3d-${{ github.sha }}"
