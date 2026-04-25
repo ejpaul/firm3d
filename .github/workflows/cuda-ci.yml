@@ -2,7 +2,6 @@ name: NVIDIA GPU workflow
 on:
   push:
     branches:
-      - main
       - gpu
       - master
       - gpu_cartesian
