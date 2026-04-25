@@ -51,8 +51,7 @@ class OrbitClassification:
             helicity_M (int): Poloidal mode number of the helicity being
                 analyzed (M=0 for axisymmetric, M≠0 for helical).
             helicity_N (int): Toroidal mode number of the helicity being
-                analyzed (in units of nfp). The helical angle is defined as
-                chi = M*theta - N*zeta.
+                analyzed. The helical angle is defined as chi = M*theta - N*zeta.
             barely_trapped_crit (float, optional): Critical angle [radians]
                 for barely trapped classification. Particles with
                 dchi > barely_trapped_crit are classified as barely trapped.
@@ -67,7 +66,7 @@ class OrbitClassification:
             - For M=0 (axisymmetric), modB contours close poloidally, so
               theta is used as the mapping coordinate (Mp=1, Np=0).
             - For M≠0 (helical), modB contours close toroidally, so zeta
-              is used as the mapping coordinate (Mp=0, Np=nfp).
+              is used as the mapping coordinate (Mp=0, Np=-1).
         """
         self.field = field
         self.Ekin = Ekin
@@ -88,7 +87,7 @@ class OrbitClassification:
         # Otherwise, use zeta as mapping coordinate
         else:
             self.helicity_Mp = 0
-            self.helicity_Np = self.nfp
+            self.helicity_Np = -1
 
     def chi_eta_to_theta_zeta(self, chi, eta):
         r"""
@@ -156,11 +155,13 @@ class OrbitClassification:
                 - 'bounce_times' (list): Times when bounces occur
                   [seconds], length nbounce
                 - 'lam' (float): Trapping parameter
-                  λ = v_perp^2 / (v^2 * B), dimensionless
+                  λ = v_perp^2 / (v^2 * B), [1/Tesla]
                 - 'point0' (ndarray): Initial position [s, theta, zeta]
                 - 'vpar0' (float): Initial parallel velocity [m/s]
 
-                **Per-bounce-segment arrays (all have length nbounce-1):**
+                **Per-bounce-segment arrays:**
+                These arrays have length nbounce-1 if pre-first-bounce
+                segment is not classified, otherwise length is nbounce.
                 - 'status' (ndarray): Trapping state classification for
                   each segment: 0 = banana trapped, 1 = barely trapped,
                   2 = ripple trapped
@@ -203,16 +204,20 @@ class OrbitClassification:
                   dchi < ripple_trapped_crit * dchi_predicted
                 * Banana trapped: otherwise
             - J_|| is computed using the trapezoidal rule as:
-              ∫ v_|| dζ / (B·∇ζ)
-            - Requires at least 2 bounces for classification; returns
-              zeros if nbounce < 2
+              ∫ v_|| dζ / (b·∇ζ)
+            - Mirror segments requires at least 2 bounces for classification;
+              If no bounces, particle is classified as passing;
+              If 1 bounce, classified as barely trapped if
+              dchi_total > barely_trapped_crit.
+              When no classification is possible, returns zeros.
             - Requires at least 4 bounces for Jpar_var computation
         """
 
         # Compute all of the times when the particle bounces off vpar plane
         # These are mirror points where particle reverses direction
         bounce_times = []
-        nhits = len(res_hit[:, 0])
+        nhits = len(res_hit)
+
         for j in range(nhits):
             if res_hit[j, 1] == 0:  # vpar plane was hit
                 bounce_times.append(res_hit[j, 0])
@@ -221,6 +226,7 @@ class OrbitClassification:
 
         # Unwrap theta to handle periodic boundary crossings (prevents jumps at ±π)
         thetas = np.unwrap(res_ty[:, 2])
+        zetas = res_ty[:, 3]
 
         # Extract initial conditions
         point = np.zeros((1, 3))
@@ -259,12 +265,13 @@ class OrbitClassification:
             # Compute change in helical angle chi = M*theta - N*zeta
             # This is the primary quantity used for classification
             dtheta = thetas[index_end] - thetas[index_start]
-            dzeta = res_ty[index_end, 3] - res_ty[index_start, 3]
+            dzeta = zetas[index_end] - zetas[index_start]
             dchi = self.helicity_M * dtheta - self.helicity_N * dzeta
             dchis.append(np.abs(dchi))
 
             # Compute mean radial position during this bounce segment
             mean_s = np.mean(res_ty[index_start : index_end + 1, 1])
+            s_means.append(mean_s)
 
             # Predict dchi based on mirror point locations on constant-s
             # Sample modB on a chi grid at fixed s and eta=0
@@ -306,8 +313,8 @@ class OrbitClassification:
             dchis_predicted.append(dchi_predicted)
 
             # Compute parallel action variable J_|| = ∮ v_|| dℓ_|| / (2π)
-            # Using the canonical form: J_|| = ∫ v_|| dζ / (B·∇ζ)
-            # where B·∇ζ = B / (G + ιI) in Boozer coordinates
+            # Using the canonical form: J_|| = ∫ v_|| dζ / (b·∇ζ)
+            # where b·∇ζ = B / (G + ιI) in Boozer coordinates
             points = np.zeros((index_end - index_start + 1, 3))
             points[:, 0] = res_ty[index_start : index_end + 1, 1]
             points[:, 1] = res_ty[index_start : index_end + 1, 2]
@@ -328,17 +335,47 @@ class OrbitClassification:
         dchis = np.array(dchis)
         dchis_predicted = np.array(dchis_predicted)
 
+        chi = self.helicity_M * thetas - self.helicity_N * zetas
+
         # Classify the trapping state based on dchi for each bounce segment
-        if nbounce < 2:
-            # Particle never mirrored - cannot classify trapping state
-            Jpar_var = 0.0
-            gammac_mean = 0.0
-            ntransitions = 0
-            # Initialize empty arrays for consistency
+        if nbounce == 0:
+            # Particle never bounced, no segments to classify
             status = np.array([])
             banana_frac = 0.0
             barely_trapped_frac = 0.0
             ripple_trapped_frac = 0.0
+            Jpar_var = 0.0
+            gammac_mean = 0.0
+            ntransitions = 0
+        elif nbounce == 1:
+            # Particle only bounced once - cannot classify trapping state unless
+            # it is barely trapped
+            dchi_total = np.abs(chi[-1] - chi[0])
+            if dchi_total > self.barely_trapped_crit:
+                # Only one mirror point — no full bounce segment exists.
+                # Treat the entire trajectory as a single pre-first-bounce segment:
+                # classify as barely trapped if the total chi excursion exceeds the
+                # threshold. All other per-segment quantities are undefined; insert
+                # zero placeholders so all arrays have consistent length (1 or 0).
+                status = np.array([1])
+                dchis = np.array([dchi_total])
+                dchis_predicted = np.insert(dchis_predicted, 0, 0)
+                gammacs = np.insert(gammacs, 0, 0)
+                Jpars = np.insert(Jpars, 0, 0)
+                s_means = np.insert(s_means, 0, 0)
+                dalphas = np.insert(dalphas, 0, 0)
+                dss = np.insert(dss, 0, 0)
+                banana_frac = 0.0
+                barely_trapped_frac = 1.0
+                ripple_trapped_frac = 0.0
+            else:
+                status = np.array([])
+                banana_frac = 0.0
+                barely_trapped_frac = 0.0
+                ripple_trapped_frac = 0.0
+            Jpar_var = 0.0
+            gammac_mean = 0.0
+            ntransitions = 0
         else:
             # Classification logic:
             # - Start with all segments as banana trapped (status=0)
@@ -350,6 +387,36 @@ class OrbitClassification:
             status[dchis > self.barely_trapped_crit] = 1
             status[dchis < self.ripple_trapped_crit * dchis_predicted] = 2
 
+            # Compute mean gamma_c over all bounce segments
+            gammac_mean = np.mean(gammacs)
+            # Compute variation in J_|| over full bounce periods
+            # Full bounce = half-bounce up + half-bounce down
+            # Low variation indicates good adiabatic invariant
+            if nbounce > 3:
+                # Sum consecutive half-bounces
+                Jpars_arr = np.array(Jpars)
+                Jpar_full = Jpars_arr[0:-1] + Jpars_arr[1::]
+                # Normalized std deviation
+                Jpar_var = np.std(Jpar_full) / np.mean(Jpar_full)
+            else:
+                Jpar_var = 0.0
+
+            # Consider pre-first-bounce as incomplete bounce segment,
+            # try to classify as barely trapped segment.
+            end_index = np.argmin(np.abs(bounce_times[0] - res_ty[:, 0]))
+            dchi_init = np.abs(chi[end_index] - chi[0])
+            if dchi_init > self.barely_trapped_crit:
+                status = np.insert(status, 0, 1)
+                dchis = np.insert(dchis, 0, dchi_init)
+                # Below quantities not well-defined for pre-first-bounce segment,
+                # insert zeros as placeholders:
+                dchis_predicted = np.insert(dchis_predicted, 0, 0)
+                gammacs = np.insert(gammacs, 0, 0)
+                Jpars = np.insert(Jpars, 0, 0)
+                s_means = np.insert(s_means, 0, 0)
+                dalphas = np.insert(dalphas, 0, 0)
+                dss = np.insert(dss, 0, 0)
+
             # Compute fraction of time in each trapping state
             barely_trapped_frac = np.count_nonzero(
                 dchis > self.barely_trapped_crit
@@ -359,26 +426,12 @@ class OrbitClassification:
             ) / len(dchis)
             banana_frac = np.count_nonzero(
                 (dchis <= self.barely_trapped_crit)
-                * (dchis >= self.ripple_trapped_crit)
+                * (dchis >= self.ripple_trapped_crit * dchis_predicted)
             ) / len(dchis)
 
             # Count transitions between different trapping states
             # Fewer transitions = more stable classification
             ntransitions = np.count_nonzero(status[0:-1] != status[1::])
-
-            # Compute mean gamma_c over all bounce segments
-            gammac_mean = np.mean(gammacs) if nbounce > 1 else 0.0
-
-            # Compute variation in J_|| over full bounce periods
-            # Full bounce = half-bounce up + half-bounce down
-            # Low variation indicates good adiabatic invariant
-            if nbounce > 3:
-                # Sum consecutive half-bounces
-                Jpar_full = Jpars[0:-1] + Jpars[1::]
-                # Normalized std deviation
-                Jpar_var = np.std(Jpar_full) / np.mean(Jpar_full)
-            else:
-                Jpar_var = 0.0
 
         particle_dict = {
             "losttime": res_ty[-1, 0],
@@ -387,7 +440,6 @@ class OrbitClassification:
             "lam": lam,
             "point0": point,
             "vpar0": vpar_init,
-            # All of these quantities have length nbounce-1
             "status": status,
             "dss": dss,
             "dalphas": dalphas,
