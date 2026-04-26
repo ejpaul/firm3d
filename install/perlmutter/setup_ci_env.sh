@@ -17,7 +17,7 @@ set -euo pipefail
 
 ENV_NAME="firm3d-ci"
 
-module load cudatoolkit python cray-hdf5 cray-netcdf
+module load cudatoolkit python cray-hdf5 cray-netcdf cray-mpich
 
 echo "Creating conda environment '$ENV_NAME' from nersc-python..."
 conda create -n "$ENV_NAME" --clone nersc-python -y
