@@ -32,17 +32,6 @@ class ZetaStoppingCriterion : public StoppingCriterion {
         };
 };
 
-class VparStoppingCriterion : public StoppingCriterion {
-    private:
-        double vpar_crit;
-    public:
-        VparStoppingCriterion(double vpar_crit) : vpar_crit(vpar_crit) {
-        };
-        bool operator()(int iter, double dt, double t, double x, double y, double z, double vpar) override {
-            return std::abs(vpar)<=vpar_crit;
-        };
-};
-
 class ToroidalTransitStoppingCriterion : public StoppingCriterion {
     private:
         int max_transits;

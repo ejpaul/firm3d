@@ -20,7 +20,6 @@ __all__ = [
     "IterationStoppingCriterion",
     "ToroidalTransitStoppingCriterion",
     "StepSizeStoppingCriterion",
-    "VparStoppingCriterion",
     "compute_resonances",
     "compute_poloidal_transits",
     "compute_toroidal_transits",
@@ -748,21 +747,6 @@ class IterationStoppingCriterion(sopp.IterationStoppingCriterion):
 class StepSizeStoppingCriterion(sopp.StepSizeStoppingCriterion):
     """
     Stop the iteration once the step size is too small.
-    """
-
-    pass
-
-class VparStoppingCriterion(sopp.VparStoppingCriterion):
-    """
-    Stop the iteration once the critical Vpar is reached.
-
-    Usage:
-
-    .. code-block::
-
-        stopping_criteria=[VparStoppingCriterion(vpar_crit)]
-
-    where ``vpar_crit`` is the critical vpar at which tracing stops.
     """
 
     pass
