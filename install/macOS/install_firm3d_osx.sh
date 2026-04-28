@@ -29,7 +29,7 @@ check_success "Failed to activate conda environment $env_name"
 
 # Install Dependencies
 echo "Installing FIRM3D dependencies..."
-conda install -y compilers netcdf-fortran openmpi-mpicc openmpi-mpifort openblas scalapack gsl matplotlib --name "$env_name"
+conda install -y compilers netcdf-fortran openmpi-mpicc openmpi-mpifort openblas scalapack gsl matplotlib nlohmann_json --name "$env_name"
 pip install mpi4py
 check_success "Failed to install FIRM3D dependencies"
 
