@@ -55,7 +55,11 @@ jobs:
 
           cat "$WORK_DIR/slurm-$JOB_ID.out"
 
-          EXIT_CODE=$(cat "$WORK_DIR/test_exit_code.txt" | tr -d '[:space:]')
+          if [ ! -f "$WORK_DIR/test_exit_code.txt" ]; then
+            echo "::error::SLURM job did not produce test_exit_code.txt — job likely crashed before tests ran"
+            exit 1
+          fi
+          EXIT_CODE=$(tr -d '[:space:]' < "$WORK_DIR/test_exit_code.txt")
           if [ "$EXIT_CODE" != "0" ]; then
             echo "::error::GPU tests failed (exit $EXIT_CODE)"
             exit 1
@@ -63,7 +67,9 @@ jobs:
           echo "All GPU tests passed."
 
       - name: Upload coverage to Codecov
-        if: hashFiles('${{ runner.temp }}/firm3d-${{ github.sha }}/coverage.xml') != ''
+        if: >
+          success() &&
+          hashFiles(format('{0}/firm3d-{1}/coverage.xml', runner.temp, github.sha)) != ''
         uses: codecov/codecov-action@v3
         with:
           file: ${{ runner.temp }}/firm3d-${{ github.sha }}/coverage.xml
