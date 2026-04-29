@@ -24,6 +24,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Submit SLURM job and wait
+        id: slurm
         env:
           NERSC_ACCOUNT: ${{ secrets.NERSC_ACCOUNT }}
           GH_SHA: ${{ github.sha }}
@@ -41,6 +42,8 @@ jobs:
 
           echo "Polling job $JOB_ID every 60 s..."
           while true; do
+            # Touch a file so the login node doesn't consider this session idle.
+            touch "$WORK_DIR/.runner-keepalive"
             STATE=$(squeue -j "$JOB_ID" -h -o '%T' 2>/dev/null || true)
             echo "  $(date '+%H:%M:%S')  state: ${STATE:-DONE}"
             case "$STATE" in
@@ -66,10 +69,11 @@ jobs:
           fi
           echo "All GPU tests passed."
 
+          # Record whether coverage was produced for the next step.
+          [ -f "$WORK_DIR/coverage.xml" ] && echo "coverage=true" >> "$GITHUB_OUTPUT" || true
+
       - name: Upload coverage to Codecov
-        if: >
-          success() &&
-          hashFiles(format('{0}/firm3d-{1}/coverage.xml', runner.temp, github.sha)) != ''
+        if: steps.slurm.outputs.coverage == 'true'
         uses: codecov/codecov-action@v3
         with:
           file: ${{ runner.temp }}/firm3d-${{ github.sha }}/coverage.xml
