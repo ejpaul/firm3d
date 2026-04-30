@@ -43,7 +43,7 @@ except ImportError:
 
 
 folder = "DATA/"
-fname = "highres"
+fname = ""
 boozmn_filename = "../inputs/boozmn_beta2.5_QA.nc"
 
 mpl.rcParams["font.size"] = 14  # base font size
@@ -99,11 +99,25 @@ heat_map = MapEquilibrium(
     helicity_Mp=helicity_Mp,
     helicity_Np=helicity_Np,
     ns_points=40,
-    particles_per_surface=30,
+    particles_per_surface=20,
     nlambda_points=40,
     comm=comm,
-    savedata=(True, folder + fname),
+    savedata=True,
+    savepath="",
 )
+
+stat, x_edges, y_edges, binnumber = binned_statistic_2d(
+            heat_map.bounces,
+            heat_map.passes,
+            heat_map.DAs_at_loss,
+            statistic=statistic,
+            bins=[nx, ny],
+        )
+
+norm = mpl.colors.Normalize(vmin=0, vmax=DA_max)
+X2, Y2 = np.meshgrid(x_edges, y_edges)
+plt.pcolormesh(X2, Y2, stat.T, shading="auto", cmap=cmap, norm=norm)
+plt.savefig(fname + "_PSmap.png", dpi=300)
 
 if verbose:
     heat_map.plot_surfaces(savepath=fname + "_PSmap_min.png", minimum_DA=True, plot_at_loss=False)

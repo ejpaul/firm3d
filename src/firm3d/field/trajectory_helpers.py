@@ -102,12 +102,16 @@ def compute_trajectory_cylindrical(res_ty, field):
 
 def min_volumemodB(B0):
     r"""
-    Estimate minimum magnetic-field magnitude over sampled surfaces.
+    Estimate minimum magnetic-field magnitude over sampled surfaces
+    by evaluating |B| on a uniform grid of flux surfaces.
+
+    Args:
+        B0 : The :class:`BoozerMagneticField` instance to evaluate.
 
     Returns:
-        min_modB : Approximate minimum value of modB in the sampled volume.
+        min_modB : Approximate minimum value of |B| in the sampled volume.
     """
-    resolution = 100
+    resolution = 1000
     points = np.zeros((resolution * resolution, 3))
 
     for surface in np.linspace(0, 0.99, resolution):
@@ -168,10 +172,10 @@ class PassingPoincare:
         Args:
             field : The :class:`BoozerMagneticField` instance.
             lam : Pitch-angle variable :math:`\lambda = v_\perp^2/(v^2 B)`.
-            sign_vpar : Sign of the parallel velocity.
+            sign_vpar : Sign of the parallel velocity (+1 or -1).
             mass : Particle mass.
             charge : Particle charge.
-            Ekin : Particle total energy.
+            Ekin : Particle total kinetic energy.
             s_init : List of initial s coordinates for the Poincare map.
                      (default: None, ns_poinc is used instead)
             thetas_init : List of initial theta coordinates for the Poincare
@@ -187,6 +191,24 @@ class PassingPoincare:
                    map (default: 1e-2 s).
             solver_options : Dictionary of options to pass to the ODE solver
                              (default: {}).
+            helicity_M : Poloidal helicity of the field-strength contours.
+                         Required when computing the canonical momentum
+                         :math:`p_{\eta}` or performing chaos detection.
+            helicity_N : Toroidal helicity of the field-strength contours.
+                         Required when computing the canonical momentum
+                         :math:`p_{\eta}` or performing chaos detection.
+            helicity_Mp : Poloidal helicity of the mapping coordinate eta.
+                          If None, determined automatically from helicity_M.
+            helicity_Np : Toroidal helicity of the mapping coordinate eta.
+                          If None, determined automatically from helicity_N.
+            chaos_detection : If True, compute the Weighted Birkhoff Average
+                              (WBA) digit accuracy along each trajectory
+                              (default: False).
+            nconvergence_points : Number of WBA evaluations per trajectory
+                                  used to assess convergence of the chaos
+                                  detection metric. If None and
+                                  chaos_detection=True, a single evaluation
+                                  at the end of the trajectory is used.
         """
         if solver_options is None:
             solver_options = {}
@@ -198,7 +220,9 @@ class PassingPoincare:
 
         if helicity_N is None and helicity_M is None: 
             self.peta_profile = False
-        else: self.peta_profile = True
+        else: 
+            self.peta_profile = True
+            print('somehow true')
         if (self.helicity_M is None) and (self.helicity_N is None) and chaos_detection==True:
             raise ValueError("helicity_M and helicity_N must be provided for chaos detection.")
 
@@ -431,6 +455,8 @@ class PassingPoincare:
                     helicity_Np=self.helicity_Np,
                 )
                 peta_traj = [peta[0]]
+            else: 
+                peta_traj = []
             
             thetas_traj = [tr[1]]
             vpars_traj = [tr[2]]
@@ -443,11 +469,11 @@ class PassingPoincare:
                         tr, time, Peta = self.passing_map(tr)
                     else:
                         tr, time, Peta_iter = self.passing_map(tr)
-                        Peta_iter[:, 0] += Peta[-1, 0]
-                        Peta = np.vstack((Peta, Peta_iter[1:, :]))
                     
                     if self.peta_profile: 
-                        peta_traj.append(Peta[-1,1])
+                        peta_traj.append(Peta_iter[-1, 1])
+                        Peta_iter[:, 0] += Peta[-1, 0]
+                        Peta = np.vstack((Peta, Peta_iter[1:, :]))
 
                     t_traj.append(time)
                     s_traj.append(tr[0])
@@ -459,7 +485,7 @@ class PassingPoincare:
                         particle_DA_times.append(_jj)
                 except RuntimeError:
                     break
-            peta_all.append(peta_traj)
+            if self.peta_profile: peta_all.append(peta_traj)
             s_all.append(s_traj)
             thetas_all.append(thetas_traj)
             vpars_all.append(vpars_traj)
@@ -832,7 +858,7 @@ class TrappedPoincare:
         if (self.helicity_M is None) and (self.helicity_N is None) and chaos_detection==True:
             raise ValueError("helicity_M and helicity_N must be provided for chaos detection.")
 
-        if self.helicity_Mp is None and self.helicity_Np is None:
+        if helicity_Mp is None and helicity_Np is None:
             # If modB contours close poloidally, then use theta as mapping coordinate
             if self.helicity_M == 0:
                 self.helicity_Mp = 1
@@ -967,6 +993,7 @@ class TrappedPoincare:
             point : A numpy array of shape (3,) containing the coordinates
                 (s,theta,zeta) when the trajectory returns to the vpar = 0 plane.
             time : The time taken to return to the vpar = 0 plane.
+            peta : A numpy array of shape (N, 2) containing the time and peta values along the trajectory.
         """
         theta, zeta = self.chi_eta_to_theta_zeta(point[1], point[2])
         points = np.zeros((1, 3))
@@ -1543,59 +1570,6 @@ def compute_Eprime(
     Eprime = nprime * E - omega * p_eta
     return Eprime
 
-def vpar_func_perturbed(
-    saw,
-    s,
-    theta,
-    zeta,
-    mass,
-    helicity_M,
-    helicity_N,
-    helicity_Mp,
-    helicity_Np,
-    Eprime,
-    mu,
-    charge,
-    nprime,
-    omega,
-    sign_vpar=1,
-):
-    point = np.zeros((1, 4))  # initialize with t = 0
-    point[0, 0] = s
-    point[0, 1] = theta
-    point[0, 2] = zeta
-
-    # Choose initial conditions on the eta = 0 plane
-    modB = saw.B0.modB()[0, 0]
-    G = saw.B0.G()[0, 0]
-    I = saw.B0.I()[0, 0]
-    psi = saw.B0.psi0 * s
-    psip = saw.B0.psip()[0, 0]
-    denom = helicity_Np * helicity_M - helicity_N * helicity_Mp  # - 1 in QA
-    d_peta_d_vpar = (
-        -((helicity_M * G + helicity_N * I) * (mass / modB)) / denom
-    )  # G m/ modB in QA
-    d_E_d_vpar2 = 0.5 * mass
-    a = nprime * d_E_d_vpar2  # Coefficient of vpar^2
-    b = -omega * d_peta_d_vpar  # Coefficient of vpar
-    # Constant term
-    c = (
-        nprime * (mass * mu * modB + charge * Phi)
-        + omega
-        * (
-            (helicity_M * G + helicity_N * I) * charge * alpha
-            + charge * (helicity_N * psi - helicity_M * psip)
-        )
-        / denom
-        - Eprime
-    )
-    if (b**2 - 4 * a * c) < 0:
-        return None
-    elif a != 0:
-        return (-b + sign_vpar * np.sqrt(b**2 - 4 * a * c)) / (2 * a)
-    else:
-        return (-c / b) * sign_vpar
-
 
 def g(t, T):
     """
@@ -1784,6 +1758,7 @@ class PassingPerturbedPoincare:
                 "Expected saw to be an instance of ShearAlfvenHarmonic "
                 "or ShearAlfvenWavesSuperposition"
             )
+            
         if not isinstance(saw, ShearAlfvenHarmonic):
             dominant_saw = saw[0]
             raise Warning(
@@ -2537,7 +2512,8 @@ class MapEquilibrium:
         ns_points=25,
         particles_per_surface=25,
         nlambda_points=25,
-        savedata=(True, ""),
+        savedata=True,
+        savepath='',
         randomize_particles=False,
         number_of_particles=10000,
         initial_conditions=None,
@@ -2575,8 +2551,6 @@ class MapEquilibrium:
             - on a structured grid in surface label and pitch coordinate, with multiple
               particles sampled on each surface.
         """
-        if savedata is None:
-            savedata = [True, "DATA/"]
         if solver_options is None:
             solver_options = {}
         if s_lims is None:
@@ -2638,9 +2612,8 @@ class MapEquilibrium:
         self.s_max = s_lims[1]
 
         # plotting settings
-        self.mean = mean
-        self.savedata = savedata[0]
-        self.savepath = savedata[1]
+        self.savedata = savedata
+        self.savepath = savepath
         self.convergence_points = nconvergence_points
 
         self.randomize = randomize_particles
@@ -2794,6 +2767,7 @@ class MapEquilibrium:
                 Ekin=self.Ekin,
                 stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
                 forget_exact_path=False,
+                dt_save=self.min_timestep,
                 abstol=self.tol,
                 reltol=self.tol,
             )
@@ -2853,15 +2827,15 @@ class MapEquilibrium:
 
             zeta_path=np.mod(points_trajectory[:, 2], 2 * np.pi)
             dzeta = np.diff(zeta_path)
-            wrap_idx = np.where(dzeta < -np.pi)[0]
+            dzeta_idx = np.where(dzeta < -np.pi)[0]
 
             true_passes = []
 
-            for passing_index in range(len(wrap_idx)-1):
-                pass1 = wrap_idx[passing_index]
-                pass2 = wrap_idx[passing_index + 1]
+            for passing_index in range(len(dzeta_idx)-1):
+                pass1 = dzeta_idx[passing_index]
+                pass2 = dzeta_idx[passing_index + 1]
                 if not np.any((bounce_indices > pass1) & (bounce_indices < pass2)):
-                    true_passes.append(wrap_idx[passing_index])
+                    true_passes.append(dzeta_idx[passing_index])
 
             true_passes = np.array(true_passes)
             passes = len(true_passes) if len(dzeta) > 0 else 0
@@ -2906,8 +2880,8 @@ class MapEquilibrium:
                 convergence_times.append(time_momentum[timing_index])
                 convergence_petas.append(Peta_values[timing_index])
 
-                bounce_enum = np.sum(bounce_indices < timing_index)
-                pass_enum = np.sum(true_passes < timing_index)
+                bounce_enum = np.searchsorted(bounce_indices, timing_index, side="left")
+                pass_enum = np.searchsorted(true_passes, timing_index, side="left")
                 
                 convergence_bounces.append(bounce_enum)
                 convergence_passes.append(pass_enum)
@@ -2940,6 +2914,8 @@ class MapEquilibrium:
         DAs_at_loss = []
 
         DA_tfinal = []
+        bounces = []
+        passes = []
 
         lost_total = []
         final_times = []
@@ -2983,6 +2959,9 @@ class MapEquilibrium:
                 vpar0.append(start_state[3])
                 mu0.append(start_state[5])
 
+                bounces.append(end_state[6])
+                passes.append(end_state[7])
+
                 # params that depend on loss
                 if final_time < (self.tmax - (5 * self.min_timestep)):
                     lost_total.append(1)
@@ -3001,6 +2980,8 @@ class MapEquilibrium:
         
         self.DAs_at_loss = DAs_at_loss
         self.DA_at_tfinal = DA_tfinal
+        self.bounces = bounces
+        self.passes = passes
 
         self.lost_total = lost_total
         self.final_times = final_times
@@ -3034,6 +3015,30 @@ class MapEquilibrium:
             minimum_DA=False,
             plot_losses=False,
     ):
+    r"""
+    Create and save a 2D heatmap of digit accuracy in the
+    (pitch angle, flux-surface label) plane, with the trapped-passing
+    boundary overlaid as a fitted curve.
+
+    Args:
+        nx          : Number of bins along the pitch-angle axis (default: 30).
+        ny          : Number of bins along the radial axis (default: 30).
+        savepath    : File path for the output heatmap image
+                      (default: 'heatmap_digit_accuracy.png').
+        plot_at_loss : If True, use the digit accuracy value at the time of
+                       loss; otherwise use the value at the end of the full
+                       integration (default: True).
+        ax          : Matplotlib axis to plot on. If None, a new figure and
+                      axis are created.
+        DA_max      : Maximum digit accuracy value shown on the colorbar
+                      (default: 7).
+        minimum_DA  : If True, show the minimum DA within each bin instead of
+                      the mean (default: False).
+        plot_losses : Currently unused (default: False).
+
+    Returns:
+        None
+    """
         import matplotlib as mpl
         import matplotlib.pyplot as plt
         from matplotlib.cm import ScalarMappable
@@ -3176,6 +3181,21 @@ class MapEquilibrium:
         plt.savefig(savepath[:-4]+"_convergence.png", dpi=300)   
 
 class MapPhaseSpace:
+    r"""
+    Phase-space mapping and digit-accuracy diagnostics for guiding-center
+    orbits in a perturbed (ShearAlfvenWave) magnetic field.
+
+    This class traces particles in a ShearAlfvenHarmonic or
+    ShearAlfvenWavesSuperposition field and computes per-particle diagnostics
+    including the Weighted Birkhoff Average (WBA) digit accuracy, wall-loss
+    status, bounce and transit counts, and the perturbed energy invariant
+    E' = n' * E - omega * p_eta.
+
+    Initial conditions are generated either on a structured grid in
+    (s, \mu) space or drawn uniformly from the
+    plasma volume. Particles lost in the equilibrium field before tracing in
+    the perturbed field are removed.
+    """
     def __init__(
         self,
         saw,
@@ -3206,10 +3226,85 @@ class MapPhaseSpace:
         solver_options={},
         savedata=True,
         file_name='',
-        nconvergence_points=1
+        convergence_points=1
     ):
-        # @TODO: add user checks for saw
-        # @TODO: add convergence points support
+    r"""
+    Initialize the MapPhaseSpace instance, generate initial conditions, and
+    trace particles in the perturbed field.
+
+    Args:
+        saw                  : A :class:`ShearAlfvenHarmonic` or
+                               :class:`ShearAlfvenWavesSuperposition` instance.
+        Phin_max             : Toroidal mode number of the dominant wave harmonic,
+                               used to compute nprime.
+        Phim_max             : Poloidal mode number of the dominant wave harmonic,
+                               used to compute nprime.
+        omega                : Wave frequency.
+        mass                 : Particle mass.
+        charge               : Particle charge.
+        Ekin                 : Total unperturbed kinetic energy.
+        helicity_N           : Toroidal helicity of the field-strength contours.
+        helicity_M           : Poloidal helicity of the field-strength contours.
+        helicity_Mp          : Poloidal helicity of the mapping coordinate eta.
+                               If None, determined automatically from helicity_M.
+        helicity_Np          : Toroidal helicity of the mapping coordinate eta.
+                               If None, determined automatically from helicity_N.
+        Eprime               : Fixed value of the shifted energy invariant
+                               n' * E - omega * p_eta. If provided, initial
+                               parallel velocities are solved from this constraint
+                               rather than from Ekin directly (default: None).
+        sign_vpar            : Sign of the parallel velocity, either +1 or -1
+                               (default: 1).
+        tmax                 : Maximum integration time per particle (default: 1e-2 s).
+        plot_s               : If True, use the flux-surface label s as the radial
+                               plot coordinate; otherwise use p_eta (default: False).
+        min_timestep         : Minimum time-step size used as the save interval and
+                               for computing the expected trajectory length
+                               (default: 1e-6 s).
+        ns_points            : Number of flux surfaces in the structured grid
+                               (default: 25).
+        particles_per_surface : Number of particles sampled on each flux surface
+                               (default: 15).
+        nlambda_points       : Number of magnetic-moment values in the structured
+                               grid (default: 25).
+        randomize_particles  : If True, sample initial conditions uniformly at
+                               random rather than on a structured grid
+                               (default: False).
+        number_of_particles  : Number of particles to sample when
+                               randomize_particles is True (default: 10000).
+        s_lims               : Two-element list [s_min, s_max] bounding the
+                               sampled flux surfaces (default: [0.01, 0.975]).
+        mu_lims              : Two-element list [mu_min, mu_max] bounding the
+                               sampled magnetic moments. If [None, None], limits
+                               are set from Ekin and the minimum |B| in the volume
+                               (default: [None, None]).
+        comm                 : MPI communicator for parallel execution
+                               (default: None).
+        tol                  : Absolute and relative ODE solver tolerance
+                               (default: 1e-10).
+        solver_options       : Dictionary of additional options passed to the ODE
+                               solver (default: {}).
+        savedata             : If True, save initial conditions and final
+                               diagnostics to disk (default: True).
+        file_name            : Prefix for output file names (default: '').
+        convergence_points   : Number of intermediate WBA evaluations per
+                               trajectory used to assess convergence
+                               (default: 1).
+    """
+        if not isinstance(saw, ShearAlfvenHarmonic) and not isinstance(
+            saw, ShearAlfvenWavesSuperposition
+        ):
+            raise TypeError(
+                "Expected saw to be an instance of ShearAlfvenHarmonic "
+                "or ShearAlfvenWavesSuperposition"
+            )
+            
+        if not isinstance(saw, ShearAlfvenHarmonic):
+            raise Warning(
+                "Expected saw to be an instance of ShearAlfvenHarmonic - "
+                "Perturbed Energy Invariant may not be valid."
+            )
+        
 
         # set field parameters
         self.saw = saw
@@ -3272,28 +3367,13 @@ class MapPhaseSpace:
 
         self.solver_options = solver_options
 
-        def min_volumemodB():
-            resolution = 100 
-            points = np.zeros((resolution * resolution,3))
-
-            for surface in np.linspace(0,0.99,resolution):
-                if surface == 0:
-                    points = initialize_position_uniform_surf(self.B0,resolution ,surface)
-                else:
-                    sampled_surface = initialize_position_uniform_surf(self.B0, resolution,surface)
-                    points = np.concatenate((points,sampled_surface), axis=0)
-                    
-            self.B0.set_points(points)
-            modB = self.B0.modB()[:,0]
-            return np.min(modB)
-
-        self.min_volmodB = min_volumemodB()
+        self.min_volmodB = min_volumemodB(self.B0)
         self.plot_s = plot_s
 
         # plotting settings
         self.savedata = savedata
         self.savepath = file_name + "_"
-        self.convergence_points = nconvergence_points
+        self.convergence_points = convergence_points
 
         self.s_min = s_lims[0]
         self.s_max = s_lims[1]
@@ -3306,7 +3386,7 @@ class MapPhaseSpace:
             self.mu_max = mu_lims[1]
 
         if exists(self.savepath+'initial_conditions.txt'):
-            initial_conditions = np.loadtxt(self.savepath + 'initial_conditions.txt')
+            initial_conditions = np.loadtxt(self.savepath + 'initial_conditions.txt', ndmin=2)
             self.s, self.thetas, self.zetas, self.vpar, self.mus = initial_conditions[:,0], initial_conditions[:,1], initial_conditions[:,2], initial_conditions[:,3], initial_conditions[:,4]
         else:
             if randomize_particles:
@@ -3328,8 +3408,8 @@ class MapPhaseSpace:
         # set parameters for convergence plot
         expected_length = int(self.tmax/self.min_timestep)
         expected_step = int(expected_length/self.convergence_points)
-        self.WBA_transit_indicies = np.linspace(expected_step, expected_length - 1, num=nconvergence_points, dtype=int).tolist()
-        self.convergence_plot = True if nconvergence_points>1 else False
+        self.WBA_transit_indicies = np.linspace(expected_step, expected_length - 1, num=self.convergence_points, dtype=int).tolist()
+        self.convergence_plot = True if self.convergence_points>1 else False
 
         if self.savedata:
             self.final_filepaths = {
@@ -3589,6 +3669,16 @@ class MapPhaseSpace:
         return points[:, 0], points[:, 1], points[:, 2], vpars_init, mus
 
     def trace_particles(self):
+        r"""
+            Trace all initialized particles in the perturbed field and compute
+            per-particle diagnostics.
+
+            For each particle, integrates the guiding-center equations in the
+            ShearAlfvenWave field, computes the canonical momentum p_eta, the total
+            energy E, the shifted energy Eprime, bounce and transit counts, and the
+            WBA digit accuracy. Results are collected across MPI ranks, saved to
+            disk if self.savedata is True, and passed to build_lists.
+        """
         import pickle
 
         if self.check_filepaths(self.res_filepaths):
@@ -3630,6 +3720,7 @@ class MapPhaseSpace:
                     stopping_criteria=[
                         MaxToroidalFluxStoppingCriterion(1.0)
                     ],
+                    dt_save=self.min_timestep,
                     mode='gc_noK',
                     ODE_solver="dormand_prince",
                     **self.solver_options,
@@ -3680,7 +3771,7 @@ class MapPhaseSpace:
             Eprime = self.nprime * E - self.omega * Peta_values
         
             if points_trajectory.shape[0] > 10:
-                stack_data = np.column_stack((points_trajectory[:, 0], Peta_values))
+                stack_data = np.column_stack((points_trajectory[:, -1], Peta_values))
                 time_eval, DA_eval = return_DA(stack_data)
                 final_DA = DA_eval
             else:
@@ -3730,6 +3821,7 @@ class MapPhaseSpace:
                 Eprime[0]]
 
             end_state = [
+                points_trajectory[-1, -1],
                 points_trajectory[-1, 0], 
                 points_trajectory[-1, 1], 
                 points_trajectory[-1, 2], 
@@ -3762,8 +3854,9 @@ class MapPhaseSpace:
                 convergence_times.append(time_momentum[timing_index])
                 convergence_petas.append(Peta_values[timing_index])
                 convergence_energies.append(E[timing_index])
-                bounce_enum = np.sum(bounce_indices < timing_index)
-                pass_enum = np.sum(true_passes < timing_index)
+                bounce_enum = np.searchsorted(bounce_indices, timing_index, side="left")
+
+                pass_enum = np.searchsorted(true_passes, timing_index, side="left")
                 
                 convergence_bounces.append(bounce_enum)
                 convergence_passes.append(pass_enum)
@@ -3798,6 +3891,19 @@ class MapPhaseSpace:
         return
     
     def build_lists(self, res_tys):
+        r"""
+        Process trajectory summaries into organized diagnostic
+        lists stored as instance attributes.
+
+        Populates self.DAs_at_loss, self.DA_at_tfinal, self.lost_total,
+        self.final_times, self.bounces, self.passes, self.pitch,
+        self.Plot_Radial, self.Peta_init/mean/final, self.E_init/mean/final,
+        and the convergence_* arrays.
+
+        Args:
+            res_tys : List of per-particle summaries, each of the form
+                    [start_state, end_state, mean_state, convergence_data].
+        """
         if self.verbose: print(f'Building Lists', flush=True)
 
         DAs_at_loss = []
@@ -3928,6 +4034,25 @@ class MapPhaseSpace:
         return
     
     def surface_trapped_variable_energy_func(self, pitch_angle, surface):
+        r"""
+    `    Determine whether a particle with the given pitch angle is trapped on a
+        specified flux surface.
+
+        Samples modB over the surface and checks whether the parallel velocity
+        would become imaginary at the maximum field strength, indicating
+        trapping. When self.Eprime_slice is True, the energy is computed from
+        the Eprime constraint; otherwise the prescribed Ekin is used.
+
+        Args:
+            pitch_angle : Normalized pitch-angle variable
+                        lambda = mu / E * sign(v_par).
+            surface     : Flux-surface label s at which to evaluate trapping.
+
+        Returns:
+            trapped : List of integers (0 or 1) indicating whether each sampled
+                    point is trapped.
+            peta   : List of Petas corresponding to each sampled point.
+        """
         resolution = 500
         points = initialize_position_uniform_surf(self.B0, resolution, surface)
         self.B0.set_points(points)
@@ -4071,14 +4196,21 @@ class MapPhaseSpace:
 
         cs = ax.contour(Xi, Yi, Zi, levels=[0], colors='gray', linewidths=10)
         path = cs.collections[0].get_paths()[0]
-        line_x, line_y = path.vertices[:, 0], path.vertices[:, 1]
 
-        coeffs = np.polyfit(line_x, line_y, 2)
+        line_pa, line_s = path.vertices[:, 0], path.vertices[:, 1]
+
+        coeffs = np.polyfit(line_pa, line_s, 2)
+
         poly = np.poly1d(coeffs)
+        order = np.argsort(line_pa)
+        line_pa, line_s = line_pa[order], line_s[order]
 
-        x_fit = np.linspace(line_x.min(), line_x.max(), 300)
+        x_fit = np.linspace(line_pa.min(), line_pa.max(), 300)
         y_fit = poly(x_fit)
 
+        self.trapped_boundary_fit = poly
+        self.trapped_PA_boundary = x_fit
+        self.trapped_peta_boundary = y_fit
 
         colorlabel = 'Digit Accuracy'
 
@@ -4127,9 +4259,6 @@ class WBAPerturbedParticles:
     def __init__(
         self,
         saw,
-        initial_conditions,
-        v_pars,
-        mu_per_mass,
         mass,
         charge,
         Ekin,
@@ -4137,92 +4266,79 @@ class WBAPerturbedParticles:
         helicity_M,
         helicity_Mp=None,
         helicity_Np=None,
-        mean=True,
-        savedata=(False, "DATA/"),
+        points=None,
+        v_pars=None,
+        mu_per_mass=None,
         tmax=1e-2,
-        min_timestep=1e-6,
-        comm=None,
+        min_timestep=1e-7,
         DA_cutoff=3,
-        skipped_particles=None,
-        solver_options=None,
+        tol=1e-9,
+        gc_tys=None,
+        savedata=False,
+        save_gc_trajectories=False,
+        savepath='',
+        comm=None,
+        solver_options={},
         nconvergence_points=1,
     ):
-        """
-        Initialize weighted Birkhoff analysis/tracing for perturbed
-        guiding-center trajectories.
+    r"""
+    Initialize the WBAPerturbedParticles instance for computing the
+    Weighted Birkhoff Average (WBA) digit accuracy of guiding-center
+    trajectories in a perturbed ShearAlfvenWave field.
 
-        This class takes a user-supplied set of initial particle conditions,
-        traces each particle in a SAW or ShearAlfvenWaveSuperposition, computes
-        a weighted Birkhoff average diagnostic from the resulting
-        time series of P_eta, and records which particles are lost to the wall
-        before the final tracing time.
+    Either pre-traced trajectories (gc_tys) or initial conditions (points,
+    v_pars, mu_per_mass) must be provided. If initial conditions are given,
+    particles are traced using trace_particles_boozer_perturbed.
 
-        The class does not generate initial conditions internally, but expects:
-            - initial spatial coordinates in Boozer variables,
-            - initial parallel velocities,
-            - initial magnetic moments per unit mass.
-
-        If saved output files already exist, previously computed DA values and
-        wall-loss metadata are loaded instead of retracing particles. Otherwise,
-        trajectories are computed and the resulting output saved.
-
-        Args:
-            saw:
-                SAW or ShearAlfvenWaveSuperposition for trajectory integration.
-            initial_conditions:
-                Array of initial spatial particle coordinates, expected to have
-                columns `[s, theta, zeta]`.
-            v_pars:
-                Initial parallel velocities.
-            mu_per_mass:
-                Initial magnetic moments divided by particle mass.
-            mass:
-                Particle mass.
-            charge:
-                Particle charge.
-            Ekin:
-                Reference kinetic energy passed to the orbit integrator.
-            helicity_N:
-                Toroidal helicity N entering chi = M * theta - N * zeta.
-            helicity_M:
-                Poloidal helicity M entering chi = M * theta - N * zeta.
-            helicity_Mp:
-                Poloidal helicity Mp entering eta = Mp * theta - Np * zeta.
-                If None, it is chosen automatically together with
-                `helicity_Np`.
-            helicity_Np:
-                Toroidal helicity Np entering eta = Mp * theta - Np * zeta.
-                If None, it is chosen automatically together with
-                `helicity_Mp`.
-            mean:
-                Flag controlling averaging-related binning behavior.
-            savedata:
-                Two-element tuple/list of the form `(save_flag, savepath)`.
-                If `save_flag` is True, DA values and wall losses are
-                read from / written to files in `savepath`.
-            tmax:
-                Maximum integration time for each particle trajectory.
-            min_timestep:
-                Reserved timestep-related parameter for consistency with other
-                interfaces.
-            comm:
-                MPI communicator.
-            DA_cutoff:
-                Threshold used after tracing to classify particles as chaotic
-                when computing  fractions.
-            skipped_particles:
-                List of particle indices to exclude from tracing. Typically,
-                these are particles that are equilibrium lost. These are
-                assigned NaN DA values and treated as pre-skipped entries.
-            solver_options:
-                Additional keyword arguments passed to the
-                integrator.
-        """
+    Args:
+        saw                  : A :class:`ShearAlfvenHarmonic` or compatible
+                               perturbed-field instance.
+        mass                 : Particle mass.
+        charge               : Particle charge.
+        Ekin                 : Total kinetic energy.
+        helicity_N           : Toroidal helicity of the field-strength contours.
+        helicity_M           : Poloidal helicity of the field-strength contours.
+        helicity_Mp          : Poloidal helicity of the mapping coordinate eta.
+                               If None, determined automatically from helicity_M.
+        helicity_Np          : Toroidal helicity of the mapping coordinate eta.
+                               If None, determined automatically from helicity_N.
+        points               : Array of shape (N, 4) containing initial
+                               coordinates (s, theta, zeta, t). Required if
+                               gc_tys is None.
+        v_pars               : Array of initial parallel velocities. Required
+                               if gc_tys is None.
+        mu_per_mass          : Array of initial magnetic moments divided by
+                               mass. Required if gc_tys is None.
+        tmax                 : Maximum integration time per particle
+                               (default: 1e-2 s).
+        min_timestep         : Minimum time-step size used as the save
+                               interval (default: 1e-7 s).
+        DA_cutoff            : Digit accuracy threshold below which a
+                               trajectory is classified as chaotic
+                               (default: 3).
+        tol                  : ODE solver tolerance (default: 1e-9).
+        gc_tys               : List of pre-traced trajectory arrays. If
+                               provided, tracing is skipped (default: None).
+        savedata             : If True, save diagnostics to disk
+                               (default: False).
+        save_gc_trajectories : If True, save raw trajectory arrays to disk
+                               (default: False).
+        savepath             : Prefix for output file names (default: '').
+        comm                 : MPI communicator for parallel execution
+                               (default: None).
+        solver_options       : Dictionary of additional options passed to the
+                               ODE solver (default: {}).
+        nconvergence_points  : Number of intermediate WBA evaluations per
+                               trajectory (default: 1).
+    """
+        if gc_tys is None and points is None:
+            raise ValueError(
+                    "Need to provide traced trajectories or points to trace."
+                )
 
         if solver_options is None:
             solver_options = {}
-        if skipped_particles is None:
-            skipped_particles = []
+
         self.saw = saw
         self.B0 = saw.B0
         self.helicity_M = helicity_M
@@ -4231,12 +4347,12 @@ class WBAPerturbedParticles:
         if helicity_Mp is None and helicity_Np is None:
             # If modB contours close poloidally, then use theta as mapping coordinate
             if helicity_M == 0:
-                self.helicity_Mp = 1
-                self.helicity_Np = 0
+                helicity_Mp = 1
+                helicity_Np = 0
             # Otherwise, use zeta as mapping coordinate
             else:
-                self.helicity_Mp = 0
-                self.helicity_Np = -1
+                helicity_Mp = 0
+                helicity_Np = -1
         else:
             if (helicity_Mp * helicity_N) == (helicity_Np * helicity_M):
                 raise ValueError(
@@ -4258,108 +4374,42 @@ class WBAPerturbedParticles:
         self.solver_options = solver_options
         self.tmax = tmax
 
-        self.mean = mean
-        self.savedata = savedata[0]
-        self.savepath = savedata[1]
-        self.convergence_points = nconvergence_points
+        self.min_timestep = min_timestep
+        self.savedata = savedata
+        self.savepath = savepath
+        self.save_gc_trajectories = save_gc_trajectories
+        
+        # set parameters for convergence plot
+        expected_length = int(self.tmax/self.min_timestep)
+        expected_step = int(expected_length/self.convergence_points)
+        self.WBA_transit_indicies = np.linspace(
+            expected_step, 
+            expected_length - 1, 
+            num=nconvergence_points, 
+            dtype=int).tolist()
+        self.convergence_plot = True if nconvergence_points>1 else False
+
+        self.points0 = points
+        self.v_pars0 = v_pars
+        self.mu_per_mass0 = mu_per_mass0
+
+        self.tol = tol
 
         if self.savedata:
-            self.IC_filepaths = {
-                "s0": self.savepath + "uniform_s0.txt",
-                "theta0": self.savepath + "uniform_theta0.txt",
-                "zeta0": self.savepath + "uniform_zeta0.txt",
-                "vpar0": self.savepath + "uniform_vpar0.txt",
-                "mu_per_mass": self.savepath + "uniform_mu_per_mass.txt",
-            }
+            self.IC_filepaths = 'initial_conditions.txt'
             self.final_filepaths = {
-                "DA": self.savepath + "DA.txt",
-                "wall_lost": self.savepath + "wall_lost.txt",
+                "DA": self.savepath + "DA_walllosttimes.txt",
+                "TRAJS": self.savepath + "res_tys.txt",
+                "DATA": self.savepath + "DATA.txt"
             }
 
-        self.skip = skipped_particles
-        if not self.check_filepaths(self.final_filepaths):
-            points_phase = np.append(
-                initial_conditions, np.zeros((initial_conditions.shape[0], 1)), axis=1
-            )
-            self.gc_tys = self.trace_particles(saw, points_phase, v_pars, mu_per_mass)
-            self.DAs, self.wall_lost_indicies, self.wall_lost_times = (
-                self.quantify_chaos_and_losses(
-                    trajectories=self.gc_tys, equilibrium_lost_indicies=self.skip
-                )
-            )
-            np.savetxt(self.final_filepaths["DA"], np.array(self.DAs))
-            np.savetxt(
-                self.final_filepaths["wall_lost"],
-                np.column_stack((self.wall_lost_indicies, self.wall_lost_times)),
-            )
+        if gc_tys is None:
+            self.trace=True
         else:
-            if self.verbose:
-                print("loaded existing data files", flush=True)
-            self.DAs = np.loadtxt(self.final_filepaths["DA"]).tolist()
-            wall_lost = np.loadtxt(self.final_filepaths["wall_lost"]).astype(int)
-            self.wall_lost_indicies = wall_lost[:, 0].tolist()
-            self.wall_lost_times = wall_lost[:, 1].tolist()
-        self.numparticle = len(self.DAs) - len(self.skip)
-        self.compute_fractions(DA_cutoff=DA_cutoff)
-
-    def compute_fractions(self, DA_cutoff=3):
-        r"""
-        Return chaotic-particle fraction percentage for a DA threshold.
-
-        Args:
-            DA_cutoff : DA threshold used to classify chaos.
-        Returns:
-            uniform_fractional_chaotic : Percent chaotic fraction in the sample.
-        """
-        uniform_fractional_chaotic = [
-            (
-                sum(
-                    [
-                        1
-                        for i in range(len(self.DAs))
-                        if ((self.DAs[i] < DA_cutoff) or (i in self.wall_lost_indicies))
-                    ]
-                )
-                / (self.numparticle)
-            )
-            * 100
-        ]
-        return uniform_fractional_chaotic
-
-    def quantify_chaos_and_losses(self, trajectories, equilibrium_lost_indicies):
-        r"""
-        Compute per-particle DA values and wall-loss metadata.
-
-        Args:
-            trajectories : Stored trajectory summary per particle.
-            equilibrium_lost_indicies : Indices removed by equilibrium losses.
-        Returns:
-            DA_list : DA value for each particle index.
-            lost_total : Indices of particles that hit the wall.
-            lost_times : Wall-hit times for lost particles.
-        """
-        lost_total = []
-        DA_list = []
-        lost_times = []
-
-        for i in range(len(trajectories)):
-            # trajectories are in format:
-            # first slice, last slice, DA
-            # slice = [s, theta, zeta, time]
-            if i in equilibrium_lost_indicies:
-                DA_list.append(np.nan)
-                continue
-
-            final_time = trajectories[i][1][3]
-            trajectories[i][1][0]
-            DA = trajectories[i][2]
-
-            # check if particle lost to wall
-            if final_time < (self.tmax - 2e-6):
-                lost_total.append(int(i))
-                lost_times.append(final_time)
-            DA_list.append(DA)
-        return DA_list, lost_total, lost_times
+            self.trace = False
+            self.gc_tys = gc_tys
+        
+        self.res_tys, self.DAs, self.wall_lost, self.dense_output = trace_particles(self.points0, self.v_pars0, self.mu_per_mass0)
 
     def check_filepaths(self, filepaths):
         r"""
@@ -4374,7 +4424,6 @@ class WBAPerturbedParticles:
 
     def trace_particles(
         self,
-        saw,
         points_phase,
         vpars,
         mus,
@@ -4383,7 +4432,6 @@ class WBAPerturbedParticles:
         Trace perturbed particle trajectories and compute DA outputs.
 
         Args:
-            saw : Perturbed field object used for tracing.
             points_phase : Initial states including phase/time column.
             vpars : Initial parallel velocities.
             mus : Initial magnetic moments.
@@ -4391,39 +4439,37 @@ class WBAPerturbedParticles:
             res_tys : Per-particle trajectory summaries.
         """
         first, last = parallel_loop_bounds(self.comm, points_phase.shape[0])
+
+        DA_data = []
+        dense_output = []
+        wall_lost = []
+        wall_lost_indicies = []
         res_tys = []
-        res_hits = []
 
         for itrj in range(first, last):
-            if itrj in self.skip:
-                start_state = [
-                    points_phase[itrj, 0],
-                    points_phase[itrj, 1],
-                    points_phase[itrj, 2],
-                    0,
-                ]
-                particle_out = [start_state, start_state, np.nan]
-                res_tys.append(particle_out)
-                res_hits.append(np.array([]))
-                continue
-            gc_tys, gc_zeta_hits = trace_particles_boozer_perturbed(
-                perturbed_field=saw,
-                stz_inits=points_phase[itrj, :].reshape(1, 4),
-                parallel_speeds=[vpars[itrj]],
-                mus=[mus[itrj]],
-                tmax=self.tmax,
-                mass=self.mass,
-                charge=self.charge,
-                Ekin=self.Ekin,
-                abstol=1e-9,
-                reltol=1e-9,
-                stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
-                mode="gc_noK",
-                ODE_solver="dormand_prince",
-                **self.solver_options,
-            )
+            if self.trace: 
+                gc_tys, gc_zeta_hits = trace_particles_boozer_perturbed(
+                    perturbed_field=self.saw,
+                    stz_inits=points_phase[itrj, :].reshape(1, 4),
+                    parallel_speeds=[vpars[itrj]],
+                    mus=[mus[itrj]],
+                    tmax=self.tmax,
+                    mass=self.mass,
+                    charge=self.charge,
+                    Ekin=self.Ekin,
+                    abstol=self.tol,
+                    reltol=self.tol,
+                    dt_save=self.min_timestep,
+                    stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
+                    mode="gc_noK",
+                    ODE_solver="dormand_prince",
+                    **self.solver_options,
+                )
+                points_trajectory = gc_tys[0]
 
-            points_trajectory = gc_tys[0]
+            else:
+                points_trajectory = self.gc_tys[itrj]
+
             time_momentum, s_path, theta_path, zeta_path, vpar_path = (
                 points_trajectory[:, 0],
                 points_trajectory[:, 1],
@@ -4440,16 +4486,45 @@ class WBAPerturbedParticles:
                 points_trajectory = points_trajectory[:idx_wall, :]
                 vpar_path = vpar_path[:idx_wall]
 
-            if points_trajectory.shape[0] < 8:
-                start_state = points_trajectory[0, :].tolist()
-                end_state = points_trajectory[-1, :].tolist()
-                particle_out = [start_state, end_state, np.nan]
-                res_tys.append(particle_out)
-                res_hits.append(gc_zeta_hits[0])
-                continue
+            if points_trajectory.shape[0] > 10:
+                stack_data = np.column_stack((points_trajectory[:, -1], Peta_values))
+                time_eval, DA_eval = return_DA(stack_data)
+                final_DA = DA_eval
+            else:
+                final_DA = np.nan
+
+            v_par_signs = np.sign(vpar_path)
+
+            mask = v_par_signs != 0
+            v = v_par_signs[mask]
+            # Keep track of original indices after removing zeros
+            orig_idx = np.where(mask)[0]
+
+            # find vpar sign changes 
+            bounce_local = np.where(v[1:] * v[:-1] < 0)[0]
+            # map back to original trajectory indexing, pre zero removal
+            bounce_indices = orig_idx[bounce_local + 1]
+            bounces = len(bounce_indices) if len(v) > 1 else 0
+
+            zeta_path = np.mod(points_trajectory[:, 2], 2 * np.pi)
+            dzeta = np.diff(zeta_path)
+
+            # find large negative jump, this is where mod
+            # brings factors of 2pi back to zero, and pass
+            wrap_idx = np.where(dzeta < -np.pi)[0]
+
+            # isolate transits across zeta of 2pi 
+            true_passes = []
+            for passing_index in range(len(wrap_idx) - 1):
+                pass1 = wrap_idx[passing_index]
+                pass2 = wrap_idx[passing_index + 1]
+
+                # ensure no bounce between these two toroidal passes
+                if not np.any((bounce_indices > pass1) & (bounce_indices < pass2)):
+                    true_passes.append(wrap_idx[passing_index])
 
             Peta_values = compute_peta(
-                saw,
+                self.saw,
                 points_trajectory,
                 vpar_path,
                 self.mass,
@@ -4460,29 +4535,100 @@ class WBAPerturbedParticles:
                 self.helicity_Np,
             )
 
-            stack_data = np.column_stack((points_trajectory[:, 3], Peta_values))
-            time_eval, DA_eval = return_DA(stack_data)
 
-            first_slice = points_trajectory[0, :]
-            last_slice = points_trajectory[-1, :]
-            particle_out = [first_slice.tolist(), last_slice.tolist(), DA_eval]
-            res_tys.append(particle_out)
-            res_hits.append(gc_zeta_hits[0])
+            convergence_times = []
+            convergence_petas = []
+            convergence_energies = []
+            convergence_bounces = []
+            convergence_passes = []
+            convergence_DAs = []
+
+            for conv_index, timing_index in enumerate(self.WBA_transit_indicies):
+                if timing_index > len(time_momentum):
+                    break
+                convergence_times.append(time_momentum[timing_index])
+                convergence_petas.append(Peta_values[timing_index])
+                convergence_energies.append(E[timing_index])
+                bounce_enum = np.searchsorted(bounce_indices, timing_index, side="left")
+
+                pass_enum = np.searchsorted(true_passes, timing_index, side="left")
+                
+                convergence_bounces.append(bounce_enum)
+                convergence_passes.append(pass_enum)
+
+                stack_data = np.column_stack((time_momentum[:timing_index], Peta_values[:timing_index]))
+                time_eval, DA_eval = return_DA(stack_data)
+                convergence_DAs.append(DA_eval)
+
+            convergence_data = [
+                convergence_times,
+                convergence_petas,
+                convergence_bounces,
+                convergence_passes,
+                convergence_DAs,
+                convergence_energies
+            ]
+            # start state vector:  [s, theta, zeta, vpar, peta, E, Eprime]
+            # end state vector:   [t, s, theta, zeta, vpar, peta, E, Eprime, bounces, passes, DA]
+            # mean state vector:  [s_mean, peta_mean, E_mean, Eprime_mean]
+            start_state = [
+                points_trajectory[0, 0], 
+                points_trajectory[0, 1], 
+                points_trajectory[0, 2], 
+                vpar[0], 
+                Peta_values[0], 
+                E[0], 
+                Eprime[0]]
+
+            end_state = [
+                points_trajectory[-1, 0], 
+                points_trajectory[-1, 1], 
+                points_trajectory[-1, 2], 
+                vpar[-1], 
+                Peta_values[-1], 
+                E[-1], 
+                Eprime[-1], 
+                bounces,
+                len(true_passes),
+                final_DA
+                ]
+
+            mean_state = [
+                np.mean(points_trajectory[:, 0]), 
+                np.mean(Peta_values), 
+                np.mean(E), 
+                np.mean(Eprime)]
+            
+            particle_out = [start_state, end_state, mean_state, convergence_data]
+            DA_data.append(final_DA)
+            wall_lost.append(points_trajectory[-1:3])
+            dense_output.append(particle_out)
+        
         if self.comm is not None:
             res_tys = [i for o in self.comm.allgather(res_tys) for i in o]
+            DA_data = [i for o in self.comm.allgather(DA_data) for i in o]
+            wall_lost = [i for o in self.comm.allgather(wall_lost) for i in o]
+            dense_output = [i for o in self.comm.allgather(dense_output) for i in o]
+        
         if self.verbose:
-            with open(self.savepath + "_data.pkl", "wb") as f:
-                import pickle
+            if self.save_gc_trajectories:
+                with open(self.final_filepaths['TRAJS'], "wb") as f:
+                    pickle.dump(res_tys, f)
+            if self.savedata:
+                np.savetxt(
+                        self.final_filepaths['DA'],
+                        np.column_stack((DA_data, wall_lost)))
+                with open(self.final_filepaths['DATA'], "wb") as f:
+                    pickle.dump(dense_output, f)
+        if not self.trace:
+            res_tys = self.gc_tys
+        return res_tys, DA_data, wall_lost, dense_output    
 
-                pickle.dump(res_tys, f)
-        return res_tys
 
 class WBAParticles:
     def __init__(
         self,
         B0,
-        initial_conditions,
-        v_pars,
         mass,
         charge,
         Ekin,
@@ -4490,100 +4636,38 @@ class WBAParticles:
         helicity_M,
         helicity_Mp=None,
         helicity_Np=None,
-        mean=True,
-        savedata=(False, "DATA/"),
+        points=None,
+        v_pars=None,
+        gc_tys=None,
         tmax=1e-2,
-        min_timestep=1e-6,
+        min_timestep=1e-7,
+        savedata=False,
+        save_gc_trajectories=False,
+        savepath='',
         comm=None,
         DA_cutoff=3,
-        skipped_particles=None,
-        solver_options=None,
-        # nconvergence_points=1
+        solver_options={},
+        tol=1e-9,
+        convergence_points=1
     ):
-        """
-        Initialize weighted-Birkhoff analysis for an ensemble of unperturbed
-        guiding center trajectories.
-
-        This class takes a user-supplied set of initial particle conditions,
-        traces each particle in an equilibrium Boozer magnetic field, computes a
-        weighted Birkhoff Digit accuracy (DA) diagnostic from the resulting
-        time series of P_eta, and records which particles are lost to the wall
-        before the requested final integration time.
-
-        Unlike `WBAParticles`, this class uses the unperturbed tracer
-        `trace_particles_boozer`.
-
-        If saved output files already exist, previously computed DA values and
-        wall-loss metadata are loaded instead of retracing particles. Otherwise,
-        trajectories are computed and the resulting output is saved.
-
-        Args:
-            B0:
-                Equilibrium Boozer magnetic field used for particle
-                tracing and for evaluation of `P_eta`.
-            initial_conditions:
-                Array of initial spatial particle coordinates, expected to have
-                columns `[s, theta, zeta]`.
-            v_pars:
-                Initial parallel velocities.
-            mass:
-                Particle mass.
-            charge:
-                Particle charge.
-            Ekin:
-                Reference kinetic energy passed to the orbit integrator.
-            helicity_N:
-                Toroidal helicity N entering chi = M * theta - N * zeta.
-            helicity_M:
-                Poloidal helicity M entering chi = M * theta - N * zeta.
-            helicity_Mp:
-                Poloidal helicity Mp entering eta = Mp * theta - Np * zeta.
-                If None, it is chosen automatically together with
-                `helicity_Np`.
-            helicity_Np:
-                Toroidal helicity Np entering eta = Mp * theta - Np * zeta.
-                If None, it is chosen automatically together with
-                `helicity_Mp`.
-            mean:
-                Flag controlling averaging-related behavior in binning.
-            savedata:
-                Two-element tuple/list of the form `(save_flag, savepath)`.
-                If `save_flag` is True, DA values and lost particles are
-                read from / written to files in `savepath`.
-            tmax:
-                Maximum integration time for each particle trajectory.
-            min_timestep:
-                Integration timestep.
-            comm:
-                MPI communicator.
-            DA_cutoff:
-                Threshold used after tracing to classify particles as chaotic
-                when computing aggregate fractions.
-            skipped_particles:
-                List of particle indices to exclude from tracing. These are
-                assigned NaN DA values and treated as pre-skipped entries.
-            solver_options:
-                Additional keyword arguments passed to the unperturbed orbit
-                integrator.
-        """
-
-        if solver_options is None:
-            solver_options = {}
-        if skipped_particles is None:
-            skipped_particles = []
         self.B0 = B0
         self.helicity_M = helicity_M
         self.helicity_N = helicity_N
 
+        if gc_tys is None and points is None:
+            raise ValueError(
+                    "Need to provide trajctories or points."
+                )
+
         if helicity_Mp is None and helicity_Np is None:
             # If modB contours close poloidally, then use theta as mapping coordinate
             if helicity_M == 0:
-                self.helicity_Mp = 1
-                self.helicity_Np = 0
+                helicity_Mp = 1
+                helicity_Np = 0
             # Otherwise, use zeta as mapping coordinate
             else:
-                self.helicity_Mp = 0
-                self.helicity_Np = -1
+                helicity_Mp = 0
+                helicity_Np = -1
         else:
             if (helicity_Mp * helicity_N) == (helicity_Np * helicity_M):
                 raise ValueError(
@@ -4596,6 +4680,8 @@ class WBAParticles:
         self.mass = mass
         self.charge = charge
         self.Ekin = Ekin
+        self.convergence_points = convergence_points
+        self.vtotal = np.sqrt(2 * self.Ekin / mass)
 
         self.comm = comm
         self.verbose = False
@@ -4605,105 +4691,42 @@ class WBAParticles:
         self.solver_options = solver_options
         self.tmax = tmax
 
-        self.mean = mean
-        self.savedata = savedata[0]
-        self.savepath = savedata[1]
-        self.convergence_points = 1  # nconvergence_points
+        self.min_timestep = min_timestep
+        self.savedata = savedata
+        self.savepath = savepath
+        self.save_gc_trajectories = save_gc_trajectories
+        
+        # set parameters for convergence plot
+        expected_length = int(self.tmax/self.min_timestep)
+        expected_step = int(expected_length/self.convergence_points)
+        self.WBA_transit_indicies = np.linspace(
+            expected_step, 
+            expected_length - 1, 
+            num=self.convergence_points, 
+            dtype=int).tolist()
+        self.convergence_plot = True if self.convergence_points>1 else False
+
+        self.points0 = points
+        self.v_pars0 = v_pars
+
+        self.tol = tol
+
+        if gc_tys is None:
+            self.trace=True
+        else:
+            self.trace = False
+            self.gc_tys = gc_tys
 
         if self.savedata:
-            self.IC_filepaths = {
-                "s0": self.savepath + "uniform_s0.txt",
-                "theta0": self.savepath + "uniform_theta0.txt",
-                "zeta0": self.savepath + "uniform_zeta0.txt",
-                "vpar0": self.savepath + "uniform_vpar0.txt",
-                "mu_per_mass": self.savepath + "uniform_mu_per_mass.txt",
-            }
+            self.IC_filepaths = 'initial_conditions.txt'
             self.final_filepaths = {
-                "DA": self.savepath + "DA.txt",
-                "wall_lost": self.savepath + "wall_lost.txt",
+                "DA": self.savepath + "DA_walllosttimes.txt",
+                "TRAJS": self.savepath + "res_tys.txt",
+                "DATA": self.savepath + "DATA.txt"
             }
+        self.res_tys, self.DAs, self.wall_lost, self.dense_output = self.trace_particles(self.points0, self.v_pars0)
+        self.build_lists(self.dense_output)
 
-        self.skip = skipped_particles
-        if not self.check_filepaths(self.final_filepaths):
-            self.gc_tys = self.trace_particles(B0, initial_conditions, v_pars)
-            self.DAs, self.wall_lost_indicies, self.wall_lost_times = (
-                self.quantify_chaos_and_losses(
-                    trajectories=self.gc_tys, equilibrium_lost_indicies=self.skip
-                )
-            )
-            np.savetxt(self.final_filepaths["DA"], np.array(self.DAs))
-            np.savetxt(
-                self.final_filepaths["wall_lost"],
-                np.column_stack((self.wall_lost_indicies, self.wall_lost_times)),
-            )
-        else:
-            if self.verbose:
-                print("loaded existing data files", flush=True)
-            self.DAs = np.loadtxt(self.final_filepaths["DA"]).tolist()
-            wall_lost = np.loadtxt(self.final_filepaths["wall_lost"]).astype(int)
-            self.wall_lost_indicies = wall_lost[:, 0].tolist()
-            self.wall_lost_times = wall_lost[:, 1].tolist()
-        self.numparticle = len(self.DAs) - len(self.skip)
-        self.compute_fractions(DA_cutoff=DA_cutoff)
-
-    def compute_fractions(self, DA_cutoff=3):
-        r"""
-        Return chaotic-particle fraction percentage for a DA threshold.
-
-        Args:
-            DA_cutoff : DA threshold used to classify chaos.
-        Returns:
-            uniform_fractional_chaotic : Percent chaotic fraction in the sample.
-        """
-        uniform_fractional_chaotic = [
-            (
-                sum(
-                    [
-                        1
-                        for i in range(len(self.DAs))
-                        if ((self.DAs[i] < DA_cutoff) or (i in self.wall_lost_indicies))
-                    ]
-                )
-                / (self.numparticle)
-            )
-            * 100
-        ]
-        return uniform_fractional_chaotic
-
-    def quantify_chaos_and_losses(self, trajectories, equilibrium_lost_indicies):
-        r"""
-        Compute per-particle DA values and wall-loss metadata.
-
-        Args:
-            trajectories : Stored trajectory summary per particle.
-            equilibrium_lost_indicies : Indices removed by equilibrium losses.
-        Returns:
-            DA_list : DA value for each particle index.
-            lost_total : Indices of particles that hit the wall.
-            lost_times : Wall-hit times for lost particles.
-        """
-        lost_total = []
-        DA_list = []
-        lost_times = []
-
-        for i in range(len(trajectories)):
-            # trajectories are in format:
-            # first slice, last slice, DA
-            # slice = [s, theta, zeta, time]
-            if i in equilibrium_lost_indicies:
-                DA_list.append(np.nan)
-                continue
-
-            final_time = trajectories[i][1][3]
-            trajectories[i][1][0]
-            DA = trajectories[i][2]
-
-            # check if particle lost to wall
-            if final_time < (self.tmax - 2e-6):
-                lost_total.append(int(i))
-                lost_times.append(final_time)
-            DA_list.append(DA)
-        return DA_list, lost_total, lost_times
 
     def check_filepaths(self, filepaths):
         r"""
@@ -4716,101 +4739,298 @@ class WBAParticles:
         """
         return all(exists(fp) for fp in filepaths.values())
 
-    def trace_particles(self, field, points_phase, vpars):
+    def trace_particles(self, points_phase, vpars):
         r"""
         Trace unperturbed particle trajectories and compute DA outputs.
 
         Args:
-            field : Equilibrium field object used for tracing.
             points_phase : Initial particle positions in Boozer coordinates.
             vpars : Initial parallel velocities.
         Returns:
-            res_tys : Per-particle trajectory summaries.
         """
-        first, last = parallel_loop_bounds(self.comm, points_phase.shape[0])
+
+        if self.trace:
+            shape = points_phase.shape[0]
+        else:
+            shape = len(self.gc_tys)
+        first, last = parallel_loop_bounds(self.comm, shape)
         res_tys = []
         res_hits = []
 
+        DA_data = []
+        dense_output = []
+        wall_lost = []
+        wall_lost_indicies = []
+        res_tys = []
+
         for itrj in range(first, last):
-            if itrj in self.skip:
-                start_state = [
-                    points_phase[itrj, 0],
-                    points_phase[itrj, 1],
-                    points_phase[itrj, 2],
-                ]
-                particle_out = [start_state, start_state, np.nan]
-                res_tys.append(particle_out)
-                res_hits.append(np.array([]))
-                continue
+            if self.trace: 
+                pt = np.zeros((1, 3))
+                pt[0, 0] = points_phase[itrj, 0]
+                pt[0, 1] = points_phase[itrj, 1]
+                pt[0, 2] = points_phase[itrj, 2]
+                self.vtotal = np.sqrt(2 * self.Ekin / self.mass)
+                gc_tys, gc_zeta_hits = trace_particles_boozer(
+                    self.B0,
+                    stz_inits=pt,
+                    parallel_speeds=[vpars[itrj]],
+                    tmax=self.tmax,
+                    mass=self.mass,
+                    charge=self.charge,
+                    Ekin=self.Ekin,
+                    abstol=self.tol,
+                    reltol=self.tol,
+                    dt_save=self.min_timestep,
+                    stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
+                    mode="gc_noK",
+                    ODE_solver="dormand_prince",
+                    **self.solver_options,
+                )
+                points_trajectory = gc_tys[0]
+            else:
+                points_trajectory = self.gc_tys[itrj]
 
-            pt = np.zeros((1, 3))
-            pt[0, 0] = points_phase[itrj, 0]
-            pt[0, 1] = points_phase[itrj, 1]
-            pt[0, 2] = points_phase[itrj, 2]
-            self.vtotal = np.sqrt(2 * self.Ekin / self.mass)
-            gc_tys, gc_zeta_hits = trace_particles_boozer(
-                field,
-                stz_inits=pt,
-                parallel_speeds=[vpars[itrj]],
-                tmax=self.tmax,
-                mass=self.mass,
-                charge=self.charge,
-                Ekin=self.Ekin,
-                abstol=1e-9,
-                reltol=1e-9,
-                stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
-                mode="gc_noK",
-                ODE_solver="dormand_prince",
-                **self.solver_options,
-            )
 
-            points_trajectory = gc_tys[0]
             time_momentum = points_trajectory[:, 0]
             s_path = points_trajectory[:, 1]
             theta_path = points_trajectory[:, 2]
             zeta_path = points_trajectory[:, 3]
             vpar_path = points_trajectory[:, 4]
+
             points_trajectory = np.column_stack(
-                (s_path, theta_path, zeta_path, time_momentum)
+                (s_path, theta_path, zeta_path)
             )
             idx_wall = np.argmax(s_path >= 1) if np.any(s_path >= 1) else None
             if idx_wall is not None and s_path[idx_wall] >= 1:
                 idx_wall -= 1
                 points_trajectory = points_trajectory[:idx_wall, :]
+                time_momentum = time_momentum[:idx_wall]
                 vpar_path = vpar_path[:idx_wall]
 
-            if points_trajectory.shape[0] < 8:
-                start_state = points_trajectory[0, :].tolist()
-                end_state = points_trajectory[-1, :].tolist()
-                particle_out = [start_state, end_state, np.nan]
-                res_tys.append(particle_out)
-                res_hits.append(gc_zeta_hits[0])
-                continue
-
-            traj = points_trajectory[:, :-1]
 
             Peta_values = compute_peta(
                 self.B0,
-                points=traj,
+                points=points_trajectory,
                 vpar=vpar_path,
                 mass=self.mass,
                 charge=self.charge,
                 helicity_M=self.helicity_M,
                 helicity_N=self.helicity_N,
-                helicity_Mp=self.helicity_Mp,
-                helicity_Np=self.helicity_Np,
             )
-            stack_data = np.column_stack((points_trajectory[:, 3], Peta_values))
-            time_eval, DA_eval = return_DA(stack_data)
 
-            first_slice = points_trajectory[0, :]
-            last_slice = points_trajectory[-1, :]
-            particle_out = [first_slice.tolist(), last_slice.tolist(), DA_eval]
-            res_tys.append(particle_out)
-            res_hits.append(gc_zeta_hits[0])
+            if points_trajectory.shape[0] > 10:
+                stack_data = np.column_stack((points_trajectory[:, -1], Peta_values))
+                time_eval, DA_eval = return_DA(stack_data)
+                final_DA = DA_eval
+            else:
+                final_DA = np.nan
+
+            v_par_signs = np.sign(vpar_path)
+
+            mask = v_par_signs != 0
+            v = v_par_signs[mask]
+            # Keep track of original indices after removing zeros
+            orig_idx = np.where(mask)[0]
+
+            # find vpar sign changes 
+            bounce_local = np.where(v[1:] * v[:-1] < 0)[0]
+            # map back to original trajectory indexing, pre zero removal
+            bounce_indices = orig_idx[bounce_local + 1]
+            bounces = len(bounce_indices) if len(v) > 1 else 0
+
+            zeta_path = np.mod(points_trajectory[:, 2], 2 * np.pi)
+            dzeta = np.diff(zeta_path)
+
+            # find large negative jump, this is where mod
+            # brings factors of 2pi back to zero, and pass
+            wrap_idx = np.where(dzeta < -np.pi)[0]
+
+            # isolate transits across zeta of 2pi 
+            true_passes = []
+            for passing_index in range(len(wrap_idx) - 1):
+                pass1 = wrap_idx[passing_index]
+                pass2 = wrap_idx[passing_index + 1]
+
+                # ensure no bounce between these two toroidal passes
+                if not np.any((bounce_indices > pass1) & (bounce_indices < pass2)):
+                    true_passes.append(wrap_idx[passing_index])
+
+            convergence_times = []
+            convergence_petas = []
+            convergence_bounces = []
+            convergence_passes = []
+            convergence_DAs = []
+
+            for conv_index, timing_index in enumerate(self.WBA_transit_indicies):
+                if timing_index > len(time_momentum):
+                    break
+                convergence_times.append(time_momentum[timing_index])
+                convergence_petas.append(Peta_values[timing_index])
+
+                bounce_enum = np.searchsorted(bounce_indices, timing_index, side="left")
+
+                pass_enum = np.searchsorted(true_passes, timing_index, side="left")
+                
+                convergence_bounces.append(bounce_enum)
+                convergence_passes.append(pass_enum)
+
+                stack_data = np.column_stack((time_momentum[:timing_index], Peta_values[:timing_index]))
+                time_eval, DA_eval = return_DA(stack_data)
+                convergence_DAs.append(DA_eval)
+
+            convergence_data = [
+                convergence_times,
+                convergence_petas,
+                convergence_bounces,
+                convergence_passes,
+                convergence_DAs
+            ]
+            points = np.zeros((1, 3))
+            points[:, 0] = points_trajectory[-1, 0]
+            points[:, 1] = points_trajectory[-1, 1]
+            points[:, 2] = points_trajectory[-1, 2]
+            self.B0.set_points(points)
+            B = self.B0.modB()[0,0]
+            mu = (1/2) * self.mass * (self.vtotal**2 - vpar_path[0]**2) / B
+            # start state vector:  [s, theta, zeta, vpar, mu]
+            # end state vector:   [t, s, theta, zeta, vpar,  bounces, passes, DA]
+            start_state = [
+                points_trajectory[0, 0], 
+                points_trajectory[0, 1], 
+                points_trajectory[0, 2], 
+                vpar_path[0],
+                mu]
+
+            end_state = [
+                time_momentum[-1],
+                points_trajectory[-1, 0], 
+                points_trajectory[-1, 1], 
+                points_trajectory[-1, 2], 
+                vpar_path[-1],
+                bounces,
+                len(true_passes),
+                final_DA
+                ]
+            
+            particle_out = [start_state, end_state, convergence_data]
+            DA_data.append(final_DA)
+            wall_lost.append(time_momentum[-1])
+            dense_output.append(particle_out)
+        
         if self.comm is not None:
             res_tys = [i for o in self.comm.allgather(res_tys) for i in o]
-        return res_tys
+            DA_data = [i for o in self.comm.allgather(DA_data) for i in o]
+            wall_lost = [i for o in self.comm.allgather(wall_lost) for i in o]
+            dense_output = [i for o in self.comm.allgather(dense_output) for i in o]
+        
+        if self.verbose:
+            if self.save_gc_trajectories and self.trace:
+                with open(self.final_filepaths['TRAJS'], "wb") as f:
+                    pickle.dump(res_tys, f)
+            if self.savedata:
+                np.savetxt(
+                        self.final_filepaths['DA'],
+                        np.column_stack((DA_data, wall_lost)))
+                with open(self.final_filepaths['DATA'], "wb") as f:
+                    pickle.dump(dense_output, f)
+        if not self.trace:
+            res_tys = self.gc_tys
+        return res_tys, DA_data, wall_lost, dense_output 
+
+    def build_lists(self, dense_output):
+        r"""
+        Process trajectory summary data into lists that can be compared 
+        across many particles.
+
+        Populates self.DAs_at_loss, self.DA_at_tfinal, self.lost_total,
+        self.final_times, self.trapped, self.Peta_start, self.pitch, and the
+        convergence_* arrays from the list of per-particle state tuples produced
+        by trace_particles.
+
+        Args:
+            res_tys : List of per-particle trajectory summaries, each a list of
+                    the form [start_state, end_state, convergence_data].
+        """
+        if self.verbose: print(f'Building Lists', flush=True)
+
+        DAs_at_loss = []
+        DA_tfinal = []
+
+        lost_total = []
+        final_times = []
+        bounces = []
+        passes = []
+        pitch = []
+
+        s0 = []
+        theta0 = []
+        zeta0 = []
+        vpar0 = []
+        mu0 = []
+
+        convergence_bounces = []
+        convergence_passes = []
+        convergence_times = []
+        convergence_petas = []
+        convergence_DAs = []
+
+        for elem in dense_output:
+            # start state vector:  
+            #   [s, theta, zeta, vpar, mu]
+            # end state vector:   
+            #   [t, s, theta, zeta, vpar,  bounces, passes, DA]
+            # convergence state vector:
+            #   [times, petas, bounces, passes, DAs]
+
+            start_state = elem[0]
+            end_state = elem[1]
+            convergence = elem[2]
+
+            final_time = end_state[0]
+
+            final_times.append(final_time)
+
+            if final_time < (self.tmax - (5 * self.min_timestep)): 
+                lost_total.append(1)
+                DA_tfinal.append(np.nan)
+            else: 
+                lost_total.append(0)
+                DA_tfinal.append(end_state[7])
+
+            DAs_at_loss.append(end_state[7])
+            bounces.append(end_state[5])
+            passes.append(end_state[6])
+
+            s0.append(start_state[0])
+            theta0.append(start_state[1])
+            zeta0.append(start_state[2])
+            vpar0.append(start_state[3])
+            mu0.append(start_state[4])
+
+            convergence_bounces.append(convergence[2])
+            convergence_passes.append(convergence[3])
+            convergence_times.append(convergence[0])
+            convergence_petas.append(convergence[1])
+            convergence_DAs.append(convergence[4])
+            
+        self.DAs_at_loss = DAs_at_loss
+        self.DA_at_tfinal = DA_tfinal
+        self.lost_total = lost_total
+        self.final_times = final_times
+
+        self.bounces = bounces
+        self.passes = passes
+
+
+        self.convergence_bounces = convergence_bounces
+        self.convergence_passes = convergence_passes
+        self.convergence_times = convergence_times
+        self.convergence_petas = convergence_petas
+        self.convergence_DAs = convergence_DAs
+
+        if self.verbose: print(f'Done Building Lists', flush=True)
+        return  
+            
 
 def trajectory_to_vtk(res_ty, field, filename="trajectory"):
     r"""
@@ -5389,56 +5609,33 @@ class PassingPerturbedPetaPoincare:
             ):  # Need at least one full Poincare return maps to compute frequency
                 continue
 
-            theta, zeta = self.chi_eta_to_theta_zeta(np.array(chis_traj), np.array(etas_traj))
-
             delta_theta = np.array(thetas_traj[1:]) - np.array(thetas_traj[0:-1])
-            delta_s = np.array(s_traj[1:]) - np.array(s_traj[0:-1])
             delta_t = t_traj[1::]
             delta_zeta = 2 * np.pi * self.sign_vpar * sign_G
-            delta_zeta_exp = np.array(zetas_traj[1:]) - np.array(zetas_traj[0:-1])
 
             points = np.zeros((len(s_traj), 4))
             points[:, 0] = s_traj
             points[:, 1] = theta
             points[:, 2] = zeta
 
-            trajectory_eprime = compute_Eprime(self.saw, points, _vpar_traj, self.mu, self.mass, self.charge, self.helicity_M, self.helicity_N)
-            eprime_std = np.std(trajectory_eprime)
-
-            eprime_pert = (np.mean(trajectory_eprime) - self.Eprime)/eprime_std
-
             # Average over wells along one field line
             freq_theta = np.mean(delta_theta) / np.mean(delta_t)
             freq_zeta = delta_zeta / np.mean(delta_t)
-            freq_zeta_exp = np.mean(np.mod(delta_zeta_exp, 2 * np.pi)) / np.mean(delta_t)
 
-            diff_eprime.append(eprime_pert)
-            std_eprime.append(eprime_std/np.abs(np.mean(trajectory_eprime)))
-
+            
             omega_theta.append(freq_theta)
             omega_zeta.append(freq_zeta)
-            omega_zeta_exp.append(freq_zeta_exp)
             init_s.append(np.mean(s_traj))
-            ds_all.append(np.mean(delta_s))
             Peta_prof.append(Peta_traj[-1])
 
         omega_theta = np.array(omega_theta)
         omega_zeta = np.array(omega_zeta)
-        omega_zeta_exp = np.array(omega_zeta_exp)
-        std_eprime = np.array(std_eprime)
-        ds_all = np.array(ds_all)
-        diff_eprime = np.array(diff_eprime)
         Peta_prof = np.array(Peta_prof)
-
         init_s = np.array(init_s)
 
         s_prof = np.unique(init_s)
         omega_theta_prof = np.zeros((len(s_prof),))
         omega_zeta_prof = np.zeros((len(s_prof),))
-        omega_zeta_exp_prof = np.zeros((len(s_prof),))
-        ds_all_prof = np.zeros((len(s_prof),))
-        diff_eprime_prof = np.zeros((len(s_prof),))
-        std_eprime_prof = np.zeros((len(s_prof),))
         Peta_s_prof = np.zeros((len(s_prof),))
 
         # Average over field-line label
@@ -5446,13 +5643,9 @@ class PassingPerturbedPetaPoincare:
             indicies = omega_theta[np.where(init_s == s)]
             omega_theta_prof[i] = np.mean(omega_theta[np.where(init_s == s)])
             omega_zeta_prof[i] = np.mean(omega_zeta[np.where(init_s == s)])
-            omega_zeta_exp_prof[i] = np.mean(omega_zeta_exp[np.where(init_s == s)])
-            ds_all_prof[i] = np.mean(ds_all[np.where(init_s == s)])
-            diff_eprime_prof[i] = np.mean(diff_eprime[np.where(init_s == s)])
-            std_eprime_prof[i] = np.mean(std_eprime[np.where(init_s == s)])
             Peta_s_prof[i] = np.mean(Peta_prof[np.where(init_s == s)])
 
-        return omega_theta_prof, omega_zeta_prof, s_prof, omega_zeta_exp_prof, ds_all_prof, diff_eprime_prof, std_eprime_prof, Peta_s_prof
+        return omega_theta_prof, omega_zeta_prof, s_prof, Peta_s_prof
 
     def plot_poincare(
         self,
