@@ -19,7 +19,7 @@ from firm3d.field.trajectory_helpers import (
     MapEquilibrium,
     PassingPerturbedPoincare,
     PassingPoincare,
-    compute_peta,
+    compute_peta
 )
 from firm3d.saw.ae3d import AE3DEigenvector
 from firm3d.util.constants import (
@@ -42,7 +42,8 @@ except ImportError:
     verbose = True
 
 
-
+folder = "DATA/"
+fname = "highres"
 boozmn_filename = "../inputs/boozmn_beta2.5_QA.nc"
 
 mpl.rcParams["font.size"] = 14  # base font size
@@ -69,8 +70,6 @@ bri = BoozerRadialInterpolant(
     boozmn_filename,
     order,
     no_K=True,
-    #helicity_M=helicity_M,
-    #helicity_N=helicity_N,
     comm=comm,
 )  
 field = InterpolatedBoozerField(
@@ -93,18 +92,19 @@ heat_map = MapEquilibrium(
     mass=mass,
     charge=charge,
     Ekin=Ekin,
+    sign=sign_vpar,
     plot_s=True,
     helicity_N=helicity_N,
     helicity_M=helicity_M,
     helicity_Mp=helicity_Mp,
     helicity_Np=helicity_Np,
-    ns_points=50,
-    particles_per_surface=15,
-    nlambda_points=50,
+    ns_points=40,
+    particles_per_surface=30,
+    nlambda_points=40,
     comm=comm,
-    savedata=(True, ""),
+    savedata=(True, folder + fname),
 )
 
 if verbose:
-    heat_map.plot_surfaces(savepath="full_field_QS.png")
+    heat_map.plot_surfaces(savepath=fname + "_PSmap_min.png", minimum_DA=True, plot_at_loss=False)
     plt.clf()

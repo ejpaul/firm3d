@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --nodes=2
+#SBATCH --nodes=1
 #SBATCH --time=0:30:00
 #SBATCH --constraint=cpu
 #SBATCH --qos=debug
@@ -7,5 +7,5 @@
 
 module load python cray-hdf5/1.14.3.1 cray-netcdf/4.9.0.13
 conda activate firm3d_equilibrium_branch
-srun -n 256 -c 1 python run.py
+srun -n 96 -c 1 python run.py
 
