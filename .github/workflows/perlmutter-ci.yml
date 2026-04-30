@@ -31,7 +31,7 @@ jobs:
           WORK_DIR: ${{ runner.temp }}/firm3d-${{ github.sha }}
         run: |
           mkdir -p "$WORK_DIR"
-          cp install/perlmutter/run_gpu_tests.sh "$WORK_DIR/run_gpu_tests.sh"
+          cp tests/perlmutter/run_gpu_tests.sh "$WORK_DIR/run_gpu_tests.sh"
 
           JOB_ID=$(sbatch \
             --account="$NERSC_ACCOUNT" \

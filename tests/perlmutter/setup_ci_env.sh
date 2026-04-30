@@ -3,7 +3,7 @@
 # Run this interactively from a login node before using perlmutter-ci.yml.
 #
 # Usage:
-#   bash install/perlmutter/setup_ci_env.sh
+#   bash tests/perlmutter/setup_ci_env.sh
 #
 # What it does:
 #   1. Loads required modules

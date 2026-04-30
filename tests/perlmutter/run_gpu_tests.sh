@@ -12,7 +12,7 @@
 #   firm3d_dir  - path to the firm3d checkout ($GITHUB_WORKSPACE on the runner)
 #
 # Expects a conda environment named "firm3d-ci" to already exist.
-# Create it once with install/perlmutter/setup_ci_env.sh.
+# Create it once with tests/perlmutter/setup_ci_env.sh.
 
 set -euo pipefail
 
@@ -51,9 +51,13 @@ nvidia-smi
 python -c "import firm3dpp; print('firm3dpp loaded OK')"
 
 # ── Run tests ─────────────────────────────────────────────────────────────────
+# Disable exit-on-error for the test command so we can capture its exit code
+# and always write EXIT_CODE_FILE even when tests fail.
 echo "--- Running GPU tests ---"
+set +e
 python -m coverage run -m unittest tests.field.test_gpu
 TEST_EXIT=$?
+set -e
 
 python -m coverage xml -o "$WORK_DIR/coverage.xml" || true
 
