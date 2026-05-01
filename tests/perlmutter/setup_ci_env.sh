@@ -17,39 +17,11 @@ set -euo pipefail
 
 ENV_NAME="firm3d-ci"
 
-module load cudatoolkit python cray-hdf5/1.14.3.7 cray-netcdf/4.9.2.1 cray-mpich
+module load cudatoolkit python cray-hdf5/1.14.3.7 cray-netcdf/4.9.2.1
 
 echo "Creating conda environment '$ENV_NAME' from nersc-python..."
 conda create -n "$ENV_NAME" --clone nersc-python -y
 
-CONDA_BASE=$(conda info --base)
-source "$CONDA_BASE/etc/profile.d/conda.sh"
-conda activate "$ENV_NAME"
-
-echo "Installing Python dependencies..."
-pip install --upgrade pip
-pip install \
-    "numpy>=2.0,<2.4" \
-    netCDF4 \
-    cmake \
-    ninja \
-    "pybind11<=2.13.6" \
-    setuptools \
-    wheel \
-    scipy \
-    booz-xform \
-    ndsplines \
-    coverage \
-    pytest \
-    simsopt \
-    pandas \
-    plotly \
-    pyevtk \
-    matplotlib \
-    ruamel.yaml \
-    Deprecated \
-    mpi4py
-
 echo ""
 echo "Done. Environment '$ENV_NAME' is ready."
-echo "To test locally: conda activate $ENV_NAME"
+echo "To activate, run: conda activate $ENV_NAME"

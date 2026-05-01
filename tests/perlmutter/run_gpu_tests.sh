@@ -27,7 +27,7 @@ echo "Commit    : $(git -C $FIRM3D_DIR rev-parse HEAD)"
 echo "Started  : $(date)"
 
 # ── Modules ───────────────────────────────────────────────────────────────────
-module load cudatoolkit python cray-hdf5/1.14.3.7 cray-netcdf/4.9.2.1 cray-mpich
+module load cudatoolkit python cray-hdf5/1.14.3.7 cray-netcdf/4.9.2.1
 
 # ── Conda environment ──────────────────────────────────────────────────────────
 # Conda isn't available in non-interactive shells without sourcing its init.
