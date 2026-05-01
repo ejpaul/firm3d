@@ -719,6 +719,7 @@ __device__ void build_state(double* x_temp, int deriv_id, bool* symmetry_exploit
     index_i[threadIdx.x] = i/3;
     index_j[threadIdx.x] = j/3;
     index_k[threadIdx.x] = k/3;
+
 };
 
 
@@ -1057,10 +1058,10 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     return particle_output;
 }
 
-extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
-        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> rrange,
+        py::array_t<double> phirange, py::array_t<double> zrange, py::array_t<double> xyz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tmax, double tol, py::array_t<double> dt_in, int nparticles){
-            return gpu_tracing<RHS::GC_CartesianVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, dt_in, nparticles);
+            return gpu_tracing<RHS::GC_CartesianVacuum>(quad_pts, rrange, phirange, zrange, xyz_init, m, q, vtotal, vtang, tmax, tol, dt_in, nparticles);
         }
 
 

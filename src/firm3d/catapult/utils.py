@@ -180,22 +180,25 @@ def boozer_saw_interpolant(field, nfp, ns, ntheta, nzeta):
     return srange, trange, zrange, cell_quad_pts, np.max(J)
 
 
-def cartesian_interpolant(field, sc_particle, nfp, n_metagrid_pts):
+def cartesian_interpolant(field, surface_classifier):
     r"""
-    Set up a Boozer vacuum interpolant for tracing.
+    Set up a Cartesian (cylindrical) interpolant for GPU tracing.
 
     Args:
-        field: MagneticField object
-        nfp: Integer, number of field periods in the device
-        n_meta_grid_pts: Integer, number of cells in r, phi, zeta
-            to use for interpolation
+        field: InterpolatedField object (simsopt) defined in cylindrical
+            coordinates with ``r_range``, ``phi_range``, and ``z_range``
+            attributes.
+        surface_classifier: SurfaceClassifier object used to evaluate the
+            signed distance to the plasma boundary at each grid point.
 
     Returns:
-        r_range : (r_start, r_end, number of grid points in r for interpolation)
-        phi_range : same as r_range, but for phi
-        z_range : same as r_range, but for zeta
-        cell_quad_pts : The interpolant data. Each row is a point in the grid,
-         data is stored in columns B, GradAbsB, signed distance function
+        r_range : (r_start, r_end, number of grid points in r)
+        phi_range : (phi_start, phi_end, number of grid points in phi)
+        z_range : (z_start, z_end, number of grid points in z)
+        cell_quad_pts : Interpolant data reordered for GPU access. Shape is
+            ``(n_cells * 64, n_features)`` where columns contain the magnetic
+            field, gradient of |B|, and signed distance function values at
+            the spline quadrature nodes for each cell.
     """
 
     r_range = (field.r_range[0], field.r_range[1], 3 * field.r_range[2] + 1)
@@ -222,7 +225,7 @@ def cartesian_interpolant(field, sc_particle, nfp, n_metagrid_pts):
     B = field.B_cyl()
     GradAbsB = field.GradAbsB_cyl()
 
-    signed_dist_vals = sc_particle.evaluate_rphiz(quad_pts)
+    signed_dist_vals = surface_classifier.evaluate_rphiz(quad_pts)
 
     quad_info = np.hstack((B, GradAbsB, signed_dist_vals))
 

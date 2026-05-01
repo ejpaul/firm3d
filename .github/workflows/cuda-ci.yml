@@ -4,6 +4,7 @@ on:
     branches:
       - gpu
       - master
+      - gpu_cartesian
   pull_request:
     types:
       - labeled
@@ -50,7 +51,7 @@ jobs:
           echo "Using NVCC at: ${NVCC_PATH:-not found}"
           export CUDACXX=${NVCC_PATH}
           pip install -v --no-build-isolation -e ".[dev]" 2>&1 | tee install.log
-          pip install coverage
+          pip install "numpy>=2.0" simsopt coverage
         env:
           NETCDF_DIR: /usr
           HDF5_DIR: /usr
@@ -80,6 +81,4 @@ jobs:
         run: |
           (cd examples/gpu_boozer_tracing && python gpu_boozer_tracing.py)
           (cd examples/gpu_saw_tracing && python gpu_saw_tracing.py)
-
-
-
+          (cd examples/gpu_cartesian_tracing && python gpu_cartesian_tracing.py)
