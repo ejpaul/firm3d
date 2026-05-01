@@ -21,7 +21,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install ruff coverage
+        pip install ruff==0.15.10 coverage
 
     - name: Check code formatting
       run: |
@@ -30,10 +30,6 @@ jobs:
     - name: Lint with ruff
       run: |
         ruff check .
-
-    - name: Check for unused imports
-      run: |
-        ruff check --select F401 .
 
   test:
     name: Test
