@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=firm3d-gpu-ci
 #SBATCH -C gpu
-#SBATCH -q shared
+#SBATCH -q debug
 #SBATCH --gpus-per-task=1
 #SBATCH -n 1
 #SBATCH -c 32
-#SBATCH --time=01:00:00
+#SBATCH --time=00:30:00
 
 # Usage: sbatch run_gpu_tests.sh <work_dir> <firm3d_dir>
 #   work_dir    - directory for output files (slurm log, coverage, exit code)

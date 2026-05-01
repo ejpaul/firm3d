@@ -29,7 +29,7 @@ conda activate "$ENV_NAME"
 echo "Installing Python dependencies..."
 pip install --upgrade pip
 pip install \
-    "numpy>=2.0" \
+    "numpy>=2.0,<2.4" \
     netCDF4 \
     cmake \
     ninja \
@@ -47,7 +47,6 @@ pip install \
     pyevtk \
     matplotlib \
     ruamel.yaml \
-    nptyping \
     Deprecated \
     mpi4py
 
