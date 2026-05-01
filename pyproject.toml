@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools","cmake","wheel","ninja","pybind11<=2.13.6","numpy","plotly"]
+requires = ["setuptools","cmake","wheel","ninja","pybind11<=2.13.6","numpy","plotly","nlohmann_json"]
 build-backend = "setuptools.build_meta"
 
 [project]
