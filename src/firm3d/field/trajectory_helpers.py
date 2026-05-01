@@ -3015,30 +3015,30 @@ class MapEquilibrium:
             minimum_DA=False,
             plot_losses=False,
     ):
-    r"""
-    Create and save a 2D heatmap of digit accuracy in the
-    (pitch angle, flux-surface label) plane, with the trapped-passing
-    boundary overlaid as a fitted curve.
+        r"""
+        Create and save a 2D heatmap of digit accuracy in the
+        (pitch angle, flux-surface label) plane, with the trapped-passing
+        boundary overlaid as a fitted curve.
 
-    Args:
-        nx          : Number of bins along the pitch-angle axis (default: 30).
-        ny          : Number of bins along the radial axis (default: 30).
-        savepath    : File path for the output heatmap image
-                      (default: 'heatmap_digit_accuracy.png').
-        plot_at_loss : If True, use the digit accuracy value at the time of
-                       loss; otherwise use the value at the end of the full
-                       integration (default: True).
-        ax          : Matplotlib axis to plot on. If None, a new figure and
-                      axis are created.
-        DA_max      : Maximum digit accuracy value shown on the colorbar
-                      (default: 7).
-        minimum_DA  : If True, show the minimum DA within each bin instead of
-                      the mean (default: False).
-        plot_losses : Currently unused (default: False).
+        Args:
+            nx          : Number of bins along the pitch-angle axis (default: 30).
+            ny          : Number of bins along the radial axis (default: 30).
+            savepath    : File path for the output heatmap image
+                        (default: 'heatmap_digit_accuracy.png').
+            plot_at_loss : If True, use the digit accuracy value at the time of
+                        loss; otherwise use the value at the end of the full
+                        integration (default: True).
+            ax          : Matplotlib axis to plot on. If None, a new figure and
+                        axis are created.
+            DA_max      : Maximum digit accuracy value shown on the colorbar
+                        (default: 7).
+            minimum_DA  : If True, show the minimum DA within each bin instead of
+                        the mean (default: False).
+            plot_losses : Currently unused (default: False).
 
-    Returns:
-        None
-    """
+        Returns:
+            None
+        """
         import matplotlib as mpl
         import matplotlib.pyplot as plt
         from matplotlib.cm import ScalarMappable
@@ -3228,69 +3228,69 @@ class MapPhaseSpace:
         file_name='',
         convergence_points=1
     ):
-    r"""
-    Initialize the MapPhaseSpace instance, generate initial conditions, and
-    trace particles in the perturbed field.
+        r"""
+        Initialize the MapPhaseSpace instance, generate initial conditions, and
+        trace particles in the perturbed field.
 
-    Args:
-        saw                  : A :class:`ShearAlfvenHarmonic` or
-                               :class:`ShearAlfvenWavesSuperposition` instance.
-        Phin_max             : Toroidal mode number of the dominant wave harmonic,
-                               used to compute nprime.
-        Phim_max             : Poloidal mode number of the dominant wave harmonic,
-                               used to compute nprime.
-        omega                : Wave frequency.
-        mass                 : Particle mass.
-        charge               : Particle charge.
-        Ekin                 : Total unperturbed kinetic energy.
-        helicity_N           : Toroidal helicity of the field-strength contours.
-        helicity_M           : Poloidal helicity of the field-strength contours.
-        helicity_Mp          : Poloidal helicity of the mapping coordinate eta.
-                               If None, determined automatically from helicity_M.
-        helicity_Np          : Toroidal helicity of the mapping coordinate eta.
-                               If None, determined automatically from helicity_N.
-        Eprime               : Fixed value of the shifted energy invariant
-                               n' * E - omega * p_eta. If provided, initial
-                               parallel velocities are solved from this constraint
-                               rather than from Ekin directly (default: None).
-        sign_vpar            : Sign of the parallel velocity, either +1 or -1
-                               (default: 1).
-        tmax                 : Maximum integration time per particle (default: 1e-2 s).
-        plot_s               : If True, use the flux-surface label s as the radial
-                               plot coordinate; otherwise use p_eta (default: False).
-        min_timestep         : Minimum time-step size used as the save interval and
-                               for computing the expected trajectory length
-                               (default: 1e-6 s).
-        ns_points            : Number of flux surfaces in the structured grid
-                               (default: 25).
-        particles_per_surface : Number of particles sampled on each flux surface
-                               (default: 15).
-        nlambda_points       : Number of magnetic-moment values in the structured
-                               grid (default: 25).
-        randomize_particles  : If True, sample initial conditions uniformly at
-                               random rather than on a structured grid
-                               (default: False).
-        number_of_particles  : Number of particles to sample when
-                               randomize_particles is True (default: 10000).
-        s_lims               : Two-element list [s_min, s_max] bounding the
-                               sampled flux surfaces (default: [0.01, 0.975]).
-        mu_lims              : Two-element list [mu_min, mu_max] bounding the
-                               sampled magnetic moments. If [None, None], limits
-                               are set from Ekin and the minimum |B| in the volume
-                               (default: [None, None]).
-        comm                 : MPI communicator for parallel execution
-                               (default: None).
-        tol                  : Absolute and relative ODE solver tolerance
-                               (default: 1e-10).
-        solver_options       : Dictionary of additional options passed to the ODE
-                               solver (default: {}).
-        savedata             : If True, save initial conditions and final
-                               diagnostics to disk (default: True).
-        file_name            : Prefix for output file names (default: '').
-        convergence_points   : Number of intermediate WBA evaluations per
-                               trajectory used to assess convergence
-                               (default: 1).
-    """
+        Args:
+            saw                  : A :class:`ShearAlfvenHarmonic` or
+                                :class:`ShearAlfvenWavesSuperposition` instance.
+            Phin_max             : Toroidal mode number of the dominant wave harmonic,
+                                used to compute nprime.
+            Phim_max             : Poloidal mode number of the dominant wave harmonic,
+                                used to compute nprime.
+            omega                : Wave frequency.
+            mass                 : Particle mass.
+            charge               : Particle charge.
+            Ekin                 : Total unperturbed kinetic energy.
+            helicity_N           : Toroidal helicity of the field-strength contours.
+            helicity_M           : Poloidal helicity of the field-strength contours.
+            helicity_Mp          : Poloidal helicity of the mapping coordinate eta.
+                                If None, determined automatically from helicity_M.
+            helicity_Np          : Toroidal helicity of the mapping coordinate eta.
+                                If None, determined automatically from helicity_N.
+            Eprime               : Fixed value of the shifted energy invariant
+                                n' * E - omega * p_eta. If provided, initial
+                                parallel velocities are solved from this constraint
+                                rather than from Ekin directly (default: None).
+            sign_vpar            : Sign of the parallel velocity, either +1 or -1
+                                (default: 1).
+            tmax                 : Maximum integration time per particle (default: 1e-2 s).
+            plot_s               : If True, use the flux-surface label s as the radial
+                                plot coordinate; otherwise use p_eta (default: False).
+            min_timestep         : Minimum time-step size used as the save interval and
+                                for computing the expected trajectory length
+                                (default: 1e-6 s).
+            ns_points            : Number of flux surfaces in the structured grid
+                                (default: 25).
+            particles_per_surface : Number of particles sampled on each flux surface
+                                (default: 15).
+            nlambda_points       : Number of magnetic-moment values in the structured
+                                grid (default: 25).
+            randomize_particles  : If True, sample initial conditions uniformly at
+                                random rather than on a structured grid
+                                (default: False).
+            number_of_particles  : Number of particles to sample when
+                                randomize_particles is True (default: 10000).
+            s_lims               : Two-element list [s_min, s_max] bounding the
+                                sampled flux surfaces (default: [0.01, 0.975]).
+            mu_lims              : Two-element list [mu_min, mu_max] bounding the
+                                sampled magnetic moments. If [None, None], limits
+                                are set from Ekin and the minimum |B| in the volume
+                                (default: [None, None]).
+            comm                 : MPI communicator for parallel execution
+                                (default: None).
+            tol                  : Absolute and relative ODE solver tolerance
+                                (default: 1e-10).
+            solver_options       : Dictionary of additional options passed to the ODE
+                                solver (default: {}).
+            savedata             : If True, save initial conditions and final
+                                diagnostics to disk (default: True).
+            file_name            : Prefix for output file names (default: '').
+            convergence_points   : Number of intermediate WBA evaluations per
+                                trajectory used to assess convergence
+                                (default: 1).
+        """
         if not isinstance(saw, ShearAlfvenHarmonic) and not isinstance(
             saw, ShearAlfvenWavesSuperposition
         ):
@@ -4281,56 +4281,56 @@ class WBAPerturbedParticles:
         solver_options={},
         nconvergence_points=1,
     ):
-    r"""
-    Initialize the WBAPerturbedParticles instance for computing the
-    Weighted Birkhoff Average (WBA) digit accuracy of guiding-center
-    trajectories in a perturbed ShearAlfvenWave field.
+        r"""
+        Initialize the WBAPerturbedParticles instance for computing the
+        Weighted Birkhoff Average (WBA) digit accuracy of guiding-center
+        trajectories in a perturbed ShearAlfvenWave field.
 
-    Either pre-traced trajectories (gc_tys) or initial conditions (points,
-    v_pars, mu_per_mass) must be provided. If initial conditions are given,
-    particles are traced using trace_particles_boozer_perturbed.
+        Either pre-traced trajectories (gc_tys) or initial conditions (points,
+        v_pars, mu_per_mass) must be provided. If initial conditions are given,
+        particles are traced using trace_particles_boozer_perturbed.
 
-    Args:
-        saw                  : A :class:`ShearAlfvenHarmonic` or compatible
-                               perturbed-field instance.
-        mass                 : Particle mass.
-        charge               : Particle charge.
-        Ekin                 : Total kinetic energy.
-        helicity_N           : Toroidal helicity of the field-strength contours.
-        helicity_M           : Poloidal helicity of the field-strength contours.
-        helicity_Mp          : Poloidal helicity of the mapping coordinate eta.
-                               If None, determined automatically from helicity_M.
-        helicity_Np          : Toroidal helicity of the mapping coordinate eta.
-                               If None, determined automatically from helicity_N.
-        points               : Array of shape (N, 4) containing initial
-                               coordinates (s, theta, zeta, t). Required if
-                               gc_tys is None.
-        v_pars               : Array of initial parallel velocities. Required
-                               if gc_tys is None.
-        mu_per_mass          : Array of initial magnetic moments divided by
-                               mass. Required if gc_tys is None.
-        tmax                 : Maximum integration time per particle
-                               (default: 1e-2 s).
-        min_timestep         : Minimum time-step size used as the save
-                               interval (default: 1e-7 s).
-        DA_cutoff            : Digit accuracy threshold below which a
-                               trajectory is classified as chaotic
-                               (default: 3).
-        tol                  : ODE solver tolerance (default: 1e-9).
-        gc_tys               : List of pre-traced trajectory arrays. If
-                               provided, tracing is skipped (default: None).
-        savedata             : If True, save diagnostics to disk
-                               (default: False).
-        save_gc_trajectories : If True, save raw trajectory arrays to disk
-                               (default: False).
-        savepath             : Prefix for output file names (default: '').
-        comm                 : MPI communicator for parallel execution
-                               (default: None).
-        solver_options       : Dictionary of additional options passed to the
-                               ODE solver (default: {}).
-        nconvergence_points  : Number of intermediate WBA evaluations per
-                               trajectory (default: 1).
-    """
+        Args:
+            saw                  : A :class:`ShearAlfvenHarmonic` or compatible
+                                perturbed-field instance.
+            mass                 : Particle mass.
+            charge               : Particle charge.
+            Ekin                 : Total kinetic energy.
+            helicity_N           : Toroidal helicity of the field-strength contours.
+            helicity_M           : Poloidal helicity of the field-strength contours.
+            helicity_Mp          : Poloidal helicity of the mapping coordinate eta.
+                                If None, determined automatically from helicity_M.
+            helicity_Np          : Toroidal helicity of the mapping coordinate eta.
+                                If None, determined automatically from helicity_N.
+            points               : Array of shape (N, 4) containing initial
+                                coordinates (s, theta, zeta, t). Required if
+                                gc_tys is None.
+            v_pars               : Array of initial parallel velocities. Required
+                                if gc_tys is None.
+            mu_per_mass          : Array of initial magnetic moments divided by
+                                mass. Required if gc_tys is None.
+            tmax                 : Maximum integration time per particle
+                                (default: 1e-2 s).
+            min_timestep         : Minimum time-step size used as the save
+                                interval (default: 1e-7 s).
+            DA_cutoff            : Digit accuracy threshold below which a
+                                trajectory is classified as chaotic
+                                (default: 3).
+            tol                  : ODE solver tolerance (default: 1e-9).
+            gc_tys               : List of pre-traced trajectory arrays. If
+                                provided, tracing is skipped (default: None).
+            savedata             : If True, save diagnostics to disk
+                                (default: False).
+            save_gc_trajectories : If True, save raw trajectory arrays to disk
+                                (default: False).
+            savepath             : Prefix for output file names (default: '').
+            comm                 : MPI communicator for parallel execution
+                                (default: None).
+            solver_options       : Dictionary of additional options passed to the
+                                ODE solver (default: {}).
+            nconvergence_points  : Number of intermediate WBA evaluations per
+                                trajectory (default: 1).
+        """
         if gc_tys is None and points is None:
             raise ValueError(
                     "Need to provide traced trajectories or points to trace."
@@ -5266,7 +5266,6 @@ class PassingPerturbedPetaPoincare:
         """
         Compute vpar given (s,chi) such that Eprime = Eprime0
         """
-
         def vpar_func_perturbed(s, chi):
             # Choose initial conditions on the eta = 0 plane
             theta, zeta = self.chi_eta_to_theta_zeta(chi, 0)
@@ -5806,9 +5805,7 @@ class PassingPerturbedPetaPoincare:
         fig.tight_layout()
         plt.savefig(filename+"_Peta_hist.png", dpi=300)
         return ax
-    """
-    
-    """
+
     def get_poincare_data(self):
         """
         Return the Poincare map data.
