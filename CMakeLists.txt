@@ -112,6 +112,14 @@ find_package(OpenMP)
 # Find MPI (optional, for parallel interpolation)
 find_package(MPI QUIET)
 if(MPI_FOUND AND MPI_CXX_FOUND)
+    # Cray PE wrappers (cc/CC) absorb MPI include paths internally, so FindMPI
+    # leaves MPI_CXX_INCLUDE_DIRS empty. Recover the path from CRAY_MPICH_DIR.
+    if(NOT MPI_CXX_INCLUDE_DIRS AND DEFINED ENV{CRAY_MPICH_DIR})
+        set(MPI_CXX_INCLUDE_DIRS "$ENV{CRAY_MPICH_DIR}/include")
+        set_property(TARGET MPI::MPI_CXX PROPERTY
+            INTERFACE_INCLUDE_DIRECTORIES "$ENV{CRAY_MPICH_DIR}/include")
+        message(STATUS "Cray MPI: recovered include dirs from CRAY_MPICH_DIR")
+    endif()
     message(STATUS "MPI found: ${MPI_VERSION}")
     message(STATUS "MPI CXX compiler: ${MPI_CXX_COMPILER}")
     message(STATUS "MPI CXX include dirs: ${MPI_CXX_INCLUDE_DIRS}")
