@@ -3,7 +3,6 @@ import time
 import numpy as np
 
 from firm3d.field.boozermagneticfield import (
-    BoozerRadialInterpolant,
     InterpolatedBoozerField,
 )
 from firm3d.field.trajectory_helpers import PassingPoincare
@@ -12,7 +11,7 @@ from firm3d.util.constants import (
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
-from firm3d.util.functions import proc0_print, setup_logging
+from firm3d.util.functions import in_github_actions, proc0_print, setup_logging
 from firm3d.util.mpi import comm_size, comm_world, verbose
 
 boozmn_filename = "../inputs/boozmn_aten_rescaled.nc"
@@ -21,17 +20,17 @@ charge = ALPHA_PARTICLE_CHARGE
 mass = ALPHA_PARTICLE_MASS
 Ekin = FUSION_ALPHA_PARTICLE_ENERGY
 
-resolution = 48  # Resolution for field interpolation
+resolution = 10 if in_github_actions else 48  # Resolution for field interpolation
 sign_vpar = 1.0  # sign(vpar). should be +/- 1.
 lam = 0  # lambda = v_perp^2/(v^2 B) = const. along trajectory
 ntheta_poinc = 1  # Number of zeta initial conditions for poincare
-ns_poinc = 120  # Number of s initial conditions for poincare
-Nmaps = 100  # Number of Poincare return maps to compute
+ns_poinc = 5 if in_github_actions else 120  # Number of s initial conditions
+Nmaps = 5 if in_github_actions else 100  # Number of Poincare return maps to compute
 ns_interp = resolution  # number of radial grid points for interpolation
 ntheta_interp = resolution  # number of poloidal grid points for interpolation
 nzeta_interp = resolution  # number of toroidal grid points for interpolation
 order = 3  # order for interpolation
-tol = 1e-8  # Tolerance for ODE solver
+tol = 1e-4 if in_github_actions else 1e-8  # Tolerance for ODE solver
 degree = 3  # Degree for Lagrange interpolation
 
 # Setup logging to redirect output to file
@@ -40,16 +39,15 @@ setup_logging(f"stdout_passing_freq_{resolution}_{comm_size}.txt")
 time1 = time.time()
 M = 1
 N = 4
-bri = BoozerRadialInterpolant(
-    boozmn_filename, order, no_K=True, comm=comm_world, helicity_M=M, helicity_N=N
-)
-
-field = InterpolatedBoozerField(
-    bri,
-    degree,
-    ns_interp=ns_interp,
-    ntheta_interp=ntheta_interp,
-    nzeta_interp=nzeta_interp,
+field = InterpolatedBoozerField.from_booz_xform(
+    boozmn_filename,
+    degree=order,
+    ns=ns_interp,
+    ntheta=ntheta_interp,
+    nzeta=nzeta_interp,
+    helicity_M=M,
+    helicity_N=N,
+    comm=comm_world,
 )
 
 poinc = PassingPoincare(
@@ -72,7 +70,7 @@ points[:, 0] = s_prof
 field.set_points(points)
 iota = field.iota()[:, 0]
 
-if verbose:
+if verbose and not in_github_actions:
     import matplotlib
 
     matplotlib.use("Agg")  # Don't use interactive backend

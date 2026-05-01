@@ -2,6 +2,7 @@
 
 #include "simdhelpers.h"
 #include <unordered_map>
+#include <map>  
 #include <algorithm>
 #include <functional>
 #include <iostream>
@@ -10,6 +11,11 @@
 #include <stdint.h>
 #include <tuple>
 #include <vector>
+
+// Raw MPI support (works with any MPI implementation, including mpi4py)
+#ifdef USE_MPI
+#include <mpi.h>
+#endif
 
 using Vec = std::vector<double>;
 using RangeTriplet = std::tuple<double, double, int>;
@@ -236,7 +242,7 @@ class RegularGridInterpolant3D {
                     }
                 }
             }
-            // Now we need to figure out which of these dofs we keep, and which
+            // We need to figure out which of these dofs we keep, and which
             // to discard.  To do this, we loop over the cells, and for each
             // cell that shouldn't be skipped, we mark all dofs in that cell.
 
@@ -297,12 +303,22 @@ class RegularGridInterpolant3D {
             {}
 
         void interpolate_batch(std::function<Vec(Vec, Vec, Vec)> &f); // build the interpolant
+#ifdef USE_MPI
+        void interpolate_batch(std::function<Vec(Vec, Vec, Vec)> &f, MPI_Comm comm); // build the interpolant with MPI parallelization (raw MPI, compatible with mpi4py)
+#endif
 
         Vec evaluate(double x, double y, double z); // evaluate the interpolant at one location
         void evaluate_batch(Array& xyz, Array& fxyz); // evluate the interpolant at multiple locations
         void evaluate_batch_1D(Array &xyz, Array &fxyz);
 
         std::pair<double, double> estimate_error(std::function<Vec(Vec, Vec, Vec)> &f, int samples);
+        
+        // Serialization for InterpolatedBoozerField save/load.
+        // get_interpolant_data(): exports vals array and grid params for JSON.
+        // set_interpolant_data(): restores vals and rebuilds all_local_vals_map
+        //                         (the cell-indexed lookup table for evaluation).
+        std::map<std::string, std::vector<double>> get_interpolant_data() const;
+        void set_interpolant_data(const std::map<std::string, std::vector<double>>& data);
 };
 
 class UniformInterpolationRule : public InterpolationRule {

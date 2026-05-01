@@ -1,5 +1,5 @@
 Magnetic Axis Handling
-=====================
+======================
 
 The coordinate singularity at the magnetic axis can be handled in several ways using the keyword argument ``axis`` passed to ``trace_particles_boozer`` and ``trace_particles_boozer_perturbed``.
 
@@ -23,7 +23,7 @@ If ``axis=0``, the trajectory will be integrated in standard Boozer coordinates 
    )
 
 Pseudo-Cartesian Coordinates (axis=1)
-------------------------------------
+-------------------------------------
 
 If ``axis=1``, the trajectory will be integrated in the pseudo-Cartesian coordinates :math:`(\sqrt{s}\cos(\theta),\sqrt{s}\sin(\theta),\zeta)`, but all trajectory information will be saved in the standard Boozer coordinates :math:`(s,\theta,\zeta)`. This option prevents particles from passing to :math:`s < 0`. Because the equations of motion are mapped from :math:`(s,\theta,\zeta)` to :math:`(\sqrt{s}\cos(\theta),\sqrt{s},\sin(\theta),\zeta)`, a division by :math:`\sqrt{s}` is performed. Thus this option may be ill-behaved near the axis.
 
@@ -40,7 +40,7 @@ If ``axis=1``, the trajectory will be integrated in the pseudo-Cartesian coordin
    )
 
 Pseudo-Cartesian Coordinates (axis=2)
-------------------------------------
+-------------------------------------
 
 If ``axis=2``, the trajectory will be integrated in the pseudo-Cartesian coordinates :math:`(s\cos(\theta),s\sin(\theta),\zeta)`, but all trajectory information will be saved in the standard Boozer coordinates :math:`(s,\theta,\zeta)`. This option prevents particles from passing to :math:`s < 0`. No division by :math:`s` is required to map to this coordinate system. This option (default) is recommended if one would like to integrate near the magnetic axis.
 

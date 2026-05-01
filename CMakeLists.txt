@@ -44,7 +44,7 @@ else()
 endif()
 
 # Find pybind11
-execute_process(COMMAND python -m pybind11 --cmakedir
+execute_process(COMMAND ${Python_EXECUTABLE} -m pybind11 --cmakedir
                 OUTPUT_VARIABLE pybind11_DIR
                 OUTPUT_STRIP_TRAILING_WHITESPACE)
 message("Result of python -m pybind11 --cmakedir: ${pybind11_DIR}")
@@ -108,6 +108,30 @@ if(DEFINED ENV{CONDA_PREFIX})
 endif()
 
 find_package(OpenMP)
+
+# Find MPI (optional, for parallel interpolation)
+find_package(MPI QUIET)
+if(MPI_FOUND AND MPI_CXX_FOUND)
+    # Cray PE wrappers (cc/CC) absorb MPI include paths internally, so FindMPI
+    # leaves MPI_CXX_INCLUDE_DIRS empty. Recover the path from CRAY_MPICH_DIR.
+    if(NOT MPI_CXX_INCLUDE_DIRS AND DEFINED ENV{CRAY_MPICH_DIR})
+        set(MPI_CXX_INCLUDE_DIRS "$ENV{CRAY_MPICH_DIR}/include")
+        set_property(TARGET MPI::MPI_CXX PROPERTY
+            INTERFACE_INCLUDE_DIRECTORIES "$ENV{CRAY_MPICH_DIR}/include")
+        message(STATUS "Cray MPI: recovered include dirs from CRAY_MPICH_DIR")
+    endif()
+    message(STATUS "MPI found: ${MPI_VERSION}")
+    message(STATUS "MPI CXX compiler: ${MPI_CXX_COMPILER}")
+    message(STATUS "MPI CXX include dirs: ${MPI_CXX_INCLUDE_DIRS}")
+    message(STATUS "MPI CXX libraries: ${MPI_CXX_LIBRARIES}")
+    set(USE_MPI TRUE)
+    add_definitions(-DUSE_MPI)
+else()
+    message(STATUS "MPI not found. MPI parallelization will be disabled.")
+    message(STATUS "To enable MPI, install MPI development libraries and ensure MPI_CXX_COMPILER is set.")
+    set(USE_MPI FALSE)
+endif()
+
 find_package(Boost 1.76.0)
 if(Boost_FOUND)
     message(STATUS "Boost version is ${Boost_VERSION_STRING}")
@@ -178,7 +202,13 @@ set_target_properties(${PROJECT_NAME}
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON)
 
-target_include_directories(${PROJECT_NAME} PRIVATE "thirdparty/xtensor/include" "thirdparty/xtensor-python/include" "thirdparty/xsimd/include" "thirdparty/xtl/include" ${Python_NumPy_INCLUDE_DIRS} "src/firm3dpp/")
+# nlohmann-json is provided via the Python nlohmann_json package.
+# setup.py finds the include path and passes it to CMake.
+if(nlohmann_json_INCLUDE_DIR)
+    target_include_directories(${PROJECT_NAME} PRIVATE "thirdparty/xtensor/include" "thirdparty/xtensor-python/include" "thirdparty/xsimd/include" "thirdparty/xtl/include" ${Python_NumPy_INCLUDE_DIRS} "src/firm3dpp/" ${nlohmann_json_INCLUDE_DIR})
+else()
+    target_include_directories(${PROJECT_NAME} PRIVATE "thirdparty/xtensor/include" "thirdparty/xtensor-python/include" "thirdparty/xsimd/include" "thirdparty/xtl/include" ${Python_NumPy_INCLUDE_DIRS} "src/firm3dpp/")
+endif()
 
 if(NOT Boost_FOUND)
     add_dependencies(${PROJECT_NAME} ${boost_target})
@@ -187,6 +217,12 @@ set_target_properties(${PROJECT_NAME} PROPERTIES COMPILE_FLAGS "-I${Boost_INCLUD
 
 if(OpenMP_CXX_FOUND)
     target_link_libraries(${PROJECT_NAME} PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+# Link MPI if found
+if(USE_MPI AND MPI_CXX_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE MPI::MPI_CXX)
+    message(STATUS "Linking MPI libraries for parallel interpolation support")
 endif()
 
 IF (GSL_FOUND)

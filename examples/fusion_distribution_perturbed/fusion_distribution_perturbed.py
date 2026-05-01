@@ -3,7 +3,6 @@ import time
 import numpy as np
 
 from firm3d.field.boozermagneticfield import (
-    BoozerRadialInterpolant,
     InterpolatedBoozerField,
     ShearAlfvenHarmonic,
 )
@@ -20,17 +19,17 @@ from firm3d.util.constants import (
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
-from firm3d.util.functions import proc0_print, setup_logging
+from firm3d.util.functions import in_github_actions, proc0_print, setup_logging
 from firm3d.util.mpi import comm_size, comm_world, verbose
 
-resolution = 48  # Resolution for field interpolation
-nParticles = 5000  # Number of particles to trace
-reltol = 1e-8  # Relative tolerance for the ODE solver
-abstol = 1e-8  # Absolute tolerance for the ODE solver
+resolution = 10 if in_github_actions else 48  # Resolution for field interpolation
+nParticles = 50 if in_github_actions else 5000  # Number of particles to trace
+reltol = 1e-4 if in_github_actions else 1e-8  # Relative tolerance for the ODE solver
+abstol = 1e-4 if in_github_actions else 1e-8  # Absolute tolerance for the ODE solver
 order = 3  # Order for radial interpolation
 degree = 3  # Degree for 3d interpolation
 boozmn_filename = "../inputs/boozmn_beta2.5_QA.nc"
-tmax = 1e-2  # Time for integration
+tmax = 1e-4 if in_github_actions else 1e-2  # Time for integration
 ns_interp = resolution
 ntheta_interp = resolution
 nzeta_interp = resolution
@@ -46,16 +45,14 @@ phase = 0
 # Setup logging to redirect output to file
 setup_logging(f"stdout_{nParticles}_{resolution}_{comm_size}.txt")
 
-## Setup radial interpolation
-bri = BoozerRadialInterpolant(boozmn_filename, order, no_K=True, comm=comm_world)
-
-## Setup 3d interpolation
-field = InterpolatedBoozerField(
-    bri,
-    degree,
-    ns_interp=ns_interp,
-    ntheta_interp=ntheta_interp,
-    nzeta_interp=nzeta_interp,
+## Setup field interpolation
+field = InterpolatedBoozerField.from_booz_xform(
+    boozmn_filename,
+    degree=order,
+    ns=ns_interp,
+    ntheta=ntheta_interp,
+    nzeta=nzeta_interp,
+    comm=comm_world,
 )
 
 saw = ShearAlfvenHarmonic(Phihat, Phim, Phin, omega, phase, field)
@@ -117,7 +114,7 @@ time2 = time.time()
 proc0_print("Elapsed time for tracing = ", time2 - time1)
 
 ## Post-process results to obtain lost particles
-if verbose:
+if verbose and not in_github_actions:
     from firm3d.field.trajectory_helpers import compute_loss_fraction
 
     times, loss_frac = compute_loss_fraction(res_tys, tmin=1e-5, tmax=1e-2)

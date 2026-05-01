@@ -1855,7 +1855,13 @@ class PassingPerturbedPoincare:
                 helicity_M,
                 helicity_N,
             )
-            self.Eprime = self.nprime * Ekin - self.omega * Peta0
+            Peta0_arr = np.asarray(Peta0)
+            if Peta0_arr.size != 1:
+                raise ValueError(
+                    f"Peta0 must be scalar-like (size 1), got shape "
+                    f"{Peta0_arr.shape} and size {Peta0_arr.size}"
+                )
+            self.Eprime = float(self.nprime * Ekin - self.omega * Peta0_arr.item())
         else:
             raise ValueError(
                 "Either Eprime and mu must be provided, or Ekin, lam, and p0 "
@@ -2123,6 +2129,7 @@ class PassingPerturbedPoincare:
             tmax=self.tmax,
             mass=self.mass,
             charge=self.charge,
+            Ekin=self.Ekin,
             phases=phases,
             n_zetas=n_zetas,
             m_thetas=m_thetas,
@@ -2133,6 +2140,7 @@ class PassingPerturbedPoincare:
                 MinToroidalFluxStoppingCriterion(0.001),
                 MaxToroidalFluxStoppingCriterion(0.99),
             ],
+            forget_exact_path=not self.DA_poinc,
             vpars_stop=True,
             phases_stop=True,
             **self.solver_options,

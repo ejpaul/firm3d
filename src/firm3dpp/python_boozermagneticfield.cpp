@@ -7,6 +7,7 @@
 #include "regular_grid_interpolant_3d.h"
 #include "shearalfvenwave.h"
 #include "pyshearalfvenwave.h"
+#include "mpi_utils.h"
 #include <string>
 
 using std::string;
@@ -14,6 +15,7 @@ using std::shared_ptr;
 using std::vector;
 
 namespace py = pybind11;
+using firm3dpp::mpi::get_mpi_comm_from_fortran;
 
 void init_boozermagneticfields(py::module_ &m){
   auto mf = py::class_<
@@ -414,7 +416,8 @@ void init_boozermagneticfields(py::module_ &m){
           bool,
           int,
           bool,
-          string>()
+          string>(),
+          py::keep_alive<1, 2>()
       )
       .def(
           py::init<shared_ptr<BoozerMagneticField>,
@@ -425,8 +428,21 @@ void init_boozermagneticfields(py::module_ &m){
           bool,
           int,
           bool,
-          string>()
+          string>(),
+          py::keep_alive<1, 2>()
       )
+#ifdef USE_MPI
+      .def(
+          "set_mpi_comm",
+          [](InterpolatedBoozerField& self, long long fortran_handle) {
+              MPI_Comm comm = get_mpi_comm_from_fortran(fortran_handle);
+              self.set_mpi_comm(comm);
+          },
+          py::arg("comm_fortran"),
+          "Set the MPI communicator to use for interpolate_batch. "
+          "Takes a Fortran MPI communicator handle (obtained from comm.py2f() in Python)."
+      )
+#endif
       .def(
           "estimate_error_K",
           &InterpolatedBoozerField::estimate_error_K
@@ -506,6 +522,14 @@ void init_boozermagneticfields(py::module_ &m){
       .def_readwrite("status_Z_derivs",&InterpolatedBoozerField::status_Z_derivs)
       .def_readwrite("status_nu_derivs",&InterpolatedBoozerField::status_nu_derivs)
       .def_readwrite("status_modB_derivs",&InterpolatedBoozerField::status_modB_derivs)
+      .def(py::init<string>(), "Load from JSON file.")
+      .def("to_json", &InterpolatedBoozerField::to_json, "Save to JSON file.")
+      // Getters needed because C++ members are private; from_json() reads these in Python
+      .def("get_nfp", &InterpolatedBoozerField::get_nfp)
+      .def("get_stellsym", &InterpolatedBoozerField::get_stellsym)
+      .def("get_extrapolate", &InterpolatedBoozerField::get_extrapolate)
+      .def("get_psi0", &InterpolatedBoozerField::get_psi0)
+      .def("get_field_type", &InterpolatedBoozerField::get_field_type)
       ;
 
     // ShearAlfvenWave:
@@ -577,7 +601,13 @@ void init_boozermagneticfields(py::module_ &m){
         .def("dalphadzeta_ref", &ShearAlfvenWave::dalphadzeta_ref)
 
         .def("set_points", &ShearAlfvenWave::set_points)
-        .def("get_points", &ShearAlfvenWave::get_points);
+        .def("get_points", &ShearAlfvenWave::get_points)
+        .def_property(
+            "B0",
+            &ShearAlfvenWave::get_B0,
+            &ShearAlfvenWave::set_B0,
+            "Equilibrium field"
+        );
 
     // Phihat:
     py::class_<Phihat>(m, "Phihat")
@@ -600,7 +630,11 @@ void init_boozermagneticfields(py::module_ &m){
         .def_readwrite("Phin", &ShearAlfvenHarmonic::Phin)
         .def_readwrite("omega", &ShearAlfvenHarmonic::omega)
         .def_readwrite("phase", &ShearAlfvenHarmonic::phase)
-        .def_property_readonly("B0", &ShearAlfvenHarmonic::get_B0)
+        .def_property(
+            "B0",
+            &ShearAlfvenHarmonic::get_B0,
+            &ShearAlfvenWave::set_B0
+        )
         .def_property_readonly("phihat", &ShearAlfvenHarmonic::get_phihat);
 
     // ShearAlfvenWavesSuperposition:
