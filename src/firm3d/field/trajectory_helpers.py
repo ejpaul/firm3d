@@ -758,7 +758,7 @@ class PassingPoincare:
             )
 
             fig_convergence.tight_layout()
-            plt.savefig(filename + "_convergence.png", dpi=300)
+            plt.savefig(filename[:-4] + "_convergence.pdf")
             plt.clf()
 
         return ax
@@ -1672,6 +1672,7 @@ class PassingPerturbedPoincare:
         Nmaps=500,
         comm=None,
         tmax=1e-2,
+        dt_save=1e-6,
         solver_options=None,
     ):
         """
@@ -1808,6 +1809,7 @@ class PassingPerturbedPoincare:
         self.Nmaps = Nmaps
         self.comm = comm
         self.tmax = tmax
+        self.dt_save = dt_save
         self.solver_options = solver_options
 
         # if using a ShearAlfvenWavesSuperposition, use the test_saw for
@@ -2130,6 +2132,7 @@ class PassingPerturbedPoincare:
             mass=self.mass,
             charge=self.charge,
             Ekin=self.Ekin,
+            dt_save=self.dt_save,
             phases=phases,
             n_zetas=n_zetas,
             m_thetas=m_thetas,
@@ -2137,7 +2140,7 @@ class PassingPerturbedPoincare:
             vpars=[0],
             axis=0,
             stopping_criteria=[
-                MinToroidalFluxStoppingCriterion(0.001),
+                MinToroidalFluxStoppingCriterion(0.01),
                 MaxToroidalFluxStoppingCriterion(0.99),
             ],
             forget_exact_path=not self.DA_poinc,
@@ -2264,7 +2267,7 @@ class PassingPerturbedPoincare:
     def plot_poincare(
         self,
         ax=None,
-        filename="passing_poincare",
+        filename="passing_poincare.pdf",
         convergence_test_indicies=None,
         DA_max=7,
         lines=None,
@@ -2450,7 +2453,7 @@ class PassingPerturbedPoincare:
                 )
             ax.legend()
         fig.tight_layout()
-        fig.savefig(filename + ".png", dpi=400)
+        fig.savefig(filename[:-4] + ".pdf")
 
         # convergence plot - change in DA with number of transit evaluations
         # histogram of final DA values
@@ -2476,14 +2479,14 @@ class PassingPerturbedPoincare:
             )
 
             fig.tight_layout()
-            plt.savefig(filename + "_convergence.png", dpi=300)
+            plt.savefig(filename[:-4] + "_convergence.pdf")
             plt.clf()
             final_DAs = [x for x in final_DAs if not np.isnan(x)]
             plt.hist(final_DAs)
             plt.xlabel("Digit Accuracy")
             plt.title("Distribution of Digit Accuracy")
             plt.tight_layout()
-            plt.savefig(filename + "_DA_histogram.png")
+            plt.savefig(filename[:-4] + "_DA_histogram.pdf")
         return ax, lines_2
 
     def get_poincare_data(self):
@@ -3016,7 +3019,7 @@ class MapEquilibrium:
             self,
             nx=30,
             ny=30,
-            savepath="heatmap_digit_accuracy.png",
+            savepath="heatmap_digit_accuracy.pdf",
             plot_at_loss=True,
             ax=None,
             DA_max=7,
@@ -3032,7 +3035,7 @@ class MapEquilibrium:
             nx          : Number of bins along the pitch-angle axis (default: 30).
             ny          : Number of bins along the radial axis (default: 30).
             savepath    : File path for the output heatmap image
-                        (default: 'heatmap_digit_accuracy.png').
+                        (default: 'heatmap_digit_accuracy.pdf').
             plot_at_loss : If True, use the digit accuracy value at the time of
                         loss; otherwise use the value at the end of the full
                         integration (default: True).
@@ -3182,11 +3185,11 @@ class MapEquilibrium:
         ax.plot(pa_fit, s_fit, color="grey", linewidth=5,  label = 'Trapped-passing boundary')
         
         plt.tight_layout()
-        plt.savefig(savepath, dpi=300)
+        plt.savefig(savepath)
         plt.clf()
         for i in range(len(self.convergence_times)):
             plt.plot(self.convergence_times[i], self.convergence_DAs[i], alpha=0.5)
-        plt.savefig(savepath[:-4]+"_convergence.png", dpi=300)   
+        plt.savefig(savepath[:-4]+"_convergence.pdf")   
 
 class MapPhaseSpace:
     r"""
@@ -4120,7 +4123,7 @@ class MapPhaseSpace:
     def plot_heatmap(self, 
                       nx=20, 
                       ny=20, 
-                      savepath = 'heatmap_digit_accuracy.png',  
+                      savepath = 'heatmap_digit_accuracy.pdf',  
                       ax=None, 
                       DA_max=7, 
                       statistic='mean',
@@ -5775,7 +5778,7 @@ class PassingPerturbedPetaPoincare:
             )
         
         plt.tight_layout()
-        plt.savefig(filename + ".png", dpi = 400)
+        plt.savefig(filename + ".pdf", dpi = 400)
 
         # convergence plot - change in DA with number of transit evaluations
         # histogram of final DA values
@@ -5801,7 +5804,7 @@ class PassingPerturbedPetaPoincare:
             )
 
             fig.tight_layout()
-            plt.savefig(filename+"_convergence.png", dpi=300)
+            plt.savefig(filename[:-4]+"_convergence.pdf")
 
         plt.clf()
         final_Petas = [self.Peta_all[i][-1]for i in range(len(self.Peta_all)) if len(self.Peta_all[i])>self.Nmaps-3]
@@ -5811,7 +5814,7 @@ class PassingPerturbedPetaPoincare:
         plt.ylabel("Distribution")
         plt.legend()
         fig.tight_layout()
-        plt.savefig(filename+"_Peta_hist.png", dpi=300)
+        plt.savefig(filename[:-4]+"_Peta_hist.pdf")
         return ax
 
     def get_poincare_data(self):
