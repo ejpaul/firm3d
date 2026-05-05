@@ -18,7 +18,7 @@ jobs:
       github.event_name == 'push' ||
       contains(github.event.pull_request.labels.*.name, 'GPU CI')
     runs-on: [perlmutter]
-    timeout-minutes: 60
+    timeout-minutes: 360
 
     steps:
       - uses: actions/checkout@v4
