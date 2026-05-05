@@ -1,9 +1,7 @@
-import sys
 import time
 
 import numpy as np
 
-from firm3d._core.util import parallel_loop_bounds
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
@@ -13,7 +11,7 @@ from firm3d.field.tracing import (
     trace_particles_boozer,
 )
 from firm3d.field.tracing_helpers import (
-    initialize_position_profile,
+    initialize_position_uniform_vol,
     initialize_velocity_uniform,
 )
 from firm3d.field.trajectory_helpers import WBAParticles
@@ -22,8 +20,7 @@ from firm3d.util.constants import (
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
-from firm3d.util.functions import proc0_print
-import matplotlib.pyplot as plt
+
 try:
     from mpi4py import MPI
 
@@ -38,7 +35,7 @@ except ImportError:
 time1 = time.time()
 
 resolution = 48  # Resolution for field interpolation
-nParticles =  5000  # Number of particles to trace
+nParticles = 5000  # Number of particles to trace
 reltol = 1e-10  # Relative tolerance for the ODE solver
 abstol = 1e-10  # Absolute tolerance for the ODE solver
 order = 3  # Order for radial interpolation
@@ -67,11 +64,11 @@ field = InterpolatedBoozerField(
 )
 
 tracing_points = initialize_position_uniform_vol(
-            field,
-            nParticles,
-            comm=comm,
-            seed=None,
-        )
+    field,
+    nParticles,
+    comm=comm,
+    seed=None,
+)
 
 Ekin = FUSION_ALPHA_PARTICLE_ENERGY
 mass = ALPHA_PARTICLE_MASS
@@ -81,29 +78,29 @@ vpar0 = np.sqrt(2 * Ekin / mass)
 vpar_init = initialize_velocity_uniform(vpar0, nParticles, comm=comm, seed=0)
 
 object_WBA = WBAParticles(
-        field,
-        mass,
-        charge,
-        Ekin,
-        helicity_N,
-        helicity_M,
-        points=tracing_points,
-        v_pars=vpar_init,
-        tmax=1e-2,
-        min_timestep=1e-7,
-        savedata=True,
-        comm=comm,
-        DA_cutoff=3,
-        tol=abstol,
-        convergence_points=10
-    )
+    field,
+    mass,
+    charge,
+    Ekin,
+    helicity_N,
+    helicity_M,
+    points=tracing_points,
+    v_pars=vpar_init,
+    tmax=1e-2,
+    min_timestep=1e-7,
+    savedata=True,
+    comm=comm,
+    DA_cutoff=3,
+    tol=abstol,
+    convergence_points=10,
+)
 
 DAs_all = np.array(object_WBA.DAs)
 convergence_DAs = object_WBA.convergence_DAs
 convergence_times = object_WBA.convergence_times
 
-### Alternatively: one could provide the traced trajectories to the WBAParticles class, 
-# which will then compute the DA for those trajectories. 
+### Alternatively: one could provide the traced trajectories to the WBAParticles class,
+# which will then compute the DA for those trajectories.
 res_tys, res_hits = trace_particles_boozer(
     field,
     tracing_points,
@@ -120,19 +117,20 @@ res_tys, res_hits = trace_particles_boozer(
     reltol=reltol,
     dt_save=dt_save,
 )
+
 object_WBA = WBAParticles(
-        field,
-        mass,
-        charge,
-        Ekin,
-        helicity_N,
-        helicity_M,
-        gc_tys=res_tys,
-        tmax=1e-2,
-        min_timestep=1e-7,
-        savedata=True,
-        comm=comm,
-        DA_cutoff=3,
-        tol=1e-9,
-        convergence_points=10
-    )
+    field,
+    mass,
+    charge,
+    Ekin,
+    helicity_N,
+    helicity_M,
+    gc_tys=res_tys,
+    tmax=1e-2,
+    min_timestep=1e-7,
+    savedata=True,
+    comm=comm,
+    DA_cutoff=3,
+    tol=1e-9,
+    convergence_points=10,
+)

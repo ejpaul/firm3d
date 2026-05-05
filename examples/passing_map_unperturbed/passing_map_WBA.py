@@ -1,10 +1,12 @@
 import time
 
+import matplotlib as mpl
+
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
 )
-from firm3d.field.trajectory_helpers import PassingPoincare, min_volumemodB
+from firm3d.field.trajectory_helpers import PassingPoincare
 from firm3d.util.constants import (
     ALPHA_PARTICLE_CHARGE,
     ALPHA_PARTICLE_MASS,
@@ -12,7 +14,6 @@ from firm3d.util.constants import (
 )
 from firm3d.util.functions import proc0_print, setup_logging
 from firm3d.util.mpi import comm_size, comm_world, verbose
-import matplotlib as mpl
 
 boozmn_filename = "../inputs/boozmn_aten_rescaled.nc"
 
@@ -69,8 +70,8 @@ poinc = PassingPoincare(
     ntheta_poinc=ntheta_poinc,
     Nmaps=Nmaps,
     comm=comm_world,
-    helicity_N = 1 * bri.nfp, 
-    helicity_M = 1,
+    helicity_N=1 * bri.nfp,
+    helicity_M=1,
     solver_options={"reltol": tol, "abstol": tol},
     chaos_detection=True,
 )

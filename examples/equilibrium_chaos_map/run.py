@@ -1,35 +1,19 @@
-import time
-
 import matplotlib as mpl
-import numpy as np
 from matplotlib import pyplot as plt
 
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
-    ShearAlfvenHarmonic,
-    ShearAlfvenWave,
-    ShearAlfvenWavesSuperposition,
-)
-from firm3d.field.tracing_helpers import (
-    initialize_position_profile,
-    initialize_position_uniform_surf,
 )
 from firm3d.field.trajectory_helpers import (
     MapEquilibrium,
-    PassingPerturbedPoincare,
-    PassingPoincare,
-    compute_peta
 )
-from firm3d.saw.ae3d import AE3DEigenvector
 from firm3d.util.constants import (
     ALPHA_PARTICLE_CHARGE,
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
-from firm3d.util.functions import proc0_print
-from os import makedirs
-from firm3d.util.functions import proc0_print, setup_logging
+
 try:
     from mpi4py import MPI
 
@@ -71,7 +55,7 @@ bri = BoozerRadialInterpolant(
     order,
     no_K=True,
     comm=comm,
-)  
+)
 field = InterpolatedBoozerField(
     bri,
     degree,
@@ -106,19 +90,8 @@ heat_map = MapEquilibrium(
     savepath="",
 )
 
-stat, x_edges, y_edges, binnumber = binned_statistic_2d(
-            heat_map.bounces,
-            heat_map.passes,
-            heat_map.DAs_at_loss,
-            statistic=statistic,
-            bins=[nx, ny],
-        )
-
-norm = mpl.colors.Normalize(vmin=0, vmax=DA_max)
-X2, Y2 = np.meshgrid(x_edges, y_edges)
-plt.pcolormesh(X2, Y2, stat.T, shading="auto", cmap=cmap, norm=norm)
-plt.savefig(fname + "_PSmap.png", dpi=300)
-
 if verbose:
-    heat_map.plot_surfaces(savepath=fname + "_PSmap_min.png", minimum_DA=True, plot_at_loss=False)
+    heat_map.plot_surfaces(
+        savepath=fname + "_PSmap_min.png", minimum_DA=True, plot_at_loss=False
+    )
     plt.clf()
