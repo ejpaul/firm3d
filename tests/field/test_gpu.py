@@ -92,7 +92,7 @@ def construct_interpolant(field, nfp, saw_present=False):
 def sample_test_points(n_test_pts):
     np.random.seed(1865)
     # generate test points
-    s = np.random.uniform(low=0, high=0.95, size=(n_test_pts, 1))
+    s = np.random.uniform(low=0, high=1.1, size=(n_test_pts, 1))
     t = np.random.uniform(low=0, high=2 * np.pi, size=(n_test_pts, 1))
     z = np.random.uniform(low=0, high=2 * np.pi, size=(n_test_pts, 1))
     stz = np.hstack((s, t, z))
@@ -874,79 +874,6 @@ class TestGPUTracing(unittest.TestCase):
             tol=tol,
         )
         self.assertTrue(is_small)
-
-    def test_out_of_bounds_cpu_gpu_parity(self):
-        """Verify CPU and GPU interpolants agree (and are non-zero) for s > 1.
-
-        When a particle escapes the last flux surface (s > 1) the interpolant
-        should extrapolate using the boundary cell rather than silently return
-        zero.  This test checks that both CPU (RegularGridInterpolant3D) and
-        GPU (CUDA kernel) exhibit that clamped-cell extrapolation behaviour and
-        that their outputs match each other.
-        """
-        n_metagrid_pts = 15
-        boozmn_filename = "examples/inputs/boozmn_aten_rescaled_low_res.nc"
-        bri, field, nfp = get_field(boozmn_filename, n_metagrid_pts, vacuum=True)
-
-        # Build the interpolant (needed for the GPU call).
-        srange, trange, zrange, quad_info, _maxJ = construct_interpolant(field, nfp)
-
-        # Sample points strictly outside the plasma (s > 1).
-        n_test_pts = 100
-        np.random.seed(42)
-        s_oob = np.random.uniform(low=1.01, high=1.10, size=(n_test_pts, 1))
-        t_oob = np.random.uniform(low=0, high=2 * np.pi, size=(n_test_pts, 1))
-        z_oob = np.random.uniform(low=0, high=2 * np.pi, size=(n_test_pts, 1))
-        stz_oob = np.hstack((s_oob, t_oob, z_oob))
-
-        # --- CPU evaluation ---
-        field.set_points(stz_oob)
-        modB_cpu = field.modB()
-        modB_derivs_cpu = field.modB_derivs()
-        G_cpu = field.G()
-        iota_cpu = field.iota()
-        cpu_vals = np.hstack((modB_cpu, modB_derivs_cpu, G_cpu, iota_cpu))
-
-        # --- GPU evaluation ---
-        stz_contig = np.ascontiguousarray(stz_oob)
-        gpu_raw = firm3dpp.test_gpu_interpolation(
-            quad_info,
-            srange,
-            trange,
-            zrange,
-            stz_contig.copy(),
-            "boozer_vacuum",
-            n_test_pts,
-        )
-        gpu_vals = np.reshape(gpu_raw, (n_test_pts, -1))
-
-        # Both CPU and GPU must return non-zero modB (the most critical quantity).
-        # A zero modB would cause infinite RHS in the guiding-centre equations.
-        self.assertTrue(
-            np.all(modB_cpu != 0),
-            "CPU interpolant returned zero modB for out-of-bounds (s>1) points; "
-            "expected non-zero extrapolated values.",
-        )
-        self.assertTrue(
-            np.all(gpu_vals[:, 0:1] != 0),
-            "GPU interpolant returned zero modB for out-of-bounds (s>1) points; "
-            "expected non-zero extrapolated values.",
-        )
-
-        # CPU and GPU outputs must agree (same clamped-cell extrapolation).
-        tol = 1e-8
-        close = np.isclose(gpu_vals, cpu_vals, rtol=tol, atol=tol).all()
-        if not close:
-            error = np.abs(cpu_vals - gpu_vals) / (np.abs(cpu_vals) + 1)
-            row_idx = np.unravel_index(np.argmax(error), error.shape)[0]
-            print("OOB parity failure at stz:", stz_oob[row_idx, :])
-            print("  cpu:", cpu_vals[row_idx, :])
-            print("  gpu:", gpu_vals[row_idx, :])
-            print("  rel error:", error[row_idx, :])
-        self.assertTrue(
-            close,
-            "CPU and GPU interpolants disagree for out-of-bounds (s>1) points.",
-        )
 
     @unittest.skipUnless(HAS_SIMSOPT, "simsopt not available")
     def test_cartesian_vacuum(self):
