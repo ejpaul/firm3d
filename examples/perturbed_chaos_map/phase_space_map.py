@@ -406,7 +406,7 @@ if verbose:
         ax=ax_center,
         filename=filename,
         lines=ell_rad_list,
-        legend_plot=False,
+        plot_legend=False,
         linecolors=linecolors,
         bg_field=field_p,
         line_styles=main_harmonic_linestyles,

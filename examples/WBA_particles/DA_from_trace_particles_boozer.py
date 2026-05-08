@@ -77,6 +77,25 @@ charge = ALPHA_PARTICLE_CHARGE
 vpar0 = np.sqrt(2 * Ekin / mass)
 vpar_init = initialize_velocity_uniform(vpar0, nParticles, comm=comm, seed=0)
 
+### Alternatively: one could provide the traced trajectories to the WBAParticles class,
+# which will then compute the DA for those trajectories.
+res_tys, res_hits = trace_particles_boozer(
+    field,
+    tracing_points,
+    vpar_init,
+    tmax=tmax,
+    mass=mass,
+    charge=charge,
+    Ekin=Ekin,
+    vpars=[0],
+    vpars_stop=False,
+    stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
+    forget_exact_path=False,
+    abstol=abstol,
+    reltol=reltol,
+    dt_save=dt_save,
+)
+
 object_WBA = WBAParticles(
     field,
     mass,
@@ -84,14 +103,13 @@ object_WBA = WBAParticles(
     Ekin,
     helicity_N,
     helicity_M,
-    points=tracing_points,
-    v_pars=vpar_init,
+    gc_tys=res_tys,
     tmax=1e-2,
     min_timestep=1e-7,
     savedata=True,
     comm=comm,
     DA_cutoff=3,
-    tol=abstol,
+    tol=1e-9,
     convergence_points=10,
 )
 

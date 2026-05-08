@@ -1,0 +1,21 @@
+Reading File
+Read Files
+Building Lists
+Done Building Lists
+0: ell=0, arr=0.23333055106000208
+linecolor: [(np.float64(0.995737), np.float64(0.909344), np.float64(0.217772), np.float64(1.0))], linestyle: ['solid']
+Traceback (most recent call last):
+  File "/pscratch/sd/a/alachman/simsopt_installs/equilibrium_maps/firm3d/examples/perturbed_chaos_map/phase_space_map.py", line 405, in <module>
+    ax_center, lines_colors = map.plot_poincare(
+                              ~~~~~~~~~~~~~~~~~^
+        ax=ax_center,
+        ^^^^^^^^^^^^^
+    ...<7 lines>...
+        s_axis_label=False,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+TypeError: PassingPerturbedPoincare.plot_poincare() got an unexpected keyword argument 'line_styles'
+[2026-05-08T13:45:39.023] error: *** STEP 52697322.0 ON nid005198 CANCELLED AT 2026-05-08T13:45:39 DUE TO TIME LIMIT ***
+[2026-05-08T13:45:39.024] error: *** JOB 52697322 ON nid005198 CANCELLED AT 2026-05-08T13:45:39 DUE TO TIME LIMIT ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.

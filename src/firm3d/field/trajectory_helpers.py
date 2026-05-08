@@ -218,7 +218,6 @@ class PassingPoincare:
             self.peta_profile = False
         else:
             self.peta_profile = True
-            print("somehow true")
         if (
             (self.helicity_M is None)
             and (self.helicity_N is None)
@@ -463,6 +462,7 @@ class PassingPoincare:
                     helicity_Np=self.helicity_Np,
                 )
                 peta_traj = [peta[0]]
+                Peta = np.array([[0, peta[0]]])
             else:
                 peta_traj = []
 
@@ -2283,6 +2283,8 @@ class PassingPerturbedPoincare:
         linecolors=None,
         ylims=(0, 1),
         colorbar=True,
+        plot_legend=True,
+        bg_field=None,
         s_axis_label=True,
     ):
         r"""
@@ -2292,11 +2294,22 @@ class PassingPerturbedPoincare:
             ax : Matplotlib axis to plot on. If None, a new figure and axis are
                  created.
             filename : Name of the file to save the plot
-                       (default: 'passing_poincare.pdf').
+                (default: 'passing_poincare.pdf').
             convergence_test_indicies : Indices of initial conditions to show
-            in convergence plot.
+                in DA convergence plot.
             DA_max : Maximum value of Digit Accuracy to show on colorbar
+            lines : List of resonance lines to plot on top of the Poincare map.
+                Each element should be a tuple of the form (ell, s_value).
+            linecolors : List of colors for the resonance lines. 
+                Should be the same length as `lines`.
             ylims : Tuple specifying y-axis limits for the Poincare plot.
+            colorbar : Boolean indicating whether to include a colorbar for DA values.
+            plot_legend : Boolean indicating whether to include a legend for the 
+                resonance lines.
+            bg_field : Magnetic field to use for plotting resonance lines. Should 
+                be the background field of the pertubation with perfect QS enforced.
+                If None, the unperturbed field, B0, is used.
+            s_axis_label : Boolean indicating whether to label the s-axis. Defaults to True.
         Returns:
             ax : The Matplotlib axis containing the plot.
         """
@@ -2325,6 +2338,9 @@ class PassingPerturbedPoincare:
             fig, ax = plt.subplots()
         else:
             fig = ax.get_figure()
+        
+        if bg_field is None:
+            bg_field = self.B0
 
         if self.DA_poinc and self.nconvergence_points > 1:
             s_itrj_map = {}
@@ -2419,10 +2435,10 @@ class PassingPerturbedPoincare:
                     color = cmap(i / max(n_lines - 1, 1))
                 lines_2.append((line[0], line[1], color))
                 vp = self.vpar_func_perturbed(arr, self.chi(np.pi / 2, 0))
-                self.B0.set_points(np.array([[arr, np.pi / 2, 0]]).T)
+                bg_field.set_points(np.array([[arr, np.pi / 2, 0]]).T)
                 unperturbed_path_map = PassingPoincare(
-                    field=self.B0,
-                    lam=(self.v0**2 - vp**2) / (self.v0**2 * self.B0.modB()[0, 0]),
+                    field=bg_field,
+                    lam=(self.v0**2 - vp**2) / (self.v0**2 * bg_field.modB()[0, 0]),
                     sign_vpar=self.sign_vpar,
                     mass=self.mass,
                     charge=self.charge,
@@ -2460,7 +2476,7 @@ class PassingPerturbedPoincare:
                     lw=5,
                     color=color,
                 )
-            ax.legend()
+            if plot_legend: ax.legend()
         fig.tight_layout()
         fig.savefig(filename[:-4] + ".pdf")
 
@@ -3011,6 +3027,9 @@ class MapEquilibrium:
         self.trapped = trapped
         self.Peta_start = Peta_start
 
+        self.s0 = s0
+        self.mu0 = mu0
+
         self.convergence_bounces = convergence_bounces
         self.convergence_passes = convergence_passes
         self.convergence_times = convergence_times
@@ -3391,7 +3410,7 @@ class MapPhaseSpace:
         if self.comm is None or self.comm.rank == 0:
             self.verbose = True
 
-        self.solver_options = solver_options
+        self.solver_options = solver_options if solver_options is not None else {}
 
         self.min_volmodB = min_volumemodB(self.B0)
         self.plot_s = plot_s
@@ -3653,8 +3672,8 @@ class MapPhaseSpace:
                 vmin = self.sign * np.min(vmin)
                 if np.all(np.isnan(vmin)):
                     vmin = 0
-                vpars_init = np.random.uniform(vmin, vtot, size=points_temp.shape[0])
-                mus_temp = (1 / (2 * modB)) * (self.vtotal**2 - vpars_init**2)
+                vpars_temp = np.random.uniform(vmin, vtot, size=points_temp.shape[0])
+                mus_temp = (1 / (2 * modB)) * (self.vtotal**2 - vpars_temp**2)
             # remove unphysical particles
             mask = ~np.isnan(vpars_temp)
             vpars_temp = vpars_temp[mask]
@@ -4179,11 +4198,13 @@ class MapPhaseSpace:
         plot_losses=False,
         negate_peta=False,
         smoothing=3,
-    ):
+        ):
         import matplotlib as mpl
         import matplotlib.pyplot as plt
         from scipy.interpolate import griddata
         from scipy.stats import binned_statistic_2d
+        if self.verbose:
+            print("plotting...", flush=True)
 
         if ax is None:
             fig, ax = plt.subplots(figsize=(16, 12))
@@ -4331,10 +4352,10 @@ class MapPhaseSpace:
             )
         if self.Eprime_slice:
             ax.set_xlabel(
-                r"$\lambda^\prime = \frac{\mu}{E^\prime} \text{sign}(v_{||})$"
+                r"$\lambda^\prime = \frac{\mu}{E^\prime} \text{sign}(v_{\|})$"
             )
         else:
-            ax.set_xlabel(r"$\lambda = \frac{\mu}{E} \text{sign}(v_{||})$")
+            ax.set_xlabel(r"$\lambda = \frac{\mu}{E} \text{sign}(v_{\|})$")
 
         if self.plot_s:
             ax.set_ylabel(r"$s$")
