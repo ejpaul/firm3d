@@ -202,13 +202,17 @@ void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double y, doubl
         if(zidx < 0 || zidx >= nz)
             throw std::runtime_error((boost::format("zidxs={} not within [0, {}]") % zidx % (nz-1)).str());
     } else {
-        // Clamp cell index to valid range (matching CUDA kernel behaviour):
-        // the coordinate is left at its true value so xlocal can exceed [0,1),
-        // giving polynomial extrapolation from the last cell rather than
-        // returning zero (which previously caused modB=0 and an unbounded RHS).
+        // Clamp cell indices to match CUDA kernel convention (cuda_kernel.cu:700-704):
+        //   x (s, radial): clamp both lower and upper bounds — s can legitimately
+        //     fall below 0 or above 1 during tracing.
+        //   y (theta), z (zeta): clamp upper bound only — these are periodic
+        //     coordinates and a negative index never occurs in practice.
+        // The coordinate itself is left at its true value so that xlocal can
+        // exceed [0,1), giving polynomial extrapolation from the boundary cell
+        // rather than returning zero (which caused modB=0 and an unbounded RHS).
         xidx = std::max(0, std::min(nx-1, xidx));
-        yidx = std::max(0, std::min(ny-1, yidx));
-        zidx = std::max(0, std::min(nz-1, zidx));
+        yidx = std::min(ny-1, yidx);
+        zidx = std::min(nz-1, zidx);
     }
     double xlocal = (x-xmesh[xidx])/hx;
     double ylocal = (y-ymesh[yidx])/hy;
