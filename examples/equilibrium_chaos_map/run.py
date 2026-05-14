@@ -64,7 +64,6 @@ field = InterpolatedBoozerField(
     nzeta_interp=nzeta_interp,
 )
 
-# saw = ShearAlfvenHarmonic(Phihat, Phim=Phim, Phin=Phin,omega=omega, B0=field, phase=0)
 sign_vpar = 1  # 1 for co-passing, -1 for counter-passing
 mass = ALPHA_PARTICLE_MASS
 charge = ALPHA_PARTICLE_CHARGE
@@ -82,16 +81,16 @@ heat_map = MapEquilibrium(
     helicity_M=helicity_M,
     helicity_Mp=helicity_Mp,
     helicity_Np=helicity_Np,
-    ns_points=40,
+    ns_points=30,
     particles_per_surface=20,
-    nlambda_points=40,
+    nlambda_points=30,
     comm=comm,
     savedata=True,
-    savepath="",
+    savepath="QH_counter",
 )
 
 if verbose:
     heat_map.plot_surfaces(
-        savepath=fname + "_PSmap_min.png", minimum_DA=True, plot_at_loss=False
+        savepath=fname + "_QH_counter.png", plot_at_loss=False
     )
     plt.clf()

@@ -185,27 +185,6 @@ heat_map = MapPhaseSpace(
     convergence_points=5,
 )
 
-map = PassingPerturbedPoincare(
-    saw,
-    sign_vpar,
-    mass,
-    charge,
-    helicity_M,
-    helicity_N,
-    helicity_Mp=helicity_Mp,
-    helicity_Np=helicity_Np,
-    Ekin=Ekin,
-    p0=p0,
-    lam=lam,
-    ns_poinc=ns_poinc,
-    nchi_poinc=nchi_poinc,
-    Nmaps=Nmaps,
-    DA_poinc=True,
-    comm=comm,
-    nconvergence_points=5,
-)
-
-
 def compute_rotational_profile(pitch, sgn, s_profile, comm):
     poinc = PassingPoincare(
         field_p,
@@ -372,84 +351,14 @@ if verbose:
     # make a list of line colors for each harmonic
     linecolors = [harmonic_cmap(norm(h)) for h in lines_modes]
 
-    line_kwargs_nolabel = []
-    line_kwargs_labeled = []
-    for i in range(len(ell_list)):
-        # find the line styles for each resonance line based on the ell value
-        ls = possible_linestyles[ell_list[i] + max_ell]
-
-        line_kwargs_nolabel.append(
-            {
-                "color": linecolors[i],
-                "linestyle": ls,
-                "linewidth": 5,
-            }
-        )
-        # avoid repeating labels for multiple resonance lines 
-        # with the same ell value
-        if i > 0:
-            if ell_list[i] == ell_list[i - 1]:
-                line_kwargs_labeled.append(
-                    {
-                        "color": linecolors[i],
-                        "linestyle": ls,
-                        "linewidth": 5
-                    }
-                )
-                continue
-        line_kwargs_labeled.append(
-            {
-                "color": linecolors[i],
-                "linestyle": ls,
-                "linewidth": 5,
-                "label": rf"$\ell$={ell_list[i]}",
-            }
-        )
-
     # create subplots
-    fig, (ax_left, ax_center, ax_right, ax_dummy) = plt.subplots(
-        1, 4, gridspec_kw={"width_ratios": [1, 4, 4, 0.61]}, figsize=(34, 12)
+    fig, (ax_right, ax_dummy) = plt.subplots(
+        1, 2, gridspec_kw={"width_ratios": [4, 0.61]}, figsize=(17, 12)
     )
-
-    # plot the perturbation amplitude as a function of radius on the left
-    ax_left.plot(Phihat[1][:-1], Phihat[0])
-    filename = filepath + "poincare.png"
-
-    # plot the resonance lines on the pertubation magnitude plot
-    for i, radius in enumerate(rad_list):
-        ell = ell_list[i]
-        print(f"{i}: ell={ell}, arr={radius}")
-        ax_left.plot(
-            [min(Phihat[1]), max(Phihat[1])],
-            [radius, radius],
-            **line_kwargs_nolabel[i],
-        )
-
-    ax_left.set_xlabel(r"$\delta \phi$ [V]")
-    ax_left.set_ylabel(r"$s_0$")
-
-    # plot the poincare plot in the center, with resonance lines
-    ax_center, lines_colors = map.plot_poincare(
-        ax=ax_center,
-        filename=filename,
-        resonance_lines=rad_list,
-        plot_legend=False,
-        line_plotting_kwargs=line_kwargs_labeled,
-        bg_field=field_p,
-        DA_colorbar=False,
-        s_axis_label=False,
-    )
-    legend_handles, legend_labels = ax_center.get_legend_handles_labels()
-    if ax_center.get_legend() is not None:
-        ax_center.get_legend().remove()
-    ax_center.set_title(rf"$\lambda$ = {lam * sign_vpar}")
-    ax_center.sharey(ax_left)
-
-    print("Finished plotting poincare ", flush=True)
 
     # plot heatmap
     ax_right = heat_map.plot_heatmap(
-        ax=ax_right, savepath=filepath + "heatmap.png", plot_losses=plot_losses
+        ax=ax_right, savepath="heatmap.png", plot_losses=plot_losses
     )
 
     fig = ax_right.get_figure()
@@ -498,7 +407,7 @@ if verbose:
         borderaxespad=0.0,
     )
     ax_dummy.remove()
-    fig.savefig(filepath + f"{filepath[:-1]}.png", dpi=400)
+    fig.savefig("heatmap.png", dpi=400)
 
     plt.clf()
 if comm is not None:
