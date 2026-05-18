@@ -473,13 +473,11 @@ class PassingPoincare:
             t_traj = [0]
             for _jj in range(self.Nmaps):
                 try:
-                    if self.DA_poinc and _jj == 0:
-                        tr, time, Peta = self.passing_map(tr)
-                    else:
-                        tr, time, Peta_iter = self.passing_map(tr)
+                    tr, time, Peta_iter = self.passing_map(tr)
 
                     if self.peta_profile:
                         peta_traj.append(Peta_iter[-1, 1])
+                        # shift time column by orbit time
                         Peta_iter[:, 0] += Peta[-1, 0]
                         Peta = np.vstack((Peta, Peta_iter[1:, :]))
 
@@ -875,15 +873,17 @@ class TrappedPoincare:
                 "helicity_M and helicity_N must be provided for chaos detection."
             )
 
-        if helicity_Mp is None and helicity_Np is None:
+        if helicity_Mp is None or helicity_Np is None:
             # If modB contours close poloidally, then use theta as mapping coordinate
             if self.helicity_M == 0:
-                self.helicity_Mp = 1
-                self.helicity_Np = 0
+                helicity_Mp = 1
+                helicity_Np = 0
             # Otherwise, use zeta as mapping coordinate
             else:
-                self.helicity_Mp = 0
-                self.helicity_Np = self.field.nfp
+                helicity_Mp = 0
+                helicity_Np = self.field.nfp
+        self.helicity_Mp = helicity_Mp
+        self.helicity_Np = helicity_Np
 
         if lam is not None:
             if lam <= 0:
@@ -1484,7 +1484,7 @@ def compute_peta(
     else:
         field = field_or_saw
         alpha = 0.0
-        if points.shape == 4:
+        if points.shape[1] == 4:
             points = points[:, :3]
         field.set_points(points)
 
@@ -1494,7 +1494,7 @@ def compute_peta(
     psi = field.psi0 * points[:, 0]
     psip = field.psip()[:, 0]
 
-    if helicity_Mp is None and helicity_Np is None:
+    if helicity_Mp is None or helicity_Np is None:
         # If modB contours close poloidally, then use theta as mapping coordinate
         if helicity_M == 0:
             helicity_Mp = 1
@@ -2547,8 +2547,6 @@ class MapEquilibrium:
         savepath="",
         randomize_particles=False,
         number_of_particles=10000,
-        initial_conditions=None,
-        initial_vpar=None,
         min_timestep=1e-7,
         nconvergence_points=100,
         s_lims=None,
@@ -2648,31 +2646,30 @@ class MapEquilibrium:
 
         self.randomize = randomize_particles
 
-        if initial_conditions is None:
-            if exists(self.savepath + "_initial_conditions.txt"):
-                initial_conditions = np.loadtxt(
-                    self.savepath + "_initial_conditions.txt"
-                )
-                s, thetas, zetas, vpar, mu = (
-                    initial_conditions[:, 0],
-                    initial_conditions[:, 1],
-                    initial_conditions[:, 2],
-                    initial_conditions[:, 3],
-                    initial_conditions[:, 4],
-                )
+        if exists(self.savepath + "_initial_conditions.txt"):
+            initial_conditions = np.loadtxt(
+                self.savepath + "_initial_conditions.txt"
+            )
+            s, thetas, zetas, vpar, mu = (
+                initial_conditions[:, 0],
+                initial_conditions[:, 1],
+                initial_conditions[:, 2],
+                initial_conditions[:, 3],
+                initial_conditions[:, 4],
+            )
+        else:
+            if not randomize_particles:
+                self.ns_points = ns_points
+                self.nlambda_points = nlambda_points
+                self.nParticles = ns_points * particles_per_surface * nlambda_points
             else:
-                if not randomize_particles:
-                    self.ns_points = ns_points
-                    self.nlambda_points = nlambda_points
-                    self.nParticles = ns_points * particles_per_surface * nlambda_points
-                else:
-                    self.nParticles = number_of_particles
-                    xy_pts = int(np.sqrt(number_of_particles / particles_per_surface))
-                    self.ns_points = xy_pts
-                    self.nlambda_points = xy_pts
+                self.nParticles = number_of_particles
+                xy_pts = int(np.sqrt(number_of_particles / particles_per_surface))
+                self.ns_points = xy_pts
+                self.nlambda_points = xy_pts
 
-                self.particles_per_surface = particles_per_surface
-                s, thetas, zetas, vpar, mu = self.initialize_particles()
+            self.particles_per_surface = particles_per_surface
+            s, thetas, zetas, vpar, mu = self.initialize_particles()
 
         self.s, self.thetas, self.zetas, self.vpar, self.mu = s, thetas, zetas, vpar, mu
 
@@ -2930,15 +2927,15 @@ class MapEquilibrium:
             gc_tys.append([start_state, end_state, convergence_data])
         print(f"{self.comm.rank=} done tracing particles", flush=True)
         if self.comm is not None:
-            res_tys = [i for o in self.comm.allgather(gc_tys) for i in o]
+            gc_tys = [i for o in self.comm.allgather(gc_tys) for i in o]
 
         if self.verbose:
             import pickle
 
             with open(self.res_filepaths["tys"], "wb") as f:
-                pickle.dump(res_tys, f)
+                pickle.dump(gc_tys, f)
 
-        self.build_lists(res_tys)
+        self.build_lists(gc_tys)
         return
 
     def build_lists(self, res_tys):
@@ -3420,10 +3417,20 @@ class MapPhaseSpace:
         else:
             self.mu_min = mu_lims[0]
             self.mu_max = mu_lims[1]
+        
+        if self.savedata:
+            self.final_filepaths = {
+                "DA": self.savepath + "DA_losttimes.txt",
+                'ICs': self.savepath + "initial_conditions.txt",
+                }
+            self.res_filepaths = {
+                "tys": self.savepath + "DA_data.txt",
+            }
 
-        if exists(self.savepath + "initial_conditions.txt"):
+
+        if exists(self.final_filepaths['ICs']):
             initial_conditions = np.loadtxt(
-                self.savepath + "initial_conditions.txt", ndmin=2
+                self.final_filepaths['ICs']
             )
             self.s, self.thetas, self.zetas, self.vpar, self.mus_per_mass = (
                 initial_conditions[:, 0],
@@ -3435,6 +3442,9 @@ class MapPhaseSpace:
         else:
             if randomize_particles:
                 self.nParticles = number_of_particles
+                xy_pts = int(np.sqrt(number_of_particles / particles_per_surface))
+                self.ns_points = xy_pts
+                self.nlambda_points = xy_pts
                 s, thetas, zetas, vpar, mu_per_mass = self.instantiate_uniform_particles(
                     self.nParticles
                 )
@@ -3461,13 +3471,8 @@ class MapPhaseSpace:
         ).tolist()
         self.convergence_plot = self.convergence_points > 1
 
-        if self.savedata:
-            self.final_filepaths = {"DA": self.savepath + "DA_losttimes.txt"}
-            self.res_filepaths = {
-                "tys": self.savepath + "DA_data.txt",
-            }
-
         self.trace_particles()
+        return
 
     def check_filepaths(self, filepaths):
         return all(exists(fp) for fp in filepaths.values())
@@ -3642,7 +3647,7 @@ class MapPhaseSpace:
             )
             if self.Eprime_slice:
                 sgn = self.sign * np.ones(self.particles_per_surface)
-                mu_particle = mus_flat[particle_index]
+                mu_particle = mus_flat[particle_index]/self.mass
                 vpars_temp = []
 
                 for i in range(points_temp.shape[0]):
@@ -3659,7 +3664,7 @@ class MapPhaseSpace:
                     else:
                         vpars_temp.append(vp_temp[0])
                 vpars_temp = np.array(vpars_temp)
-                mus_per_mass_temp = mu_particle / self.mass * np.ones(points_temp.shape[0])
+                mus_per_mass_temp = mu_particle * np.ones(points_temp.shape[0])
             else:
                 vpars_temp = self.vpar_func(
                     points_temp[:, 0],
@@ -3720,7 +3725,7 @@ class MapPhaseSpace:
             if isinstance(gc_zeta_hits[i], np.ndarray): # noqa: SIM102
                 if gc_zeta_hits[i].size > 0: # noqa: SIM102
                     if int(gc_zeta_hits[i][0][1]) == -1: # noqa: SIM102
-                        lost_total.append(i)
+                        lost_total.append(i-1)
 
         # remove wall lost particles from the list of evaluated particles
         points = np.delete(points, lost_total, axis=0)
@@ -4070,16 +4075,6 @@ class MapPhaseSpace:
             convergence_energies.append(convergence[5])
             convergence_DAs.append(convergence[4])
 
-        if self.verbose:
-            mu_per_mass0 = np.array(mus0) / self.mass
-            np.savetxt(
-                self.savepath + "initial_conditions.txt",
-                np.column_stack((s0, theta0, zeta0, vpar0, mu_per_mass0)),
-            )
-            np.savetxt(
-                self.final_filepaths["DA"], np.column_stack((DAs_at_loss, final_times))
-            )
-
         self.DAs_at_loss = DAs_at_loss
         self.DA_at_tfinal = DA_tfinal
         self.lost_total = lost_total
@@ -4105,28 +4100,41 @@ class MapPhaseSpace:
         self.convergence_energies = convergence_energies
 
         if self.verbose:
+            mu_per_mass0 = np.array(mus0) / self.mass
+            if not exists(self.final_filepaths['ICs']):
+                np.savetxt(
+                    self.final_filepaths['ICs'],
+                    np.column_stack((s0, theta0, zeta0, vpar0, mu_per_mass0)),
+                )
+            if not exists(self.final_filepaths["DA"]):
+                np.savetxt(
+                    self.final_filepaths["DA"], np.column_stack((DAs_at_loss, final_times))
+                )
+
+        if self.verbose:
             print("Done Building Lists", flush=True)
         return
 
-    def surface_trapped_variable_energy_func(self, pitch_angle, surface):
+    def surface_trapped_func_Eprime(self, pitch_angle, surface):
         r"""
         `    Determine whether a particle with the given pitch angle is trapped on a
             specified flux surface.
 
             Samples modB over the surface and checks whether the parallel velocity
-            would become imaginary at the maximum field strength, indicating
-            trapping. When self.Eprime_slice is True, the energy is computed from
-            the Eprime constraint; otherwise the prescribed Ekin is used.
+            calculated via the Eprime rootsolve would become imaginary at the maximum 
+            field strength on that surface, indicating trapping. 
+            The prescribed reference Ekin is used.
 
             Args:
-                pitch_angle : Normalized pitch-angle variable
-                            lambda = mu / E * sign(v_par).
+                pitch_angle : Normalized pitch-angle variable.
+                            Can either be lambda' = mu / Eprime * sign(v_par) or
+                            lambda = mu / E * sign(v_par), depending on self.Eprime_slice.
                 surface     : Flux-surface label s at which to evaluate trapping.
 
             Returns:
                 trapped : List of integers (0 or 1) indicating whether each sampled
                         point is trapped.
-                peta   : List of Petas corresponding to each sampled point.
+                peta   : List of radial like coordinates corresponding to each sampled point.
         """
         resolution = 500
         points = initialize_position_uniform_surf(self.B0, resolution, surface)
@@ -4138,50 +4146,212 @@ class MapPhaseSpace:
         if self.Eprime_slice:
             mu = np.abs(pitch_angle * self.Eprime)
         else:
-            mu = np.abs(pitch_angle * self.Ekin) / self.min_volmodB
-        pitch_angle = mu / self.Ekin
+            mu = np.abs(pitch_angle * self.Ekin)
 
         vpars_temp = []
-        if self.Eprime_slice:
-            for i in range(points.shape[0]):
-                vp_temp = self.vpar_func_perturbed(
-                    points[i, 0], points[i, 1], points[i, 2], mu, sgn
-                )
-                if vp_temp is not None:
-                    vpars_temp.append(vp_temp[0])
-                else:
-                    vpars_temp.append(np.nan)
-            vpars = np.array(vpars_temp)
+        for i in range(points.shape[0]):
+            vp_temp = self.vpar_func_perturbed(
+                points[i, 0], points[i, 1], points[i, 2], mu, sgn
+            )
+            if vp_temp is not None:
+                vpars_temp.append(vp_temp[0])
+            else:
+                vpars_temp.append(np.nan)
+        vpars = np.array(vpars_temp)
 
-            mask = ~np.isnan(vpars)
-            vpars = vpars[mask]
-            points = points[mask]
+        mask = ~np.isnan(vpars)
+        vpars = vpars[mask]
+        points = points[mask]
+        modB = modB[mask]
+
+        output = ((self.Ekin - mu*modB) < 0).astype(int)
+        output = output.tolist()
+        if self.plot_s:
+            return np.sum(output), surface
         else:
-            vpars = np.sqrt(self.Ekin - mu * modB)
+            peta = compute_peta(
+                self.B0,
+                points,
+                vpars,
+                self.mass,
+                self.charge,
+                self.helicity_M,
+                self.helicity_N,
+                self.helicity_Mp,
+                self.helicity_Np,
+            )
+            return output, peta.tolist()
+        
+    def trapped_passing_function(self, s, pitch):
+        r"""
+        Determine whether a particle with the given pitch angle is trapped on a
+        specified flux surface. 
+
+        Args:
+            surface     : Flux-surface label s.
+            pitch       : Normalized pitch-angle variable
+                        lambda = mu / E * sign(v_par).
+        
+        Returns:
+            trapped : Integers (0 or 1) indicating whether trapped.
+        """
+        resolution = 500
+        points_temp = initialize_position_uniform_surf(
+            self.B0,
+            resolution,
+            s,
+            comm=None,
+        )
+        self.B0.set_points(points_temp)
+        modB = self.B0.modB()[:, 0]
+
+        if np.any(1 - (pitch * modB) < 0):
+            return 1
+        return 0
+    
+    def s_peta_map(self, s, mu, sign):
+        r"""
+        Map a point to canonical momentum p_eta using current settings.
+
+        Args:
+            s : Radial-like coordinate.
+            mu : Magnetic moment.
+            sign : Desired sign for parallel velocity.
+        Returns:
+            peta : Canonical momentum value at the requested point.
+        """
+        points = np.zeros((1,3)) if np.isscalar(s) else np.zeros((len(s), 3))
+        points[:, 0] = s
+        
+        if self.Eprime_slice:
+            vp_temp = self.vpar_func_perturbed(
+                points[:, 0], points[:, 1], points[:, 2], mu, sign
+            )
+        else:
+            vp_temp = self.vpar_func(
+                points[:, 0], points[:, 1], points[:, 2], mu, sign
+            )
 
         peta = compute_peta(
             self.B0,
             points,
-            vpars,
+            vp_temp,
             self.mass,
             self.charge,
             self.helicity_M,
             self.helicity_N,
-            self.helicity_Mp,
-            self.helicity_Np,
+        )
+        return peta
+    
+    def return_peta_trapped_contoured_boundary(self):
+        volume_boundary_radlike = []
+        volume_boundary_pitch = []
+        volume_trapped = []
+        radial_space = 70
+        pa_space = 70
+
+        for s_val in np.linspace(self.s_min, self.s_max, radial_space):
+            for pitch_val in np.linspace(
+                np.min(self.pitch), np.max(self.pitch), pa_space
+            ):
+                trapped, radial_like = self.surface_trapped_func(
+                    pitch_val, s_val
+                )
+                if self.Eprime_slice:
+                    pitch_val *= self.min_volmodB
+
+                if self.plot_s:
+                    volume_boundary_radlike.append(radial_like)
+                    volume_trapped.append(trapped)
+                    volume_boundary_pitch.append(pitch_val)
+                    continue
+
+                trapped = np.array(trapped)
+                radial_like = np.array(radial_like)
+                # check if within bounds of actual peta values
+                mask = (radial_like >= min(surf_arr)) & (radial_like <= max(surf_arr))
+                trapped = trapped[mask]
+                radial_like = radial_like[mask]
+                if len(radial_like) == 0:
+                    continue
+
+                volume_boundary_radlike += radial_like.tolist()
+                volume_trapped += trapped.tolist()
+                pitch_lst = [pitch_val] * len(radial_like)
+                volume_boundary_pitch += pitch_lst
+        
+                surf_arr = np.array(self.Plot_Radial)
+
+        trapped_vals, pitch_edges, radlike_edges, binnumber= binned_statistic_2d(
+            np.array(volume_boundary_pitch), np.array(volume_boundary_radlike), np.array(volume_trapped),
+            statistic='max',
+            bins=[pa_space, radial_space]
         )
 
-        if self.Eprime_slice:
-            E = (1 / self.nprime) * (self.Eprime + self.omega * peta)
-        else:
-            E = np.array(self.Ekin)
-        if self.plot_s:
-            if np.min(E) - mu * maxmodB < 0:
-                return [1], [surface]
-            else:
-                return [0], [surface]
-        else:
-            return ((E - mu * maxmodB) < 0).astype(int).tolist(), peta.tolist()
+        pitch_c   = 0.5 * (pitch_edges[:-1]   + pitch_edges[1:])
+        radlike_c = 0.5 * (radlike_edges[:-1] + radlike_edges[1:])
+
+        T = np.nan_to_num(trapped_vals, nan=0.0).astype(int)
+
+        boundary_pitch, boundary_radlike = [], []
+        for j in range(T.shape[1]):
+            col = T[:, j]
+            if not col.any() or col.all():
+                continue               
+            i = int(np.argmax(col == 1))        
+            pitch_b = pitch_c[i] if i == 0 else 0.5 * (pitch_c[i-1] + pitch_c[i])
+
+            boundary_pitch.append(pitch_b)
+            boundary_radlike.append(radlike_c[j])
+
+        boundary_lam  = np.array(boundary_lam)
+        boundary_peta = np.array(boundary_peta)
+
+        order = np.argsort(boundary_lam)
+        boundary_lam, boundary_peta = boundary_lam[order], boundary_peta[order]
+
+        coeffs = np.polyfit(boundary_lam, boundary_peta, 2)
+        poly = np.poly1d(coeffs)
+
+        lam_fit = np.linspace(boundary_lam.min(), boundary_lam.max(), 300)
+        peta_fit = poly(lam_fit)
+
+        return poly, lam_fit, peta_fit 
+    
+    def return_flux_trapped_boundary(self):
+        s_scope = np.linspace(self.s_min, self.s_max, 75)[::-1]
+        pa_min, pa_max = (self.mu_min / self.Ekin), (self.mu_max / self.Ekin)
+        pa_scope = np.linspace(pa_min, pa_max, 75)
+
+        s_tp = []
+        pa_tp = []
+
+        for s in s_scope:
+            for pa in pa_scope:
+                if self.trapped_passing_function(s, pa) == 1:
+                    s_tp.append(s)
+                    if self.Eprime_slice:
+                        pa_tp.append(pa * self.sign / self.Eprime)
+                    else:
+                        pa_tp.append(pa * self.sign * self.min_volmodB)
+                    break
+
+        if not self.plot_s:
+            peta_tp = []
+            for s, p_a in zip(s_tp, pa_tp):
+                if self.Eprime_slice:
+                    mu = np.abs(p_a * self.Eprime)
+                else:
+                    mu = np.abs(p_a * self.Ekin / self.min_volmodB)
+                peta_tp.append(self.s_peta_map(s, mu, self.sign)[0])
+            s_tp = peta_tp
+
+        coeffs = np.polyfit(pa_tp, s_tp, 2)
+        poly = np.poly1d(coeffs)
+        pa_fit = np.linspace(min(pa_tp), max(pa_tp), 100)
+        s_fit = poly(pa_fit)
+
+        return poly, pa_fit, s_fit
 
     def plot_heatmap(
         self,
@@ -4200,6 +4370,7 @@ class MapPhaseSpace:
         import matplotlib.pyplot as plt
         from scipy.interpolate import griddata
         from scipy.stats import binned_statistic_2d
+
         if self.verbose:
             print("plotting...", flush=True)
 
@@ -4222,121 +4393,28 @@ class MapPhaseSpace:
 
         norm = mpl.colors.Normalize(vmin=0, vmax=DA_max)
 
-        stat, x_edges, y_edges, binnumber = binned_statistic_2d(
-            np.array(self.pitch),
+        if not self.Eprime_slice:
+            plotting_pitch = np.array(self.pitch) * self.min_volmodB
+        else:
+            plotting_pitch = np.array(self.pitch) * self.Eprime
+
+        DA_stats, x_edges, y_edges, binnumber = binned_statistic_2d(
+            np.array(plotting_pitch),
             np.array(self.Plot_Radial),
             np.array(DA_values),
             statistic=statistic,
             bins=[nx, ny],
         )
 
-        X2, Y2 = np.meshgrid(x_edges, y_edges)
-        if negate_peta:
-            im2 = ax.pcolormesh(
-                X2, Y2 * -1, stat.T, shading="auto", cmap=cmap, norm=norm
-            )
-        else:
-            im2 = ax.pcolormesh(X2, Y2, stat.T, shading="auto", cmap=cmap, norm=norm)
-
-        volume_boundary_peta = []
-        volume_boundary_pitch = []
-        volume_trapped = []
-        space = 70
-        pa_space = 70
-        if self.verbose:
-            print("making trapped boundary...", flush=True)
-        for s_val in np.linspace(0, 1, space):
-            for pitch_val in np.linspace(
-                np.min(self.pitch), np.max(self.pitch), pa_space
-            ):
-                trapped, peta = self.surface_trapped_variable_energy_func(
-                    pitch_val, s_val
-                )
-                if trapped is None:
-                    continue
-
-                trapped = np.array(trapped)
-                peta = np.array(peta)
-                surf_arr = np.array(self.Plot_Radial)
-                mask = (peta >= min(surf_arr)) & (peta <= max(surf_arr))
-                trapped = trapped[mask]
-                peta = peta[mask]
-                if len(peta) == 0:
-                    continue
-
-                pitch_lst = [pitch_val] * len(peta)
-                if self.plot_s:
-                    volume_boundary_peta.append(s_val)
-                    volume_trapped.append(np.sum(trapped))
-                    volume_boundary_pitch.append(pitch_val)
-                else:
-                    volume_boundary_peta += peta.tolist()
-                    volume_trapped += trapped.tolist()
-                    pitch_lst = [pitch_val] * len(peta)
-                    volume_boundary_pitch += pitch_lst
-        if self.verbose:
-            print("making trapped boundary...", flush=True)
-
-        volume_boundary_pitch = np.array(volume_boundary_pitch)
-        volume_boundary_peta = np.array(volume_boundary_peta)
-        volume_trapped = np.array(volume_trapped)
-
-        volume_boundary_pitch_i = np.linspace(
-            volume_boundary_pitch.min(), volume_boundary_pitch.max(), 300
-        )
-        volume_boundary_peta_i = np.linspace(
-            volume_boundary_peta.min(), volume_boundary_peta.max(), 300
-        )
-        lambda_boundary, Peta_boundary = np.meshgrid(
-            volume_boundary_pitch_i, volume_boundary_peta_i
-        )
-
-        TP_binary = (volume_trapped != 0).astype(float)
+        X, Y = np.meshgrid(x_edges, y_edges)
+        if negate_peta: Y *= -1
+        im2 = ax.pcolormesh(X, Y, DA_stats.T, shading="auto", cmap=cmap, norm=norm)
         
-        TP_i = griddata(
-            (volume_boundary_pitch, volume_boundary_peta),
-            TP_binary,
-            (lambda_boundary, Peta_boundary),
-            method="linear",
-            rescale=True,
-        )
-
-        cs = ax.contour(
-            volume_boundary_pitch_i,
-            volume_boundary_peta_i,
-            TP_i,
-            levels=[0],
-            colors="gray",
-            linewidths=10)
-        plt.savefig(savepath, dpi=400)
-
-        paths = cs.get_paths()
-
-        self.trapped_boundary_paths = paths
-        if len(paths) > 0:
-            all_verts = np.concatenate([p.vertices for p in paths], axis=0)
-            self.trapped_PA_boundary = all_verts[:, 0]
-            self.trapped_peta_boundary = all_verts[:, 1]
-        else:
-            warn("No trapped-passing boundary contour found at level 0.")
-            self.trapped_PA_boundary = np.array([])
-            self.trapped_peta_boundary = np.array([])
-
-        coeffs = np.polyfit(self.trapped_PA_boundary, self.trapped_peta_boundary, 2)
-
-        poly = np.poly1d(coeffs)
-        order = np.argsort(self.trapped_PA_boundary)
-        self.trapped_PA_boundary, self.trapped_peta_boundary = (
-            self.trapped_PA_boundary[order],
-            self.trapped_peta_boundary[order],
-        )
-
-        x_fit = np.linspace(line_pa.min(), line_pa.max(), 300)
-        y_fit = poly(x_fit)
-
+        poly, pa_fit, rad_fit = self.return_flux_trapped_boundary()
         self.trapped_boundary_fit = poly
-        self.trapped_PA_boundary = x_fit
-        self.trapped_peta_boundary = y_fit
+        ax.plot(
+            pa_fit, rad_fit, color="grey", linewidth=5, label="Trapped-passing boundary"
+        )
 
         colorlabel = "Digit Accuracy"
 
@@ -4475,7 +4553,7 @@ class WBAPerturbedParticles:
         self.helicity_M = helicity_M
         self.helicity_N = helicity_N
 
-        if helicity_Mp is None and helicity_Np is None:
+        if helicity_Mp is None or helicity_Np is None:
             # If modB contours close poloidally, then use theta as mapping coordinate
             if helicity_M == 0:
                 helicity_Mp = 1
