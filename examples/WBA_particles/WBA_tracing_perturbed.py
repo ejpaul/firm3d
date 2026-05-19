@@ -81,7 +81,7 @@ modB = field.modB()[:, 0]
 mus_per_mass = (Ekin - 0.5 * vpar_init**2) / modB
 
 object_WBA = WBAPerturbedParticles(
-    field,
+    saw,
     mass,
     charge,
     Ekin,

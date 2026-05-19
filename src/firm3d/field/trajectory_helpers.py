@@ -4669,9 +4669,13 @@ class WBAPerturbedParticles:
 
         for itrj in range(first, last):
             if self.trace:
+                pts = np.zeros((1,3))
+                pts[:,0] = self.points0[itrj, 0]
+                pts[:,1] = self.points0[itrj, 1]
+                pts[:,2] = self.points0[itrj, 2]
                 gc_tys, gc_zeta_hits = trace_particles_boozer_perturbed(
                     perturbed_field=self.saw,
-                    stz_inits=self.points0[itrj, :],
+                    stz_inits=pts,
                     parallel_speeds=[self.v_pars0[itrj]],
                     mus=[self.mu_per_mass0[itrj]],
                     tmax=self.tmax,
