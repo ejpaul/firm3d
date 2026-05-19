@@ -7,4 +7,4 @@
 
 module load python cray-hdf5/1.14.3.1 cray-netcdf/4.9.0.13
 conda activate equilibrium_map_firm3d # Change to the name of your environment
-srun -n 128 -c 1 python -u return_DA.py
+srun -n 128 -c 1 python -u WBA_tracing_perturbed.py

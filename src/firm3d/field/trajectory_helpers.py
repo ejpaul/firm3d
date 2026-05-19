@@ -111,10 +111,9 @@ def min_volumemodB(B0):
         min_modB : Approximate minimum value of |B| in the sampled volume.
     """
     resolution = 1000
-    points = np.zeros((resolution * resolution, 3))
 
-    for surface in np.linspace(0, 0.99, resolution):
-        if surface == 0:
+    for surface in np.linspace(0.01, 0.99, resolution):
+        if surface == 0.01:
             points = initialize_position_uniform_surf(B0, resolution, surface)
         else:
             sampled_surface = initialize_position_uniform_surf(B0, resolution, surface)
@@ -214,30 +213,31 @@ class PassingPoincare:
         self.helicity_N = helicity_N
         self.helicity_M = helicity_M
 
-        if helicity_N is None and helicity_M is None:
+        if helicity_N is None or helicity_M is None:
             self.peta_profile = False
         else:
             self.peta_profile = True
+            if helicity_Mp is None or helicity_Np is None:
+                # If modB contours close poloidally, then use theta as mapping coordinate
+                if self.helicity_M == 0:
+                    helicity_Mp = 1
+                    helicity_Np = 0
+                # Otherwise, use zeta as mapping coordinate
+                else:
+                    helicity_Mp = 0
+                    helicity_Np = field.nfp
+            self.helicity_Mp = helicity_Mp
+            self.helicity_Np = helicity_Np
+
         if (
             (self.helicity_M is None)
-            and (self.helicity_N is None)
+            or (self.helicity_N is None)
             and chaos_detection
         ):
             raise ValueError(
                 "helicity_M and helicity_N must be provided for chaos detection."
             )
 
-        if helicity_Mp is None and helicity_Np is None:
-            # If modB contours close poloidally, then use theta as mapping coordinate
-            if self.helicity_M == 0:
-                helicity_Mp = 1
-                helicity_Np = 0
-            # Otherwise, use zeta as mapping coordinate
-            else:
-                helicity_Mp = 0
-                helicity_Np = field.nfp
-        self.helicity_Mp = helicity_Mp
-        self.helicity_Np = helicity_Np
 
         self.field = field
         self.lam = lam
@@ -436,7 +436,7 @@ class PassingPoincare:
         DA_all = []
         DA_times = []
         t_all = []
-        if Ntrj == 1:
+        if (Ntrj == 1) and self.comm is None:
             first = 0
             last = 1
         else:
@@ -480,9 +480,11 @@ class PassingPoincare:
                         # shift time column by orbit time
                         Peta_iter[:, 0] += Peta[-1, 0]
                         Peta = np.vstack((Peta, Peta_iter[1:, :]))
+                    else: peta_traj.append(np.nan)
 
                     t_traj.append(time)
                     s_traj.append(tr[0])
+                    
                     thetas_traj.append(tr[1])
                     vpars_traj.append(tr[2])
                     if self.DA_poinc and _jj in self.WBA_transit_steps:
@@ -675,6 +677,8 @@ class PassingPoincare:
 
         if ax is None:
             fig, ax = plt.subplots()
+        else:
+            fig = ax.get_figure()
 
         def normalize(numbers):
             if not numbers:
@@ -1220,13 +1224,13 @@ class TrappedPoincare:
                         # Apply trapped map twice to return to same vpar = 0 plane
                         tr, time1 = self.trapped_map(tr)
                         tr, time2 = self.trapped_map(tr)
-                        if np.abs(tr[1] - chis_traj[-1]) > 2 * np.pi:
-                            warn(
-                                "Barely trapped particle detected in trapped_map.",
-                                stacklevel=2,
-                            )
-                            broken = True
-                            break
+                    if np.abs(tr[1] - chis_traj[-1]) > 2 * np.pi:
+                        warn(
+                            "Barely trapped particle detected in trapped_map.",
+                            stacklevel=2,
+                        )
+                        broken = True
+                        break
                     s_traj.append(tr[0])
                     chis_traj.append(tr[1])
                     etas_traj.append(tr[2])
@@ -1291,6 +1295,8 @@ class TrappedPoincare:
 
         if ax is None:
             fig, ax = plt.subplots()
+        else:
+            fig = ax.get_figure()
 
         if convergence_test_indicies is None:
             convergence_test_indicies = list(range(len(self.s_all)))
@@ -1590,7 +1596,6 @@ def g(t, T):
     s = t / T
 
     # denom = s*(1-s); positive only for s in (0,1)
-    denom = s * (1.0 - s)
     w = np.zeros_like(s)
 
     interior = (s > 0.0) & (s < 1.0)
@@ -1803,7 +1808,7 @@ class PassingPerturbedPoincare:
                 ).tolist()
         else:
             self.nconvergence_points = 1
-            self.WBA_transit_steps = 0
+            self.WBA_transit_steps = [0]
 
         if s_init is not None and chis_init is not None:
             self.s_init = s_init
@@ -2342,7 +2347,7 @@ class PassingPerturbedPoincare:
         if bg_field is None:
             bg_field = self.B0
 
-        if line_plotting_kwargs is None:
+        if line_plotting_kwargs is None and resonance_lines is not None:
             line_plotting_kwargs = [{} for _ in resonance_lines if resonance_lines is not None]
 
         if self.DA_poinc and self.nconvergence_points > 1:
@@ -2641,14 +2646,16 @@ class MapEquilibrium:
 
         # plotting settings
         self.savedata = savedata
+        if savepath != "":
+            savepath += "_"
         self.savepath = savepath
         self.convergence_points = nconvergence_points
 
         self.randomize = randomize_particles
 
-        if exists(self.savepath + "_initial_conditions.txt"):
+        if exists(self.savepath + "initial_conditions.txt"):
             initial_conditions = np.loadtxt(
-                self.savepath + "_initial_conditions.txt"
+                self.savepath + "initial_conditions.txt"
             )
             s, thetas, zetas, vpar, mu = (
                 initial_conditions[:, 0],
@@ -2715,7 +2722,7 @@ class MapEquilibrium:
                 self.B0,
                 self.particles_per_surface,
                 surfaces_flat[particle_index],
-                comm=None,
+                comm=comm,
             )
 
             self.B0.set_points(points_temp)
@@ -2795,6 +2802,7 @@ class MapEquilibrium:
                 dt_save=self.min_timestep,
                 abstol=self.tol,
                 reltol=self.tol,
+                **self.solver_options
             )
             points_trajectory = res_tys[0]
 
@@ -2971,41 +2979,38 @@ class MapEquilibrium:
             end_state = res_tys[i][1]
             convergence_data = res_tys[i][2]
 
-            try:
-                pitch.append(start_state[5] / self.Ekin)
-                if self.plot_s:
-                    Peta_start.append(start_state[0])
-                else:
-                    Peta_start.append(start_state[4])
-                final_time = end_state[0]
-                final_times.append(final_time)
-                DAs_at_loss.append(end_state[8])
-                trapped.append(end_state[6])
 
-                s0.append(start_state[0])
-                theta0.append(start_state[1])
-                zeta0.append(start_state[2])
-                vpar0.append(start_state[3])
-                mu0.append(start_state[5])
+            pitch.append(start_state[5] / self.Ekin)
+            if self.plot_s:
+                Peta_start.append(start_state[0])
+            else:
+                Peta_start.append(start_state[4])
+            final_time = end_state[0]
+            final_times.append(final_time)
+            DAs_at_loss.append(end_state[8])
+            trapped.append(end_state[6])
 
-                bounces.append(end_state[6])
-                passes.append(end_state[7])
+            s0.append(start_state[0])
+            theta0.append(start_state[1])
+            zeta0.append(start_state[2])
+            vpar0.append(start_state[3])
+            mu0.append(start_state[5])
 
-                # params that depend on loss
-                if final_time < (self.tmax - (5 * self.min_timestep)):
-                    lost_total.append(1)
-                    DA_tfinal.append(np.nan)
-                else:
-                    lost_total.append(0)
-                    DA_tfinal.append(end_state[8])
-                convergence_times.append(convergence_data[0])
-                convergence_petas.append(convergence_data[1])
-                convergence_bounces.append(convergence_data[2])
-                convergence_passes.append(convergence_data[3])
-                convergence_DAs.append(convergence_data[4])
-            except:
-                if self.verbose:
-                    print(f"Error processing trajectory {i}, {start_state=} ")
+            bounces.append(end_state[6])
+            passes.append(end_state[7])
+
+            # params that depend on loss
+            if final_time < (self.tmax - (5 * self.min_timestep)):
+                lost_total.append(1)
+                DA_tfinal.append(np.nan)
+            else:
+                lost_total.append(0)
+                DA_tfinal.append(end_state[8])
+            convergence_times.append(convergence_data[0])
+            convergence_petas.append(convergence_data[1])
+            convergence_bounces.append(convergence_data[2])
+            convergence_passes.append(convergence_data[3])
+            convergence_DAs.append(convergence_data[4])
 
         self.DAs_at_loss = DAs_at_loss
         self.DA_at_tfinal = DA_tfinal
@@ -3035,6 +3040,23 @@ class MapEquilibrium:
 
         if self.verbose:
             print("Done Building Lists", flush=True)
+    
+    def vpar_func(self, s, theta, zeta, mu, sgn):
+        if hasattr(s, '__len__'):
+            point = np.zeros((len(s), 3))
+        else:
+            point = np.zeros((1, 3))
+        point[:, 0] = s
+        point[:, 1] = theta
+        point[:, 2] = zeta
+        self.B0.set_points(point)
+        modB = self.B0.modB()[:, 0]
+
+        energy = self.Ekin - mu * modB
+        vpar = sgn * np.sqrt(np.maximum(energy, 0))
+        # condtion, x, y 
+        # returns x (vpar) if energy > 0, else nan
+        return np.where(energy > 0, vpar, np.nan)
 
     def plot_surfaces(
         self,
@@ -3098,14 +3120,6 @@ class MapEquilibrium:
             nx = int(self.ns_points-1)
             ny = int(self.nlambda_points-1)
 
-        def vpar_func(point, p_a, sgn):
-            self.B0.set_points(point)
-            modB = self.B0.modB()[0, 0]
-            if 1 - p_a * modB < 0:
-                return np.nan
-            else:
-                return sgn * self.vtotal * np.sqrt(1 - p_a * modB)
-
         def trapped_passing_function(s, pitch):
             resolution = 500
             points_temp = initialize_position_uniform_surf(
@@ -3135,7 +3149,7 @@ class MapEquilibrium:
             points = np.zeros((3, 1)) if np.isscalar(s) else np.zeros((3, len(s)))
             points[0, :] = s
 
-            vp_temp = self.vpar_func_perturbed(
+            vp_temp = self.vpar_func(
                 points[0, 0], points[0, 1], points[0, 2], mu, sign
             )
 
@@ -3190,7 +3204,7 @@ class MapEquilibrium:
             ax.set_ylabel(r"$P_\eta$")
             peta_tp = []
             for s, mu in zip(s_tp, (pa_tp * self.Ekin) / self.min_volmodB):
-                peta_tp = s_peta_map(s, mu, self.sign)
+                peta_tp.append(s_peta_map(s, mu, self.sign))
             s_tp = np.array(peta_tp)
 
         coeffs = np.polyfit(pa_tp, s_tp, 2)
@@ -3245,9 +3259,9 @@ class MapPhaseSpace:
         tmax=1e-2,
         plot_s=False,
         min_timestep=1e-6,
-        ns_points=25,
+        ns_points=40,
         particles_per_surface=15,
-        nlambda_points=25,
+        nlambda_points=40,
         randomize_particles=False,
         number_of_particles=10000,
         s_lims=None,
@@ -3427,6 +3441,7 @@ class MapPhaseSpace:
                 "tys": self.savepath + "DA_data.txt",
             }
 
+        self.randomize = randomize_particles
 
         if exists(self.final_filepaths['ICs']):
             initial_conditions = np.loadtxt(
@@ -3445,15 +3460,13 @@ class MapPhaseSpace:
                 xy_pts = int(np.sqrt(number_of_particles / particles_per_surface))
                 self.ns_points = xy_pts
                 self.nlambda_points = xy_pts
-                s, thetas, zetas, vpar, mu_per_mass = self.instantiate_uniform_particles(
-                    self.nParticles
-                )
             else:
                 self.ns_points = ns_points
-                self.particles_per_surface = particles_per_surface
                 self.nlambda_points = nlambda_points
                 self.nParticles = ns_points * particles_per_surface * nlambda_points
-                s, thetas, zetas, vpar, mu_per_mass = self.instantiate_gridded_particles()
+
+            self.particles_per_surface = particles_per_surface
+            s, thetas, zetas, vpar, mu_per_mass = self.initialize_particles()
 
             initial_points = np.zeros((len(s), 3))  # initialize with t = 0
             initial_points[:, 0] = s
@@ -3473,6 +3486,76 @@ class MapPhaseSpace:
 
         self.trace_particles()
         return
+    
+    def initialize_particles(self):
+        if self.randomize:
+            mus = np.random.uniform(self.mu_min, self.mu_max, self.nlambda_points)
+
+            s_linspace = np.random.uniform(self.s_min, self.s_max, self.ns_points)
+        else:
+            mus = np.linspace(self.mu_min, self.mu_max, self.nlambda_points)
+
+            s_linspace = np.linspace(self.s_min, self.s_max, self.ns_points)
+
+        surfaces, mus = np.meshgrid(s_linspace, mus)
+
+        surfaces_flat = surfaces.flatten()
+        mus_flat = mus.flatten()
+
+        s = []
+        thetas = []
+        zetas = []
+        vpars = []
+        mus_per_mass = []
+        for particle_index in range(len(surfaces_flat)):
+            points_temp = initialize_position_uniform_surf(
+                self.B0,
+                self.particles_per_surface,
+                surfaces_flat[particle_index],
+                comm=self.comm,
+            )
+
+            self.B0.set_points(points_temp)
+            modB = self.B0.modB()[:, 0]
+
+            mu = np.ones_like(modB) * mus_flat[particle_index]
+            mu_per_mass = mu / self.mass
+            
+            if self.Eprime_slice:
+                vpar_temp = self.vpar_func_perturbed(
+                    points_temp[:, 0],
+                    points_temp[:, 1],
+                    points_temp[:, 2],
+                    mu_per_mass,
+                    self.sign,
+                )
+            else:
+                vpar_temp = self.vpar_func(
+                    points_temp[:, 0],
+                    points_temp[:, 1],
+                    points_temp[:, 2],
+                    mu,
+                    self.sign,
+                )
+            # remove unphysical points
+            neg_idx = np.where(np.isnan(vpar_temp))[0]
+            vpar_temp = np.delete(vpar_temp, neg_idx)
+            points_temp = np.delete(points_temp, neg_idx, axis=0)
+            mu = np.delete(mu, neg_idx, axis=0)
+            mu_per_mass = np.delete(mu_per_mass, neg_idx, axis=0)
+
+            s += list(points_temp[:, 0])
+            thetas += list(points_temp[:, 1])
+            zetas += list(points_temp[:, 2])
+            vpars += vpar_temp.tolist()
+            mus_per_mass += mu_per_mass.tolist()
+        return (
+            s,
+            thetas,
+            zetas,
+            vpars,
+            mus_per_mass,
+        )
 
     def check_filepaths(self, filepaths):
         return all(exists(fp) for fp in filepaths.values())
@@ -3518,61 +3601,6 @@ class MapPhaseSpace:
 
         return theta, zeta
 
-    def instantiate_uniform_particles(self, nParticles):
-        tracing_points = initialize_position_uniform_vol(
-            self.B0,
-            nParticles,
-            comm=self.comm,
-            seed=None,
-        )
-
-        if self.Eprime_slice:
-            mu = np.random.uniform(self.mu_min, self.mu_max, nParticles)
-            sgn = self.sign * np.ones(nParticles)
-            vpars_temp = []
-            for i in range(tracing_points.shape[0]):
-                vp_temp = self.vpar_func_perturbed(
-                    tracing_points[i, 0],
-                    tracing_points[i, 1],
-                    tracing_points[i, 2],
-                    mu[i],
-                    sgn[i],
-                )
-                vpars_temp.append(vp_temp[0])
-            vpars_init = np.array(vpars_temp)
-
-            if np.any(np.isnan(vpars_init)):
-                nan_indices = np.where(np.isnan(vpars_init))[0]
-                print(f"Warning: Some initial conditions do not satisfy the E' constraint and will be removed. Triggered at s = {tracing_points[nan_indices, 0]}, mu = {mu[nan_indices]}")
-
-            mask = ~np.isnan(vpars_init)
-            vpars_init = vpars_init[mask]
-            mus_per_mass = mu[mask]
-            mus_per_mass /= self.mass
-            tracing_points = tracing_points[mask]
-        else:
-            self.B0.set_points(tracing_points)
-            modB = self.B0.modB()[:, 0]
-            vtot = np.sqrt(2 * (self.Ekin - self.mu_max * modB)/self.mass)
-            if np.all(np.isnan(vtot)):
-                vmax = self.vtotal
-                vmin = 0
-            else:
-                vmax = self.sign * np.max(vtot)
-                vmin = self.sign * np.min(vtot)
-            vpars_init = np.random.uniform(vmin, vmax, size=tracing_points.shape[0])
-
-            self.B0.set_points(tracing_points)
-            modB = self.B0.modB()[:, 0]
-            mus_per_mass = (1 / (2 * modB)) * (self.vtotal**2 - vpars_init**2)
-        return (
-            tracing_points[:, 0],
-            tracing_points[:, 1],
-            tracing_points[:, 2],
-            vpars_init,
-            mus_per_mass,
-        )
-
     def vpar_func(self, s, theta, zeta, mu, sgn):
         point = np.zeros((len(s), 3))
         point[:, 0] = s
@@ -3581,14 +3609,18 @@ class MapPhaseSpace:
         self.B0.set_points(point)
         modB = self.B0.modB()[:, 0]
 
-        energy = self.Ekin - mu * modB
-        vpar = sgn * np.sqrt(np.maximum(energy, 0))
+        energy_par = self.Ekin - mu * modB
+        energy_par_norm = np.maximum(energy_par, 0)
+        vpar = sgn * np.sqrt(2 * energy_par_norm / self.mass)
         # condtion, x, y 
         # returns x (vpar) if energy > 0, else nan
-        return np.where(energy > 0, vpar, np.nan)
+        return np.where(energy_par > 0, vpar, np.nan)
 
     def vpar_func_perturbed(self, s, theta, zeta, mu, sgn):
-        point = np.zeros((1, 4))  # initialize with t = 0
+        if hasattr(s, '__len__'):
+            point = np.zeros((len(s), 4))
+        else:
+            point = np.zeros((1, 4))
         point[:, 0] = s
         point[:, 1] = theta
         point[:, 2] = zeta
@@ -3620,87 +3652,22 @@ class MapPhaseSpace:
             / denom
             - self.Eprime
         )
-        if (b**2 - 4 * a * c) < 0:
-            return [np.nan]
-        elif a != 0:
-            return (-b + sgn * np.sqrt(b**2 - 4 * a * c)) / (2 * a)
+        discriminant = b**2 - 4 * a * c
+        valid = discriminant >= 0
+
+        if a != 0:
+            # mask negatives before sqrt so we don't get warnings
+            safe_disc = np.where(valid, discriminant, 0.0)
+            result = (-b + sgn * np.sqrt(safe_disc)) / (2 * a)
         else:
-            return (-c / b) * sgn
+            # discriminant = b**2 >= 0 always
+            result = (-c / b) * sgn
 
-    def instantiate_gridded_particles(self):
-        surfaces = np.linspace(self.s_min, self.s_max, self.ns_points)
-        mu = np.linspace(self.mu_min, self.mu_max, self.nlambda_points)
-
-        surfaces, mu = np.meshgrid(surfaces, mu)
-
-        surfaces_flat = surfaces.flatten()
-        mus_flat = mu.flatten()
-
-        vpars = []
-        mus_per_mass = []
-        for particle_index in range(len(surfaces_flat)):
-            points_temp = initialize_position_uniform_surf(
-                self.B0,
-                self.particles_per_surface,
-                surfaces_flat[particle_index],
-                comm=self.comm,
-            )
-            if self.Eprime_slice:
-                sgn = self.sign * np.ones(self.particles_per_surface)
-                mu_particle = mus_flat[particle_index]/self.mass
-                vpars_temp = []
-
-                for i in range(points_temp.shape[0]):
-                    vp_temp = self.vpar_func_perturbed(
-                        points_temp[i, 0],
-                        points_temp[i, 1],
-                        points_temp[i, 2],
-                        mu_particle,
-                        sgn[i],
-                    )
-                    if isinstance(vp_temp, float):
-                        print(vp_temp)
-                        continue
-                    else:
-                        vpars_temp.append(vp_temp[0])
-                vpars_temp = np.array(vpars_temp)
-                mus_per_mass_temp = mu_particle * np.ones(points_temp.shape[0])
-            else:
-                vpars_temp = self.vpar_func(
-                    points_temp[:, 0],
-                    points_temp[:, 1],
-                    points_temp[:, 2],
-                    mus_flat[particle_index],
-                    self.sign,
-                )
-                mu_per_mass =  mus_flat[particle_index] / self.mass
-                mus_per_mass_temp = mu_per_mass * np.ones(points_temp.shape[0])
-
-            # remove unphysical particles
-            mask = ~np.isnan(vpars_temp)
-            vpars_temp = vpars_temp[mask]
-            points_temp = points_temp[mask]
-            vpars_temp = vpars_temp.tolist()
-
-            vpars += vpars_temp
-
-            mus_per_mass_temp = mus_per_mass_temp[mask]
-            mus_per_mass_temp = mus_per_mass_temp.tolist()
-            mus_per_mass += mus_per_mass_temp
-            if particle_index == 0:
-                points = points_temp
-            else:
-                points = np.concatenate((points, points_temp), axis=0)
-        return (
-            points[:, 0].tolist(),
-            points[:, 1].tolist(),
-            points[:, 2].tolist(),
-            vpars,
-            mus_per_mass,
-        )
+        return np.where(valid, result, np.nan)
 
     def remove_equilibrium_lost_particles(self, points, vpars_init, mus_per_mass):
 
+        n = len(points)
         # trace particles in equilibrium field to see if any are lost
         gc_tys, gc_zeta_hits = trace_particles_boozer(
             field=self.B0,
@@ -3725,7 +3692,7 @@ class MapPhaseSpace:
             if isinstance(gc_zeta_hits[i], np.ndarray): # noqa: SIM102
                 if gc_zeta_hits[i].size > 0: # noqa: SIM102
                     if int(gc_zeta_hits[i][0][1]) == -1: # noqa: SIM102
-                        lost_total.append(i-1)
+                        lost_total.append(i)
 
         # remove wall lost particles from the list of evaluated particles
         points = np.delete(points, lost_total, axis=0)
@@ -3733,6 +3700,39 @@ class MapPhaseSpace:
         mus_per_mass = np.delete(mus_per_mass, lost_total, axis=0)
 
         return points[:, 0], points[:, 1], points[:, 2], vpars_init, mus_per_mass
+
+    def return_bounces_and_passes(self, vpar_path, zeta_path):
+        v_par_signs = np.sign(vpar_path)
+
+        mask = v_par_signs != 0
+        v = v_par_signs[mask]
+        # Keep track of original indices after removing zeros
+        orig_idx = np.where(mask)[0]
+
+        # find vpar sign changes
+        bounce_local = np.where(v[1:] * v[:-1] < 0)[0]
+        # map back to original trajectory indexing, pre zero removal
+        bounce_indices = orig_idx[bounce_local + 1]
+        bounces = len(bounce_indices) if len(v) > 1 else 0
+
+        zeta_path = np.mod(zeta_path, 2 * np.pi)
+        dzeta = np.diff(zeta_path)
+
+        # find large negative jump, this is where mod
+        # brings factors of 2pi back to zero, and pass
+        wrap_idx = np.where(dzeta < -np.pi)[0]
+
+        # isolate transits across zeta of 2pi
+        true_passes = []
+        for passing_index in range(len(wrap_idx) - 1):
+            pass1 = wrap_idx[passing_index]
+            pass2 = wrap_idx[passing_index + 1]
+
+            # ensure no bounce between these two toroidal passes
+            if not np.any((bounce_indices > pass1) & (bounce_indices < pass2)):
+                true_passes.append(wrap_idx[passing_index])
+        
+        return bounce_indices, true_passes
 
     def trace_particles(self):
         r"""
@@ -3765,15 +3765,13 @@ class MapPhaseSpace:
         res_tys = []
 
         for itrj in range(first, last):
-            point = np.zeros((1, 4))  # initialize with t = 0
+            point = np.zeros((1, 3))  # initialize with t = 0
             point[:, 0] = self.s[itrj]
             point[:, 1] = self.thetas[itrj]
             point[:, 2] = self.zetas[itrj]
-            point[:, 3] = 0.0
 
             vpar = [self.vpar[itrj]]
             mu_pm = [self.mus_per_mass[itrj]]
-            self.saw.set_points(point)
 
             gc_tys, gc_zeta_hits = trace_particles_boozer_perturbed(
                 perturbed_field=self.saw,
@@ -3848,35 +3846,7 @@ class MapPhaseSpace:
             else:
                 final_DA = np.nan
 
-            v_par_signs = np.sign(vpar_path)
-
-            mask = v_par_signs != 0
-            v = v_par_signs[mask]
-            # Keep track of original indices after removing zeros
-            orig_idx = np.where(mask)[0]
-
-            # find vpar sign changes
-            bounce_local = np.where(v[1:] * v[:-1] < 0)[0]
-            # map back to original trajectory indexing, pre zero removal
-            bounce_indices = orig_idx[bounce_local + 1]
-            bounces = len(bounce_indices) if len(v) > 1 else 0
-
-            zeta_path = np.mod(points_trajectory[:, 2], 2 * np.pi)
-            dzeta = np.diff(zeta_path)
-
-            # find large negative jump, this is where mod
-            # brings factors of 2pi back to zero, and pass
-            wrap_idx = np.where(dzeta < -np.pi)[0]
-
-            # isolate transits across zeta of 2pi
-            true_passes = []
-            for passing_index in range(len(wrap_idx) - 1):
-                pass1 = wrap_idx[passing_index]
-                pass2 = wrap_idx[passing_index + 1]
-
-                # ensure no bounce between these two toroidal passes
-                if not np.any((bounce_indices > pass1) & (bounce_indices < pass2)):
-                    true_passes.append(wrap_idx[passing_index])
+            bounce_indices, passing_indicies = self.return_bounces_and_passes(vpar_path, zeta_path)
 
             # start state vector:  [s, theta, zeta, vpar, peta, E, mu, Eprime]
             # end state vector:
@@ -3903,8 +3873,8 @@ class MapPhaseSpace:
                 E[-1],
                 weighted_mu,
                 Eprime[-1],
-                bounces,
-                len(true_passes),
+                len(bounce_indices),
+                len(passing_indicies),
                 final_DA,
             ]
 
@@ -3930,7 +3900,7 @@ class MapPhaseSpace:
                 convergence_energies.append(E[timing_index])
                 bounce_enum = np.searchsorted(bounce_indices, timing_index, side="left")
 
-                pass_enum = np.searchsorted(true_passes, timing_index, side="left")
+                pass_enum = np.searchsorted(passing_indicies, timing_index, side="left")
 
                 convergence_bounces.append(bounce_enum)
                 convergence_passes.append(pass_enum)
@@ -3953,9 +3923,8 @@ class MapPhaseSpace:
             particle_out = [start_state, end_state, mean_state, convergence_data]
             res_tys.append(particle_out)
 
-        print(f"{self.comm.rank=} done tracing particles", flush=True)
-
         if self.comm is not None:
+            print(f"{self.comm.rank=} done tracing particles", flush=True)
             res_tys = [i for o in self.comm.allgather(res_tys) for i in o]
 
         if self.verbose:
@@ -4115,7 +4084,7 @@ class MapPhaseSpace:
             print("Done Building Lists", flush=True)
         return
 
-    def surface_trapped_func_Eprime(self, pitch_angle, surface):
+    def surface_trapped_func_Eprime(self, mu, surface):
         r"""
         `    Determine whether a particle with the given pitch angle is trapped on a
             specified flux surface.
@@ -4126,9 +4095,7 @@ class MapPhaseSpace:
             The prescribed reference Ekin is used.
 
             Args:
-                pitch_angle : Normalized pitch-angle variable.
-                            Can either be lambda' = mu / Eprime * sign(v_par) or
-                            lambda = mu / E * sign(v_par), depending on self.Eprime_slice.
+                mu : Magnetic moment.
                 surface     : Flux-surface label s at which to evaluate trapping.
 
             Returns:
@@ -4142,25 +4109,14 @@ class MapPhaseSpace:
         modB = self.B0.modB()[:, 0]
         maxmodB = np.max(modB)
 
-        sgn = np.sign(pitch_angle)
-        if self.Eprime_slice:
-            mu = np.abs(pitch_angle * self.Eprime)
-        else:
-            mu = np.abs(pitch_angle * self.Ekin)
+        sign_arrs = np.ones_like(modB) * self.sign
 
-        vpars_temp = []
-        for i in range(points.shape[0]):
-            vp_temp = self.vpar_func_perturbed(
-                points[i, 0], points[i, 1], points[i, 2], mu, sgn
-            )
-            if vp_temp is not None:
-                vpars_temp.append(vp_temp[0])
-            else:
-                vpars_temp.append(np.nan)
-        vpars = np.array(vpars_temp)
-
-        mask = ~np.isnan(vpars)
-        vpars = vpars[mask]
+        vp_temp = self.vpar_func_perturbed(
+            points[:, 0], points[:, 1], points[:, 2], mu, sign_arrs
+        )
+        
+        mask = ~np.isnan(vp_temp)
+        vp_temp = vp_temp[mask]
         points = points[mask]
         modB = modB[mask]
 
@@ -4172,7 +4128,7 @@ class MapPhaseSpace:
             peta = compute_peta(
                 self.B0,
                 points,
-                vpars,
+                vp_temp,
                 self.mass,
                 self.charge,
                 self.helicity_M,
@@ -4182,20 +4138,19 @@ class MapPhaseSpace:
             )
             return output, peta.tolist()
         
-    def trapped_passing_function(self, s, pitch):
+    def trapped_passing_function(self, s, mu):
         r"""
         Determine whether a particle with the given pitch angle is trapped on a
         specified flux surface. 
 
         Args:
             surface     : Flux-surface label s.
-            pitch       : Normalized pitch-angle variable
-                        lambda = mu / E * sign(v_par).
-        
+            mu          : Magnetic moment, not per mass.        
         Returns:
             trapped : Integers (0 or 1) indicating whether trapped.
         """
         resolution = 500
+        pitch = mu / self.Ekin
         points_temp = initialize_position_uniform_surf(
             self.B0,
             resolution,
@@ -4243,97 +4198,95 @@ class MapPhaseSpace:
         )
         return peta
     
-    def return_peta_trapped_contoured_boundary(self):
+    def return_peta_trapped_contoured_boundary(self, binned_statistic_2d):
         volume_boundary_radlike = []
         volume_boundary_pitch = []
         volume_trapped = []
         radial_space = 70
         pa_space = 70
 
-        for s_val in np.linspace(self.s_min, self.s_max, radial_space):
-            for pitch_val in np.linspace(
-                np.min(self.pitch), np.max(self.pitch), pa_space
-            ):
-                trapped, radial_like = self.surface_trapped_func(
-                    pitch_val, s_val
+        surf_arr = np.array(self.Plot_Radial)
+
+        s_vals = np.linspace(self.s_min, self.s_max, radial_space)
+
+        mu_vals = np.linspace(self.mu_min, self.mu_max, pa_space)
+
+        for s_val in s_vals:
+            for mu_val in mu_vals:
+                trapped, radial_like = self.surface_trapped_func_Eprime(
+                    mu_val, s_val
                 )
+
                 if self.Eprime_slice:
-                    pitch_val *= self.min_volmodB
+                    pitch_val = mu_val / self.Eprime
+                else:
+                    pitch_val = mu_val / self.Ekin
+                pitch_val *= self.sign
 
                 if self.plot_s:
-                    volume_boundary_radlike.append(radial_like)
+                    volume_boundary_radlike.append(s_val)
                     volume_trapped.append(trapped)
                     volume_boundary_pitch.append(pitch_val)
                     continue
 
-                trapped = np.array(trapped)
-                radial_like = np.array(radial_like)
-                # check if within bounds of actual peta values
-                mask = (radial_like >= min(surf_arr)) & (radial_like <= max(surf_arr))
-                trapped = trapped[mask]
-                radial_like = radial_like[mask]
-                if len(radial_like) == 0:
-                    continue
-
-                volume_boundary_radlike += radial_like.tolist()
-                volume_trapped += trapped.tolist()
+                volume_boundary_radlike += radial_like
+                volume_trapped += trapped
                 pitch_lst = [pitch_val] * len(radial_like)
-                volume_boundary_pitch += pitch_lst
-        
-                surf_arr = np.array(self.Plot_Radial)
+                volume_boundary_pitch += pitch_lst         
 
         trapped_vals, pitch_edges, radlike_edges, binnumber= binned_statistic_2d(
-            np.array(volume_boundary_pitch), np.array(volume_boundary_radlike), np.array(volume_trapped),
+            np.array(volume_boundary_pitch), 
+            np.array(volume_boundary_radlike), 
+            np.array(volume_trapped),
             statistic='max',
             bins=[pa_space, radial_space]
         )
 
-        pitch_c   = 0.5 * (pitch_edges[:-1]   + pitch_edges[1:])
+        pitch_c = 0.5 * (pitch_edges[:-1] + pitch_edges[1:])
         radlike_c = 0.5 * (radlike_edges[:-1] + radlike_edges[1:])
 
         T = np.nan_to_num(trapped_vals, nan=0.0).astype(int)
 
         boundary_pitch, boundary_radlike = [], []
-        for j in range(T.shape[1]):
+        for j in range(T.shape[1]-1, -1, -1):
             col = T[:, j]
             if not col.any() or col.all():
                 continue               
-            i = int(np.argmax(col == 1))        
+            i = int(np.argmin(col == 1))        
             pitch_b = pitch_c[i] if i == 0 else 0.5 * (pitch_c[i-1] + pitch_c[i])
 
             boundary_pitch.append(pitch_b)
             boundary_radlike.append(radlike_c[j])
 
-        boundary_lam  = np.array(boundary_lam)
-        boundary_peta = np.array(boundary_peta)
+        boundary_pitch  = np.array(boundary_pitch)
+        boundary_radlike = np.array(boundary_radlike)
 
-        order = np.argsort(boundary_lam)
-        boundary_lam, boundary_peta = boundary_lam[order], boundary_peta[order]
+        order = np.argsort(boundary_pitch)
+        boundary_pitch, boundary_radlike = boundary_pitch[order], boundary_radlike[order]
 
-        coeffs = np.polyfit(boundary_lam, boundary_peta, 2)
+        coeffs = np.polyfit(boundary_pitch, boundary_radlike, 2)
         poly = np.poly1d(coeffs)
 
-        lam_fit = np.linspace(boundary_lam.min(), boundary_lam.max(), 300)
-        peta_fit = poly(lam_fit)
+        pitch_fit = np.linspace(boundary_pitch.min(), boundary_pitch.max(), 300)
+        radlike_fit = poly(pitch_fit)
 
-        return poly, lam_fit, peta_fit 
+        return poly, pitch_fit, radlike_fit
     
     def return_flux_trapped_boundary(self):
         s_scope = np.linspace(self.s_min, self.s_max, 75)[::-1]
-        pa_min, pa_max = (self.mu_min / self.Ekin), (self.mu_max / self.Ekin)
-        pa_scope = np.linspace(pa_min, pa_max, 75)
+        mu_scope = np.linspace(self.mu_min, self.mu_max, 75)
 
         s_tp = []
         pa_tp = []
 
         for s in s_scope:
-            for pa in pa_scope:
-                if self.trapped_passing_function(s, pa) == 1:
+            for mu in mu_scope:
+                if self.trapped_passing_function(s, mu) == 1:
                     s_tp.append(s)
                     if self.Eprime_slice:
-                        pa_tp.append(pa * self.sign / self.Eprime)
+                        pa_tp.append(mu * self.sign / self.Eprime)
                     else:
-                        pa_tp.append(pa * self.sign * self.min_volmodB)
+                        pa_tp.append(mu * self.sign * self.min_volmodB/self.Ekin)
                     break
 
         if not self.plot_s:
@@ -4394,12 +4347,12 @@ class MapPhaseSpace:
         norm = mpl.colors.Normalize(vmin=0, vmax=DA_max)
 
         if not self.Eprime_slice:
-            plotting_pitch = np.array(self.pitch) * self.min_volmodB
+            plotting_pitch_normalized = np.array(self.pitch) * self.min_volmodB
         else:
-            plotting_pitch = np.array(self.pitch) * self.Eprime
+            plotting_pitch_normalized = np.array(self.pitch)
 
         DA_stats, x_edges, y_edges, binnumber = binned_statistic_2d(
-            np.array(plotting_pitch),
+            plotting_pitch_normalized,
             np.array(self.Plot_Radial),
             np.array(DA_values),
             statistic=statistic,
@@ -4410,17 +4363,17 @@ class MapPhaseSpace:
         if negate_peta: Y *= -1
         im2 = ax.pcolormesh(X, Y, DA_stats.T, shading="auto", cmap=cmap, norm=norm)
         
-        poly, pa_fit, rad_fit = self.return_flux_trapped_boundary()
+        poly, pa_fit, rad_fit = self.return_peta_trapped_contoured_boundary(binned_statistic_2d)
         self.trapped_boundary_fit = poly
         ax.plot(
-            pa_fit, rad_fit, color="grey", linewidth=5, label="Trapped-passing boundary"
+            pa_fit, rad_fit, color="grey", linewidth=10, label="Trapped-passing boundary"
         )
 
         colorlabel = "Digit Accuracy"
 
         if plot_losses:
             lost_frac, x_edges, y_edges, _ = binned_statistic_2d(
-                np.array(self.pitch),
+                plotting_pitch_normalized,
                 np.array(self.Plot_Radial),
                 np.array(self.lost_total),
                 statistic="mean",
@@ -4544,6 +4497,26 @@ class WBAPerturbedParticles:
         """
         if gc_tys is None and points is None:
             raise ValueError("Need to provide traced trajectories or points to trace.")
+    
+        if points is not None and (v_pars is None or mu_per_mass is None):
+            raise ValueError("If providing points to trace, need v_pars and mu_per_mass.")
+        
+        if points.shape[1] not in [3, 4]:
+            raise ValueError(
+                "Points must have shape (npoints, 4) for (s, theta, zeta, t) or "
+                "(npoints, 3) for (s, theta, zeta)"
+            )
+        if points.shape[1] == 4:
+            points = points[:,:3]
+
+        if not isinstance(saw, ShearAlfvenHarmonic) and not isinstance(
+            saw, ShearAlfvenWavesSuperposition
+        ):
+            raise TypeError(
+                "Expected saw to be an instance of ShearAlfvenHarmonic "
+                "or ShearAlfvenWavesSuperposition"
+            )
+
 
         if solver_options is None:
             solver_options = {}
@@ -4568,12 +4541,13 @@ class WBAPerturbedParticles:
                     "Chosen helicities (N, M, N', M') do not create a well "
                     "defined Jacobian."
                 )
-            self.helicity_Mp = helicity_Mp
-            self.helicity_Np = helicity_Np
+        self.helicity_Mp = helicity_Mp
+        self.helicity_Np = helicity_Np
 
         self.mass = mass
         self.charge = charge
         self.Ekin = Ekin
+        self.vtotal = np.sqrt(2 * self.Ekin / mass)
 
         self.comm = comm
         self.verbose = False
@@ -4581,11 +4555,12 @@ class WBAPerturbedParticles:
             self.verbose = True
 
         self.solver_options = solver_options
-        self.tmax = tmax
 
+        self.tmax = tmax
         self.min_timestep = min_timestep
+        self.convergence_points = convergence_points
+
         self.savedata = savedata
-        self.savepath = savepath
         self.save_gc_trajectories = save_gc_trajectories
 
         # set parameters for convergence plot
@@ -4596,18 +4571,14 @@ class WBAPerturbedParticles:
         ).tolist()
         self.convergence_plot = nconvergence_points > 1
 
-        self.points0 = points
-        self.v_pars0 = v_pars
-        self.mu_per_mass0 = mu_per_mass
-
         self.tol = tol
 
         if self.savedata:
             self.IC_filepaths = "initial_conditions.txt"
             self.final_filepaths = {
-                "DA": self.savepath + "DA_walllosttimes.txt",
-                "TRAJS": self.savepath + "res_tys.txt",
-                "DATA": self.savepath + "DATA.txt",
+                "DA": savepath + "DA_walllosttimes.txt",
+                "TRAJS": savepath + "gc_tys.txt",
+                "DATA": savepath + "DATA.txt",
             }
 
         if gc_tys is None:
@@ -4616,9 +4587,45 @@ class WBAPerturbedParticles:
             self.trace = False
             self.gc_tys = gc_tys
 
-        (self.res_tys, self.DAs, self.wall_lost, self.dense_output) = (
-            self.trace_particles(self.points0, self.v_pars0, self.mu_per_mass0)
+            if points is None:
+                s_ic = []
+                theta_ic = []
+                zeta_ic = []
+                v_pars = []
+
+                for elem in gc_tys:
+                    s_ic.append(elem[-1, 1])
+                    theta_ic.append(elem[-1, 2])
+                    zeta_ic.append(elem[-1, 3])
+                    v_pars.append(elem[-1, 4])
+                
+                points = np.zeros((len(gc_tys), 3))
+                points[:, 0] = s_ic
+                points[:, 1] = theta_ic
+                points[:, 2] = zeta_ic
+
+            if mu_per_mass is None:
+                raise Warning(
+                "Expected mu_per_mass to be provided with gc_tys",
+                "Computing mu_per_mass from gc_tys with reference energy, this"
+                " may be inaccurate if not provided directly.",
+                )
+                mu_per_mass = []
+                for i in range(len(gc_tys)):
+                    self.B0.set_points(points[i,:])
+                    modB = self.B0.modB()[:, 0]
+
+                    eperp_per_mass = (self.Ekin/self.mass) - 0.5 * v_pars[i]**2
+                    mu_per_mass.append(eperp_per_mass / modB[0])
+
+        self.points0 = points
+        self.v_pars0 = v_pars
+        self.mu_per_mass0 = mu_per_mass
+
+        (self.gc_tys, self.DAs, self.wall_lost, self.dense_output) = (
+            self.trace_particles()
         )
+        return self.DAs, self.wall_lost
 
     def check_filepaths(self, filepaths):
         r"""
@@ -4630,20 +4637,45 @@ class WBAPerturbedParticles:
             exists_all : True if every path exists, otherwise False.
         """
         return all(exists(fp) for fp in filepaths.values())
+    
+    def return_bounces_and_passes(self, vpar_path, zeta_path):
+        v_par_signs = np.sign(vpar_path)
 
-    def trace_particles(
-        self,
-        points_phase,
-        vpars,
-        mus,
-    ):
+        mask = v_par_signs != 0
+        v = v_par_signs[mask]
+        # Keep track of original indices after removing zeros
+        orig_idx = np.where(mask)[0]
+
+        # find vpar sign changes
+        bounce_local = np.where(v[1:] * v[:-1] < 0)[0]
+        # map back to original trajectory indexing, pre zero removal
+        bounce_indices = orig_idx[bounce_local + 1]
+        bounces = len(bounce_indices) if len(v) > 1 else 0
+
+        zeta_path = np.mod(zeta_path, 2 * np.pi)
+        dzeta = np.diff(zeta_path)
+
+        # find large negative jump, this is where mod
+        # brings factors of 2pi back to zero, and pass
+        wrap_idx = np.where(dzeta < -np.pi)[0]
+
+        # isolate transits across zeta of 2pi
+        true_passes = []
+        for passing_index in range(len(wrap_idx) - 1):
+            pass1 = wrap_idx[passing_index]
+            pass2 = wrap_idx[passing_index + 1]
+
+            # ensure no bounce between these two toroidal passes
+            if not np.any((bounce_indices > pass1) & (bounce_indices < pass2)):
+                true_passes.append(wrap_idx[passing_index])
+        
+        return bounce_indices, true_passes
+
+
+    def trace_particles(self):
         r"""
         Trace perturbed particle trajectories and compute DA outputs.
 
-        Args:
-            points_phase : Initial states including phase/time column.
-            vpars : Initial parallel velocities.
-            mus : Initial magnetic moments.
         Returns:
             res_tys : Per-particle trajectory summaries.
         """
@@ -4658,9 +4690,9 @@ class WBAPerturbedParticles:
             if self.trace:
                 gc_tys, gc_zeta_hits = trace_particles_boozer_perturbed(
                     perturbed_field=self.saw,
-                    stz_inits=points_phase[itrj, :].reshape(1, 4),
-                    parallel_speeds=[vpars[itrj]],
-                    mus=[mus[itrj]],
+                    stz_inits=self.points0[itrj, :],
+                    parallel_speeds=[self.v_pars0[itrj]],
+                    mus=[self.mu_per_mass0[itrj]],
                     tmax=self.tmax,
                     mass=self.mass,
                     charge=self.charge,
@@ -4674,7 +4706,6 @@ class WBAPerturbedParticles:
                     **self.solver_options,
                 )
                 points_trajectory = gc_tys[0]
-
             else:
                 points_trajectory = self.gc_tys[itrj]
 
@@ -4694,46 +4725,18 @@ class WBAPerturbedParticles:
                 points_trajectory = points_trajectory[:idx_wall, :]
                 vpar_path = vpar_path[:idx_wall]
 
-            v_par_signs = np.sign(vpar_path)
-
-            mask = v_par_signs != 0
-            v = v_par_signs[mask]
-            # Keep track of original indices after removing zeros
-            orig_idx = np.where(mask)[0]
-
-            # find vpar sign changes
-            bounce_local = np.where(v[1:] * v[:-1] < 0)[0]
-            # map back to original trajectory indexing, pre zero removal
-            bounce_indices = orig_idx[bounce_local + 1]
-            bounces = len(bounce_indices) if len(v) > 1 else 0
-
-            zeta_path = np.mod(points_trajectory[:, 2], 2 * np.pi)
-            dzeta = np.diff(zeta_path)
-
-            # find large negative jump, this is where mod
-            # brings factors of 2pi back to zero, and pass
-            wrap_idx = np.where(dzeta < -np.pi)[0]
-
-            # isolate transits across zeta of 2pi
-            true_passes = []
-            for passing_index in range(len(wrap_idx) - 1):
-                pass1 = wrap_idx[passing_index]
-                pass2 = wrap_idx[passing_index + 1]
-
-                # ensure no bounce between these two toroidal passes
-                if not np.any((bounce_indices > pass1) & (bounce_indices < pass2)):
-                    true_passes.append(wrap_idx[passing_index])
+            bounce_indices, passing_indicies = self.return_bounces_and_passes(vpar_path, zeta_path)
 
             self.saw.set_points(points_trajectory)
 
             modB = self.saw.B0.modB()[:, 0]
             Phi = self.saw.Phi()[:, 0]
 
-            weighted_mu = self.mus[itrj] * self.mass
+            weighted_mu = self.mu_per_mass0[itrj] * self.mass
 
             E = (
                 0.5 * self.mass * vpar_path**2
-                + self.mass * weighted_mu * modB
+                + weighted_mu * modB
                 + self.charge * Phi
             )
 
@@ -4772,7 +4775,7 @@ class WBAPerturbedParticles:
                 convergence_energies.append(E[timing_index])
                 bounce_enum = np.searchsorted(bounce_indices, timing_index, side="left")
 
-                pass_enum = np.searchsorted(true_passes, timing_index, side="left")
+                pass_enum = np.searchsorted(passing_indicies, timing_index, side="left")
 
                 convergence_bounces.append(bounce_enum)
                 convergence_passes.append(pass_enum)
@@ -4816,8 +4819,8 @@ class WBAPerturbedParticles:
                 Peta_values[-1],
                 E[-1],
                 Eprime[-1],
-                bounces,
-                len(true_passes),
+                len(bounce_indices),
+                len(passing_indicies),
                 final_DA,
             ]
 
@@ -4832,6 +4835,8 @@ class WBAPerturbedParticles:
             DA_data.append(final_DA)
             wall_lost.append(points_trajectory[-1:3])
             dense_output.append(particle_out)
+            if self.save_gc_trajectories:
+                res_tys.append(points_trajectory)
 
         if self.comm is not None:
             res_tys = [i for o in self.comm.allgather(res_tys) for i in o]
@@ -4843,6 +4848,7 @@ class WBAPerturbedParticles:
             import pickle
 
             if self.save_gc_trajectories:
+                self.gc_tys = res_tys
                 with open(self.final_filepaths["TRAJS"], "wb") as f:
                     pickle.dump(res_tys, f)
             if self.savedata:
@@ -4888,6 +4894,12 @@ class WBAParticles:
         if gc_tys is None and points is None:
             raise ValueError("Need to provide trajctories or points.")
 
+        if gc_tys is None and points is None:
+            raise ValueError("Need to provide traced trajectories or points to trace.")
+        
+        if points is not None and (v_pars is None or mu_per_mass is None):
+            raise ValueError("If providing points to trace, need v_pars and mu_per_mass.")
+
         if helicity_Mp is None and helicity_Np is None:
             # If modB contours close poloidally, then use theta as mapping coordinate
             if helicity_M == 0:
@@ -4903,8 +4915,8 @@ class WBAParticles:
                     "Chosen helicities (N, M, N', M') do not create a well "
                     "defined Jacobian."
                 )
-            self.helicity_Mp = helicity_Mp
-            self.helicity_Np = helicity_Np
+        self.helicity_Mp = helicity_Mp
+        self.helicity_Np = helicity_Np
 
         self.mass = mass
         self.charge = charge
@@ -4912,7 +4924,7 @@ class WBAParticles:
         self.convergence_points = convergence_points
         self.vtotal = np.sqrt(2 * self.Ekin / mass)
 
-        self.comm = comm
+        self.comm = commf
         self.verbose = False
         if self.comm is None or self.comm.rank == 0:
             self.verbose = True
@@ -4950,11 +4962,11 @@ class WBAParticles:
             self.IC_filepaths = "initial_conditions.txt"
             self.final_filepaths = {
                 "DA": self.savepath + "DA_walllosttimes.txt",
-                "TRAJS": self.savepath + "res_tys.txt",
+                "TRAJS": self.savepath + "gc_tys.txt",
                 "DATA": self.savepath + "DATA.txt",
             }
-        self.res_tys, self.DAs, self.wall_lost, self.dense_output = (
-            self.trace_particles(self.points0, self.v_pars0)
+        self.gc_tys, self.DAs, self.wall_lost, self.dense_output = (
+            self.trace_particles()
         )
         self.build_lists(self.dense_output)
 
@@ -4968,6 +4980,39 @@ class WBAParticles:
             exists_all : True if every path exists, otherwise False.
         """
         return all(exists(fp) for fp in filepaths.values())
+    
+    def return_bounces_and_passes(self, vpar_path, zeta_path):
+        v_par_signs = np.sign(vpar_path)
+
+        mask = v_par_signs != 0
+        v = v_par_signs[mask]
+        # Keep track of original indices after removing zeros
+        orig_idx = np.where(mask)[0]
+
+        # find vpar sign changes
+        bounce_local = np.where(v[1:] * v[:-1] < 0)[0]
+        # map back to original trajectory indexing, pre zero removal
+        bounce_indices = orig_idx[bounce_local + 1]
+        bounces = len(bounce_indices) if len(v) > 1 else 0
+
+        zeta_path = np.mod(zeta_path, 2 * np.pi)
+        dzeta = np.diff(zeta_path)
+
+        # find large negative jump, this is where mod
+        # brings factors of 2pi back to zero, and pass
+        wrap_idx = np.where(dzeta < -np.pi)[0]
+
+        # isolate transits across zeta of 2pi
+        true_passes = []
+        for passing_index in range(len(wrap_idx) - 1):
+            pass1 = wrap_idx[passing_index]
+            pass2 = wrap_idx[passing_index + 1]
+
+            # ensure no bounce between these two toroidal passes
+            if not np.any((bounce_indices > pass1) & (bounce_indices < pass2)):
+                true_passes.append(wrap_idx[passing_index])
+
+        return bounce_indices, true_passes
 
     def trace_particles(self, points_phase, vpars):
         r"""
@@ -5047,35 +5092,7 @@ class WBAParticles:
             else:
                 final_DA = np.nan
 
-            v_par_signs = np.sign(vpar_path)
-
-            mask = v_par_signs != 0
-            v = v_par_signs[mask]
-            # Keep track of original indices after removing zeros
-            orig_idx = np.where(mask)[0]
-
-            # find vpar sign changes
-            bounce_local = np.where(v[1:] * v[:-1] < 0)[0]
-            # map back to original trajectory indexing, pre zero removal
-            bounce_indices = orig_idx[bounce_local + 1]
-            bounces = len(bounce_indices) if len(v) > 1 else 0
-
-            zeta_path = np.mod(points_trajectory[:, 2], 2 * np.pi)
-            dzeta = np.diff(zeta_path)
-
-            # find large negative jump, this is where mod
-            # brings factors of 2pi back to zero, and pass
-            wrap_idx = np.where(dzeta < -np.pi)[0]
-
-            # isolate transits across zeta of 2pi
-            true_passes = []
-            for passing_index in range(len(wrap_idx) - 1):
-                pass1 = wrap_idx[passing_index]
-                pass2 = wrap_idx[passing_index + 1]
-
-                # ensure no bounce between these two toroidal passes
-                if not np.any((bounce_indices > pass1) & (bounce_indices < pass2)):
-                    true_passes.append(wrap_idx[passing_index])
+            bounce_indices, passing_indicies = self.return_bounces_and_passes(vpar_path, points_trajectory[:, 2])
 
             convergence_times = []
             convergence_petas = []
@@ -5091,7 +5108,7 @@ class WBAParticles:
 
                 bounce_enum = np.searchsorted(bounce_indices, timing_index, side="left")
 
-                pass_enum = np.searchsorted(true_passes, timing_index, side="left")
+                pass_enum = np.searchsorted(passing_indicies, timing_index, side="left")
 
                 convergence_bounces.append(bounce_enum)
                 convergence_passes.append(pass_enum)
@@ -5132,8 +5149,8 @@ class WBAParticles:
                 points_trajectory[-1, 1],
                 points_trajectory[-1, 2],
                 vpar_path[-1],
-                bounces,
-                len(true_passes),
+                len(bounce_indices),
+                len(passing_indicies),
                 final_DA,
             ]
 

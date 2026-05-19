@@ -86,11 +86,8 @@ heat_map = MapEquilibrium(
     nlambda_points=30,
     comm=comm,
     savedata=True,
-    savepath="QH_counter",
+    savepath="",
 )
 
 if verbose:
-    heat_map.plot_surfaces(
-        savepath=fname + "_QH_counter.png", plot_at_loss=False
-    )
-    plt.clf()
+    heat_map.plot_surfaces(plot_at_loss=False)
