@@ -5,11 +5,7 @@ import numpy as np
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
-    ShearAlfvenHarmonic
-)
-from firm3d.field.tracing import (
-    MaxToroidalFluxStoppingCriterion,
-    trace_particles_boozer,
+    ShearAlfvenHarmonic,
 )
 from firm3d.field.tracing_helpers import (
     initialize_position_uniform_vol,
@@ -81,7 +77,7 @@ vpar0 = np.sqrt(2 * Ekin / mass)
 vpar_init = initialize_velocity_uniform(vpar0, nParticles, comm=comm, seed=0)
 
 field.set_points(tracing_points)
-modB = field.modB()[:,0]
+modB = field.modB()[:, 0]
 mus_per_mass = (Ekin - 0.5 * vpar_init**2) / modB
 
 object_WBA = WBAPerturbedParticles(
@@ -100,7 +96,7 @@ object_WBA = WBAPerturbedParticles(
     comm=comm,
     DA_cutoff=3,
     tol=abstol,
-    convergence_points=10,
+    nconvergence_points=10,
 )
 
 DAs_all = np.array(object_WBA.DAs)

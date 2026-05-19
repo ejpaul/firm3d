@@ -6,10 +6,6 @@ from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
 )
-from firm3d.field.tracing import (
-    MaxToroidalFluxStoppingCriterion,
-    trace_particles_boozer,
-)
 from firm3d.field.tracing_helpers import (
     initialize_position_uniform_vol,
     initialize_velocity_uniform,

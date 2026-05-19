@@ -385,16 +385,12 @@ if verbose:
                 "linewidth": 5,
             }
         )
-        # avoid repeating labels for multiple resonance lines 
+        # avoid repeating labels for multiple resonance lines
         # with the same ell value
-        if i > 0:
-            if ell_list[i] == ell_list[i - 1]:
+        if i > 0: # noqa: SIM102
+            if ell_list[i] == ell_list[i - 1]: # noqa: SIM102
                 line_kwargs_labeled.append(
-                    {
-                        "color": linecolors[i],
-                        "linestyle": ls,
-                        "linewidth": 5
-                    }
+                    {"color": linecolors[i], "linestyle": ls, "linewidth": 5}
                 )
                 continue
         line_kwargs_labeled.append(

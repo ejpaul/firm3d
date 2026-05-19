@@ -1,5 +1,4 @@
 import matplotlib as mpl
-from matplotlib import pyplot as plt
 
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,

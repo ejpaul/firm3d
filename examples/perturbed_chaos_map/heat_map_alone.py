@@ -9,7 +9,6 @@ from firm3d.field.boozermagneticfield import (
 )
 from firm3d.field.trajectory_helpers import (
     MapPhaseSpace,
-    PassingPerturbedPoincare,
     PassingPoincare,
     compute_peta,
     min_volumemodB,
@@ -184,6 +183,7 @@ heat_map = MapPhaseSpace(
     file_name="",
     convergence_points=5,
 )
+
 
 def compute_rotational_profile(pitch, sgn, s_profile, comm):
     poinc = PassingPoincare(
