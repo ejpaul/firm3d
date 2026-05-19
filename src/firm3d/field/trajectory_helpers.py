@@ -229,7 +229,7 @@ class PassingPoincare:
             self.helicity_Mp = helicity_Mp
             self.helicity_Np = helicity_Np
 
-        if (self.helicity_M is None) or (self.helicity_N is None) and chaos_detection:
+        if (self.helicity_M is None or self.helicity_N is None) and chaos_detection:
             raise ValueError(
                 "helicity_M and helicity_N must be provided for chaos detection."
             )
@@ -2583,6 +2583,7 @@ class MapEquilibrium:
         """
         if solver_options is None:
             solver_options = {}
+        self.solver_options=solver_options
         if s_lims is None:
             s_lims = [0.05, 0.95]
 
@@ -2692,6 +2693,23 @@ class MapEquilibrium:
         return
 
     def initialize_particles(self):
+        r"""
+        Generate initial particle positions, parallel velocities, and magnetic
+        moments for tracing.
+
+        Initial flux surfaces and magnetic moments are sampled either on a
+        structured (s, mu) grid or uniformly at random, depending on
+        self.randomize. On each surface, particles are scattered uniformly using
+        initialize_position_uniform_surf. Points with vpar^2 < 0 from energy
+        conservation are dropped.
+
+        Returns:
+            s : List of initial s coordinates.
+            thetas : List of initial theta coordinates.
+            zetas : List of initial zeta coordinates.
+            vpar : List of initial parallel velocities (signed by self.sign).
+            mu : List of initial magnetic moments.
+        """
         if self.randomize:
             mus = np.random.uniform(self.mu_min, self.mu_max, self.nlambda_points)
 
@@ -2723,7 +2741,6 @@ class MapEquilibrium:
             modB = self.B0.modB()[:, 0]
 
             mu = np.ones_like(modB) * mus_flat[particle_index]
-            # if self.verbose: print(f"mu shape {mu.shape}")
 
             vpar_energy = self.Ekin - (mu * modB)
 
@@ -2941,6 +2958,20 @@ class MapEquilibrium:
         return
 
     def build_lists(self, res_tys):
+        r"""
+        Unpack per-particle trajectory summaries into flat instance attributes
+        suitable for plotting and aggregation.
+
+        Populates self.DAs_at_loss, self.DA_at_tfinal, self.bounces, self.passes,
+        self.pitch, self.lost_total, self.final_times, self.trapped,
+        self.Peta_start, self.s0, self.mu0, and the convergence_* arrays from
+        the list produced by trace_particles. If self.verbose, initial conditions
+        are written to disk.
+
+        Args:
+            res_tys : List of per-particle summaries, each of the form
+                    [start_state, end_state, convergence_data].
+        """
         DAs_at_loss = []
 
         DA_tfinal = []
@@ -3033,8 +3064,26 @@ class MapEquilibrium:
 
         if self.verbose:
             print("Done Building Lists", flush=True)
+        return
 
     def vpar_func(self, s, theta, zeta, mu, sgn):
+        r"""
+        Solve for the parallel velocity at (s, theta, zeta) from the
+        shifted-energy invariant Eprime = n' * E - omega * p_eta.
+
+        The constraint is quadratic in vpar; the root matching sgn is selected.
+        Returns NaN where the discriminant is negative.
+
+        Args:
+            s : Flux-surface label (scalar or array-like).
+            theta : Boozer poloidal angle.
+            zeta : Boozer toroidal angle.
+            mu : Magnetic moment per mass.
+            sgn : Desired sign of the parallel velocity.
+
+        Returns:
+            vpar : Parallel velocity consistent with self.Eprime, or NaN.
+        """
         point = np.zeros((len(s), 3)) if hasattr(s, "__len__") else np.zeros((1, 3))
         point[:, 0] = s
         point[:, 1] = theta
@@ -3211,6 +3260,52 @@ class MapEquilibrium:
             plt.plot(self.convergence_times[i], self.convergence_DAs[i], alpha=0.5)
         plt.savefig(savepath[:-4] + "_convergence.pdf")
 
+def return_bounces_and_passes(vpar_path, zeta_path):
+    r"""
+    Count guiding-center bounces and toroidal transits along a trajectory.
+
+    Bounces are detected as sign changes of vpar. Transits are detected as
+    negative jumps in zeta mod 2*pi; a candidate transit is rejected if a
+    bounce occurs between it and the next wrap.
+
+    Args:
+        vpar_path : Array of parallel velocity samples.
+        zeta_path : Array of zeta samples (radians).
+
+    Returns:
+        bounce_indices : Trajectory indices where vpar changes sign.
+        true_passes : Trajectory indices of confirmed toroidal transits.
+    """
+    v_par_signs = np.sign(vpar_path)
+
+    mask = v_par_signs != 0
+    v = v_par_signs[mask]
+    # Keep track of original indices after removing zeros
+    orig_idx = np.where(mask)[0]
+
+    # find vpar sign changes
+    bounce_local = np.where(v[1:] * v[:-1] < 0)[0]
+    # map back to original trajectory indexing, pre zero removal
+    bounce_indices = orig_idx[bounce_local + 1]
+
+    zeta_path = np.mod(zeta_path, 2 * np.pi)
+    dzeta = np.diff(zeta_path)
+
+    # find large negative jump, this is where mod
+    # brings factors of 2pi back to zero, and pass
+    wrap_idx = np.where(dzeta < -np.pi)[0]
+
+    # isolate transits across zeta of 2pi
+    true_passes = []
+    for passing_index in range(len(wrap_idx) - 1):
+        pass1 = wrap_idx[passing_index]
+        pass2 = wrap_idx[passing_index + 1]
+
+        # ensure no bounce between these two toroidal passes
+        if not np.any((bounce_indices > pass1) & (bounce_indices < pass2)):
+            true_passes.append(wrap_idx[passing_index])
+
+    return bounce_indices, true_passes
 
 class MapPhaseSpace:
     r"""
@@ -3651,7 +3746,19 @@ class MapPhaseSpace:
         return np.where(valid, result, np.nan)
 
     def remove_equilibrium_lost_particles(self, points, vpars_init, mus_per_mass):
+        r"""
+        Trace particles briefly in the unperturbed equilibrium field and drop any
+        that hit the s = 1 wall before tracing in the perturbed field.
 
+        Args:
+            points : Array of shape (N, 3) of initial (s, theta, zeta).
+            vpars_init : Array of initial parallel velocities.
+            mus_per_mass : Array of initial magnetic moments per mass.
+
+        Returns:
+            s, thetas, zetas, vpars, mus_per_mass : Filtered arrays with
+                equilibrium-lost particles removed.
+        """
         # trace particles in equilibrium field to see if any are lost
         gc_tys, gc_zeta_hits = trace_particles_boozer(
             field=self.B0,
@@ -3685,37 +3792,6 @@ class MapPhaseSpace:
 
         return points[:, 0], points[:, 1], points[:, 2], vpars_init, mus_per_mass
 
-    def return_bounces_and_passes(self, vpar_path, zeta_path):
-        v_par_signs = np.sign(vpar_path)
-
-        mask = v_par_signs != 0
-        v = v_par_signs[mask]
-        # Keep track of original indices after removing zeros
-        orig_idx = np.where(mask)[0]
-
-        # find vpar sign changes
-        bounce_local = np.where(v[1:] * v[:-1] < 0)[0]
-        # map back to original trajectory indexing, pre zero removal
-        bounce_indices = orig_idx[bounce_local + 1]
-
-        zeta_path = np.mod(zeta_path, 2 * np.pi)
-        dzeta = np.diff(zeta_path)
-
-        # find large negative jump, this is where mod
-        # brings factors of 2pi back to zero, and pass
-        wrap_idx = np.where(dzeta < -np.pi)[0]
-
-        # isolate transits across zeta of 2pi
-        true_passes = []
-        for passing_index in range(len(wrap_idx) - 1):
-            pass1 = wrap_idx[passing_index]
-            pass2 = wrap_idx[passing_index + 1]
-
-            # ensure no bounce between these two toroidal passes
-            if not np.any((bounce_indices > pass1) & (bounce_indices < pass2)):
-                true_passes.append(wrap_idx[passing_index])
-
-        return bounce_indices, true_passes
 
     def trace_particles(self):
         r"""
@@ -3825,7 +3901,7 @@ class MapPhaseSpace:
             else:
                 final_DA = np.nan
 
-            bounce_indices, passing_indicies = self.return_bounces_and_passes(
+            bounce_indices, passing_indicies = return_bounces_and_passes(
                 vpar_path, zeta_path
             )
 
@@ -4179,6 +4255,21 @@ class MapPhaseSpace:
         return peta
 
     def return_peta_trapped_contoured_boundary(self, binned_statistic_2d):
+        r"""
+        Estimate the trapped-passing boundary in the (pitch, p_eta) plane by
+        sampling many points on flux surfaces, binning the trapped/passing
+        indicator, and tracing the column-wise transition. The boundary is then
+        fit with a quadratic polynomial.
+
+        Args:
+            binned_statistic_2d : The scipy.stats.binned_statistic_2d callable
+                (injected to avoid re-importing).
+
+        Returns:
+            poly : numpy.poly1d quadratic fit of the boundary.
+            pitch_fit : Pitch coordinates of the fitted curve.
+            radlike_fit : Radial-like (s or p_eta) values of the fitted curve.
+        """
         volume_boundary_radlike = []
         volume_boundary_pitch = []
         volume_trapped = []
@@ -4251,6 +4342,16 @@ class MapPhaseSpace:
         return poly, pitch_fit, radlike_fit
 
     def return_flux_trapped_boundary(self):
+        r"""
+        Estimate the trapped-passing boundary by, for each flux surface, finding
+        the smallest mu at which a sampled point becomes trapped. The resulting
+        (pitch, s) or (pitch, p_eta) points are fit with a quadratic polynomial.
+
+        Returns:
+            poly : numpy.poly1d quadratic fit of the boundary.
+            pa_fit : Pitch coordinates of the fitted curve.
+            s_fit : Radial-like values (s or p_eta) of the fitted curve.
+        """
         s_scope = np.linspace(self.s_min, self.s_max, 75)[::-1]
         mu_scope = np.linspace(self.mu_min, self.mu_max, 75)
 
@@ -4297,6 +4398,28 @@ class MapPhaseSpace:
         negate_peta=False,
         smoothing=3,
     ):
+        r"""
+        Plot a 2D heatmap of digit accuracy in the (pitch, radial-like) plane and
+        overlay the fitted trapped-passing boundary. Optionally overlay loss
+        fractions as triangle markers per bin.
+
+        Args:
+            nx : Number of pitch bins.
+            ny : Number of radial bins.
+            savepath : Output file path for the heatmap.
+            ax : Matplotlib axis. If None, a new figure and axis are created.
+            DA_max : Maximum DA value shown on the colorbar.
+            statistic : Aggregation statistic passed to binned_statistic_2d.
+            DA_at_loss : If True, use the DA value at loss; otherwise the final
+                integration DA.
+            plot_losses : If True, overlay loss-fraction markers per bin.
+            negate_peta : If True, flip the sign of the y axis (useful when
+                plotting against -p_eta).
+            smoothing : Currently unused; retained for API compatibility.
+
+        Returns:
+            ax : The Matplotlib axis containing the plot.
+        """
         import matplotlib as mpl
         import matplotlib.pyplot as plt
         from scipy.stats import binned_statistic_2d
@@ -4408,6 +4531,9 @@ class WBAPerturbedParticles:
         mass,
         charge,
         Ekin,
+        Phin,
+        Phim,
+        omega,
         helicity_N,
         helicity_M,
         helicity_Mp=None,
@@ -4527,9 +4653,15 @@ class WBAPerturbedParticles:
         self.helicity_Mp = helicity_Mp
         self.helicity_Np = helicity_Np
 
+        self.Phin = Phin
+        self.Phim = Phim
+        self.omega = omega
         self.mass = mass
         self.charge = charge
         self.Ekin = Ekin
+        self.nprime = (self.Phim * self.helicity_N - self.Phin * self.helicity_M) / (
+            self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
+        )
         self.vtotal = np.sqrt(2 * self.Ekin / mass)
 
         self.comm = comm
@@ -4608,7 +4740,7 @@ class WBAPerturbedParticles:
         (self.gc_tys, self.DAs, self.wall_lost, self.dense_output) = (
             self.trace_particles()
         )
-        return self.DAs, self.wall_lost
+        return 
 
     def check_filepaths(self, filepaths):
         r"""
@@ -4620,38 +4752,6 @@ class WBAPerturbedParticles:
             exists_all : True if every path exists, otherwise False.
         """
         return all(exists(fp) for fp in filepaths.values())
-
-    def return_bounces_and_passes(self, vpar_path, zeta_path):
-        v_par_signs = np.sign(vpar_path)
-
-        mask = v_par_signs != 0
-        v = v_par_signs[mask]
-        # Keep track of original indices after removing zeros
-        orig_idx = np.where(mask)[0]
-
-        # find vpar sign changes
-        bounce_local = np.where(v[1:] * v[:-1] < 0)[0]
-        # map back to original trajectory indexing, pre zero removal
-        bounce_indices = orig_idx[bounce_local + 1]
-
-        zeta_path = np.mod(zeta_path, 2 * np.pi)
-        dzeta = np.diff(zeta_path)
-
-        # find large negative jump, this is where mod
-        # brings factors of 2pi back to zero, and pass
-        wrap_idx = np.where(dzeta < -np.pi)[0]
-
-        # isolate transits across zeta of 2pi
-        true_passes = []
-        for passing_index in range(len(wrap_idx) - 1):
-            pass1 = wrap_idx[passing_index]
-            pass2 = wrap_idx[passing_index + 1]
-
-            # ensure no bounce between these two toroidal passes
-            if not np.any((bounce_indices > pass1) & (bounce_indices < pass2)):
-                true_passes.append(wrap_idx[passing_index])
-
-        return bounce_indices, true_passes
 
     def trace_particles(self):
         r"""
@@ -4710,7 +4810,7 @@ class WBAPerturbedParticles:
                 points_trajectory = points_trajectory[:idx_wall, :]
                 vpar_path = vpar_path[:idx_wall]
 
-            bounce_indices, passing_indicies = self.return_bounces_and_passes(
+            bounce_indices, passing_indicies = return_bounces_and_passes(
                 vpar_path, zeta_path
             )
 
@@ -4870,6 +4970,43 @@ class WBAParticles:
         tol=1e-9,
         convergence_points=1,
     ):
+        r"""
+        Initialize a Weighted Birkhoff Average (WBA) computation for guiding-
+        center trajectories in an unperturbed BoozerMagneticField.
+
+        Either pre-traced trajectories (gc_tys) or initial conditions
+        (points, v_pars) must be provided. If initial conditions are given,
+        particles are traced with trace_particles_boozer.
+
+        Args:
+            B0 : The :class:`BoozerMagneticField` instance.
+            mass : Particle mass.
+            charge : Particle charge.
+            Ekin : Total kinetic energy.
+            helicity_N : Toroidal helicity of the field-strength contours.
+            helicity_M : Poloidal helicity of the field-strength contours.
+            helicity_Mp : Poloidal helicity of the mapping coordinate eta. If
+                None, determined automatically from helicity_M.
+            helicity_Np : Toroidal helicity of the mapping coordinate eta. If
+                None, determined automatically from helicity_N.
+            points : Array of shape (N, 3) of initial (s, theta, zeta). Required
+                if gc_tys is None.
+            v_pars : Array of initial parallel velocities. Required if gc_tys is
+                None.
+            gc_tys : Pre-traced trajectory arrays; if provided, tracing is
+                skipped.
+            tmax : Maximum integration time per particle (s).
+            min_timestep : Save interval for the ODE solver (s).
+            savedata : If True, save DA arrays and trajectories to disk.
+            save_gc_trajectories : If True, persist raw trajectories.
+            savepath : Prefix for output filenames.
+            comm : MPI communicator for parallel execution.
+            DA_cutoff : Digit accuracy threshold for classifying chaos.
+            solver_options : Extra options passed to the ODE solver.
+            tol : Absolute and relative ODE tolerance.
+            convergence_points : Number of intermediate WBA evaluations per
+                trajectory.
+        """
         self.B0 = B0
         self.helicity_M = helicity_M
         self.helicity_N = helicity_N
@@ -4966,46 +5103,34 @@ class WBAParticles:
         """
         return all(exists(fp) for fp in filepaths.values())
 
-    def return_bounces_and_passes(self, vpar_path, zeta_path):
-        v_par_signs = np.sign(vpar_path)
 
-        mask = v_par_signs != 0
-        v = v_par_signs[mask]
-        # Keep track of original indices after removing zeros
-        orig_idx = np.where(mask)[0]
-
-        # find vpar sign changes
-        bounce_local = np.where(v[1:] * v[:-1] < 0)[0]
-        # map back to original trajectory indexing, pre zero removal
-        bounce_indices = orig_idx[bounce_local + 1]
-
-        zeta_path = np.mod(zeta_path, 2 * np.pi)
-        dzeta = np.diff(zeta_path)
-
-        # find large negative jump, this is where mod
-        # brings factors of 2pi back to zero, and pass
-        wrap_idx = np.where(dzeta < -np.pi)[0]
-
-        # isolate transits across zeta of 2pi
-        true_passes = []
-        for passing_index in range(len(wrap_idx) - 1):
-            pass1 = wrap_idx[passing_index]
-            pass2 = wrap_idx[passing_index + 1]
-
-            # ensure no bounce between these two toroidal passes
-            if not np.any((bounce_indices > pass1) & (bounce_indices < pass2)):
-                true_passes.append(wrap_idx[passing_index])
-
-        return bounce_indices, true_passes
-
-    def trace_particles(self, points_phase, vpars):
+    def trace_particles(self):
         r"""
-        Trace unperturbed particle trajectories and compute DA outputs.
+        Trace unperturbed particle trajectories and compute per-particle WBA
+        digit-accuracy diagnostics.
+
+        If self.trace is True, particles are integrated with
+        trace_particles_boozer from the initial conditions (points_phase, vpars).
+        Otherwise, pre-traced trajectories in self.gc_tys are reused. For each
+        trajectory, the canonical momentum p_eta is evaluated, bounces and
+        toroidal transits are counted, and the WBA digit accuracy is computed at
+        every index in self.WBA_transit_indicies as well as at the final time.
 
         Args:
-            points_phase : Initial particle positions in Boozer coordinates.
-            vpars : Initial parallel velocities.
+            points_phase : Array of shape (N, 3) of initial (s, theta, zeta)
+                coordinates. Ignored when self.trace is False.
+            vpars : Array of initial parallel velocities. Ignored when self.trace
+                is False.
+
         Returns:
+            res_tys : List of raw trajectory arrays (only populated when
+                self.save_gc_trajectories is True; otherwise an empty list, or
+                self.gc_tys when self.trace is False).
+            DA_data : List of final digit-accuracy values, one per particle.
+            wall_lost : List of final integration times per particle (used to
+                flag wall-loss events).
+            dense_output : List of per-particle summaries of the form
+                [start_state, end_state, convergence_data].
         """
 
         shape = points_phase.shape[0] if self.trace else len(self.gc_tys)
@@ -5076,7 +5201,7 @@ class WBAParticles:
             else:
                 final_DA = np.nan
 
-            bounce_indices, passing_indicies = self.return_bounces_and_passes(
+            bounce_indices, passing_indicies = return_bounces_and_passes(
                 vpar_path, points_trajectory[:, 2]
             )
 

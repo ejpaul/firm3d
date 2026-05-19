@@ -47,6 +47,9 @@ helicity_M = 1
 helicity_N = 0
 dt_save = 1e-7  # Time interval for saving trajectory points
 
+Phin = 1  # Toroidal mode number of the perturbation
+Phim = 1  # Poloidal mode number of the perturbation
+omega = 136000  # Frequency of the perturbation in rad/s
 
 ## Setup radial interpolation
 bri = BoozerRadialInterpolant(boozmn_filename, order, no_K=True, comm=comm)
@@ -85,6 +88,9 @@ object_WBA = WBAPerturbedParticles(
     mass,
     charge,
     Ekin,
+    Phin,
+    Phim,
+    omega,
     helicity_N,
     helicity_M,
     points=tracing_points,
