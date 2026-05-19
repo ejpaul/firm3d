@@ -6,6 +6,11 @@ import numpy as np
 import firm3dpp
 
 try:
+    from simsopt.field.tracing import (
+        IterationStoppingCriterion as SimsoptIterationStoppingCriterion,
+    )
+    from simsopt.geo import SurfaceRZFourier
+
     from simsopt.field import (
         BiotSavart,
         InterpolatedField,
@@ -14,10 +19,6 @@ try:
         load_coils_from_makegrid_file,
         trace_particles,
     )
-    from simsopt.field.tracing import (
-        IterationStoppingCriterion as SimsoptIterationStoppingCriterion,
-    )
-    from simsopt.geo import SurfaceRZFourier
 
     HAS_SIMSOPT = True
 except Exception:
@@ -91,7 +92,7 @@ def construct_interpolant(field, nfp, saw_present=False):
 def sample_test_points(n_test_pts):
     np.random.seed(1865)
     # generate test points
-    s = np.random.uniform(low=0, high=0.95, size=(n_test_pts, 1))
+    s = np.random.uniform(low=0, high=1.1, size=(n_test_pts, 1))
     t = np.random.uniform(low=0, high=2 * np.pi, size=(n_test_pts, 1))
     z = np.random.uniform(low=0, high=2 * np.pi, size=(n_test_pts, 1))
     stz = np.hstack((s, t, z))

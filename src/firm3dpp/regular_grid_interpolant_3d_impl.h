@@ -21,7 +21,7 @@ template<class Array>
 void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, Vec, Vec)> &f) {
     int BATCH_SIZE = 16384;
     int NUM_BATCHES = dofs_to_keep/BATCH_SIZE + (dofs_to_keep % BATCH_SIZE != 0);
-    
+
     for (int i = 0; i < NUM_BATCHES; ++i) {
         uint32_t first = i * BATCH_SIZE;
         uint32_t last = std::min((uint32_t)((i+1) * BATCH_SIZE), dofs_to_keep);
@@ -78,7 +78,7 @@ void RegularGridInterpolant3D<Array>::interpolate_batch(std::function<Vec(Vec, V
 
     int BATCH_SIZE = 16384;
     Vec local_vals(local_dofs * value_size, 0.);
-    
+
     for (int first = local_first; first < local_last; first += BATCH_SIZE) {
         int last = std::min(first + BATCH_SIZE, local_last);
         Vec xsub(xdoftensor_reduced.begin() + first, xdoftensor_reduced.begin() + last);
@@ -201,6 +201,18 @@ void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double y, doubl
             throw std::runtime_error((boost::format("yidxs={} not within [0, {}]") % yidx % (ny-1)).str());
         if(zidx < 0 || zidx >= nz)
             throw std::runtime_error((boost::format("zidxs={} not within [0, {}]") % zidx % (nz-1)).str());
+    } else {
+        // Clamp cell indices to match CUDA kernel convention (cuda_kernel.cu:700-704):
+        //   x (s, radial): clamp both lower and upper bounds — s can legitimately
+        //     fall below 0 or above 1 during tracing.
+        //   y (theta), z (zeta): clamp upper bound only — these are periodic
+        //     coordinates and a negative index never occurs in practice.
+        // The coordinate itself is left at its true value so that xlocal can
+        // exceed [0,1), giving polynomial extrapolation from the boundary cell
+        // rather than returning zero (which caused modB=0 and an unbounded RHS).
+        xidx = std::max(0, std::min(nx-1, xidx));
+        yidx = std::min(ny-1, yidx);
+        zidx = std::min(nz-1, zidx);
     }
     double xlocal = (x-xmesh[xidx])/hx;
     double ylocal = (y-ymesh[yidx])/hy;
@@ -210,7 +222,7 @@ void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double y, doubl
 
 template<class Array>
 void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double* res){
-    
+
     // to avoid funny business when the data is just a tiny bit out of bounds
     // due to machine precision, we perform this check and shift
     if(x >= xmax) x -= _EPS_;
@@ -221,6 +233,10 @@ void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double* res){
     if(!out_of_bounds_ok){
         if(xidx < 0 || xidx >= nx)
             throw std::runtime_error((boost::format("xidxs={} not within [0, {}]") % xidx % (nx-1)).str());
+    } else {
+        // Clamp cell index (matching CUDA kernel behaviour): extrapolate from
+        // last cell rather than returning zero.
+        xidx = std::max(0, std::min(nx-1, xidx));
     }
     double xlocal = (x-xmesh[xidx])/hx;
     return evaluate_local(xlocal, idx_cell(xidx, 0, 0), res);
@@ -401,7 +417,7 @@ void RegularGridInterpolant3D<Array>::set_interpolant_data(const std::map<std::s
     if (it != data.end()) {
         vals = it->second;
     }
-    
+
     // Rebuild all_local_vals_map from vals. This is the cell-indexed lookup table
     // used by evaluate_local() - same construction as interpolate_batch() but
     // without calling the function to compute values.
