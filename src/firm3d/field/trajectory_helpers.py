@@ -4888,6 +4888,7 @@ class WBAPerturbedParticles:
                 points_trajectory[0, 1],
                 points_trajectory[0, 2],
                 vpar_path[0],
+                weighted_mu,
                 Peta_values[0],
                 E[0],
                 Eprime[0],
@@ -4942,7 +4943,143 @@ class WBAPerturbedParticles:
                     pickle.dump(dense_output, f)
         if not self.trace:
             res_tys = self.gc_tys
+        self.build_lists(dense_output)
         return res_tys, DA_data, wall_lost, dense_output
+    def build_lists(self, dense_output):
+        r"""
+        Process trajectory summary data into lists that can be compared
+        across many particles.
+
+        Populates self.DAs_at_loss, self.DA_at_tfinal, self.lost_total,
+        self.final_times, self.bounces, self.passes, self.Peta_init/mean/final,
+        self.E_init/mean/final, self.Eprime_init/mean/final, and the
+        convergence_* arrays from the list of per-particle state tuples
+        produced by trace_particles.
+
+        Args:
+            dense_output : List of per-particle trajectory summaries, each a
+                list of the form
+                [start_state, end_state, mean_state, convergence_data].
+        """
+        if self.verbose:
+            print("Building Lists", flush=True)
+
+        DAs_at_loss = []
+        DA_tfinal = []
+
+        lost_total = []
+        final_times = []
+        bounces = []
+        passes = []
+
+        mus = []
+        Peta_init = []
+        Peta_mean = []
+        Peta_final = []
+        E_init = []
+        E_mean = []
+        E_final = []
+        Eprime_init = []
+        Eprime_mean = []
+        Eprime_final = []
+
+        s0 = []
+        theta0 = []
+        zeta0 = []
+        vpar0 = []
+
+        convergence_bounces = []
+        convergence_passes = []
+        convergence_times = []
+        convergence_petas = []
+        convergence_energies = []
+        convergence_DAs = []
+
+        for elem in dense_output:
+            # start state vector:
+            #   [s, theta, zeta, vpar, mu, peta, E, Eprime]
+            # end state vector:
+            #   [t, s, theta, zeta, vpar, peta, E, Eprime, bounces, passes, DA]
+            # mean state vector:
+            #   [s_mean, peta_mean, E_mean, Eprime_mean]
+            # convergence state vector:
+            #   [times, petas, bounces, passes, DAs, energies]
+
+            start_state = elem[0]
+            end_state = elem[1]
+            means = elem[2]
+            convergence = elem[3]
+
+            final_time = end_state[0]
+
+            final_times.append(final_time)
+
+            if final_time < (self.tmax - (5 * self.min_timestep)):
+                lost_total.append(1)
+                DA_tfinal.append(np.nan)
+            else:
+                lost_total.append(0)
+                DA_tfinal.append(end_state[10])
+
+            DAs_at_loss.append(end_state[10])
+            bounces.append(end_state[8])
+            passes.append(end_state[9])
+
+            s0.append(start_state[0])
+            theta0.append(start_state[1])
+            zeta0.append(start_state[2])
+            vpar0.append(start_state[3])
+
+            mus.append(start_state[4])
+
+            Peta_init.append(start_state[5])
+            Peta_mean.append(means[1])
+            Peta_final.append(end_state[5])
+
+            E_init.append(start_state[6])
+            E_mean.append(means[2])
+            E_final.append(end_state[6])
+
+            Eprime_init.append(start_state[7])
+            Eprime_mean.append(means[3])
+            Eprime_final.append(end_state[7])
+
+            convergence_times.append(convergence[0])
+            convergence_petas.append(convergence[1])
+            convergence_bounces.append(convergence[2])
+            convergence_passes.append(convergence[3])
+            convergence_DAs.append(convergence[4])
+            convergence_energies.append(convergence[5])
+
+        self.mus = mus
+        self.DAs_at_loss = DAs_at_loss
+        self.DA_at_tfinal = DA_tfinal
+        self.lost_total = lost_total
+        self.final_times = final_times
+
+        self.bounces = bounces
+        self.passes = passes
+
+        self.Peta_init = Peta_init
+        self.Peta_mean = Peta_mean
+        self.Peta_final = Peta_final
+        self.E_init = E_init
+        self.E_mean = E_mean
+        self.E_final = E_final
+        self.Eprime_init = Eprime_init
+        self.Eprime_mean = Eprime_mean
+        self.Eprime_final = Eprime_final
+
+        self.convergence_bounces = convergence_bounces
+        self.convergence_passes = convergence_passes
+        self.convergence_times = convergence_times
+        self.convergence_petas = convergence_petas
+        self.convergence_DAs = convergence_DAs
+        self.convergence_energies = convergence_energies
+
+        if self.verbose:
+            print("Done Building Lists", flush=True)
+        return
 
 
 class WBAParticles:
