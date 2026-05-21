@@ -4185,7 +4185,6 @@ class MapPhaseSpace:
         if self.plot_s:
             return np.sum(output), surface
         else:
-
             try:
                 peta = compute_peta(
                     self.B0,
@@ -4349,8 +4348,6 @@ class MapPhaseSpace:
 
         pitch_fit = np.linspace(boundary_pitch.min(), boundary_pitch.max(), 300)
         radlike_fit = poly(pitch_fit)
-
-        print(f'{pitch_fit=}, {radlike_fit=}')
 
         return poly, pitch_fit, radlike_fit
 
@@ -5283,7 +5280,7 @@ class WBAParticles:
                 [start_state, end_state, convergence_data].
         """
 
-        shape = points_phase.shape[0] if self.trace else len(self.gc_tys)
+        shape = self.points0.shape[0] if self.trace else len(self.gc_tys)
 
         first, last = parallel_loop_bounds(self.comm, shape)
         res_tys = []
@@ -5296,14 +5293,14 @@ class WBAParticles:
         for itrj in range(first, last):
             if self.trace:
                 pt = np.zeros((1, 3))
-                pt[0, 0] = points_phase[itrj, 0]
-                pt[0, 1] = points_phase[itrj, 1]
-                pt[0, 2] = points_phase[itrj, 2]
+                pt[0, 0] = self.points0[itrj, 0]
+                pt[0, 1] = self.points0[itrj, 1]
+                pt[0, 2] = self.points0[itrj, 2]
                 self.vtotal = np.sqrt(2 * self.Ekin / self.mass)
                 gc_tys, gc_zeta_hits = trace_particles_boozer(
                     self.B0,
                     stz_inits=pt,
-                    parallel_speeds=[vpars[itrj]],
+                    parallel_speeds=[self.v_pars0[itrj]],
                     tmax=self.tmax,
                     mass=self.mass,
                     charge=self.charge,
