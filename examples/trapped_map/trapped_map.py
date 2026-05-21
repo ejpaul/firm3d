@@ -52,8 +52,6 @@ field = InterpolatedBoozerField.from_booz_xform(
 
 poinc = TrappedPoincare(
     field,
-    helicity_M,
-    helicity_N,
     mass,
     charge,
     Ekin,

@@ -1483,7 +1483,7 @@ def compute_peta(
         field = field_or_saw
         alpha = 0.0
         if points.shape[1] == 4:
-            points = points[:, :3]
+            np.ascontiguousarray(points[:, :3], dtype=np.float64)
         field.set_points(points)
 
     modB = field.modB()[:, 0]
@@ -4164,8 +4164,10 @@ class MapPhaseSpace:
         """
         resolution = 500
         points = initialize_position_uniform_surf(self.B0, resolution, surface)
-        self.B0.set_points(points)
-        modB = self.B0.modB()[:, 0]
+        points = np.column_stack((points, np.zeros(points.shape[0])))  # add time column
+        self.saw.set_points(points)
+        modB = self.saw.B0.modB()[:, 0]
+        Phi = self.saw.Phi()[:, 0]
 
         sign_arrs = np.ones_like(modB) * self.sign
 
@@ -4179,14 +4181,18 @@ class MapPhaseSpace:
         vp_temp = vp_temp[mask]
         points = points[mask]
         modB = modB[mask]
+        Phi = Phi[mask]
 
-        output = ((self.Ekin - mu * modB) < 0).astype(int)
+        E = 0.5 * self.mass * vp_temp**2 + mu * modB + self.charge * Phi
+
+        output = ((E - mu * modB) < 0).astype(int)
         output = output.tolist()
         if self.plot_s:
             return np.sum(output), surface
         else:
-            try:
-                peta = compute_peta(
+            if points.shape[0] == 0:
+                return [], []
+            peta = compute_peta(
                     self.B0,
                     points,
                     vp_temp,
@@ -4197,10 +4203,6 @@ class MapPhaseSpace:
                     self.helicity_Mp,
                     self.helicity_Np,
                 )
-            except:
-                print(f"{vp_temp.shape=}", flush=True)
-                print(f"{points.shape=}", flush=True)
-                return None, None
 
             return output, peta.tolist()
 
@@ -4290,8 +4292,6 @@ class MapPhaseSpace:
         for s_val in s_vals:
             for mu_val in mu_vals:
                 trapped, radial_like = self.surface_trapped_func_Eprime(mu_val, s_val)
-                if trapped is None:
-                    continue
 
                 if self.Eprime_slice:
                     pitch_val = mu_val / self.Eprime
@@ -4328,7 +4328,7 @@ class MapPhaseSpace:
             col = T[:, j]
             if not col.any() or col.all():
                 continue
-            i = int(np.argmin(col > 0.5))
+            i = int(np.argmax(col > 0.5))
             pitch_b = pitch_c[i] if i == 0 else 0.5 * (pitch_c[i - 1] + pitch_c[i])
 
             boundary_pitch.append(pitch_b)
@@ -4343,11 +4343,22 @@ class MapPhaseSpace:
             boundary_radlike[order],
         )
 
+        print("nonzero columns:", np.count_nonzero([T[:, j].any() and not T[:, j].all()
+                                            for j in range(T.shape[1])]))
+        print("unique pitch bins hit:", np.count_nonzero(T.sum(axis=1)))
+        print("unique boundary_pitch:", np.unique(boundary_pitch))
+        print("boundary_pitch len:", len(boundary_pitch))
+        print("argmax indices:", [int(np.argmax(T[:, j] > 0.5))
+                                for j in range(T.shape[1])
+                                if T[:, j].any() and not T[:, j].all()])
+
         coeffs = np.polyfit(boundary_pitch, boundary_radlike, 2)
         poly = np.poly1d(coeffs)
 
         pitch_fit = np.linspace(boundary_pitch.min(), boundary_pitch.max(), 300)
         radlike_fit = poly(pitch_fit)
+
+        print(f"{pitch_fit=} \n {radlike_fit=}", flush=True)
 
         return poly, pitch_fit, radlike_fit
 
