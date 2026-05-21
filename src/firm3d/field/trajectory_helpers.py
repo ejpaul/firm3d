@@ -3342,9 +3342,9 @@ class MapPhaseSpace:
         tmax=1e-2,
         plot_s=False,
         min_timestep=1e-6,
-        ns_points=40,
+        ns_points=35,
         particles_per_surface=15,
-        nlambda_points=40,
+        nlambda_points=35,
         randomize_particles=False,
         number_of_particles=10000,
         s_lims=None,
@@ -4169,8 +4169,10 @@ class MapPhaseSpace:
 
         sign_arrs = np.ones_like(modB) * self.sign
 
+        mu_pm = mu / self.mass
+
         vp_temp = self.vpar_func_perturbed(
-            points[:, 0], points[:, 1], points[:, 2], mu, sign_arrs
+            points[:, 0], points[:, 1], points[:, 2], mu_pm, sign_arrs
         )
 
         mask = ~np.isnan(vp_temp)
@@ -4183,17 +4185,24 @@ class MapPhaseSpace:
         if self.plot_s:
             return np.sum(output), surface
         else:
-            peta = compute_peta(
-                self.B0,
-                points,
-                vp_temp,
-                self.mass,
-                self.charge,
-                self.helicity_M,
-                self.helicity_N,
-                self.helicity_Mp,
-                self.helicity_Np,
-            )
+
+            try:
+                peta = compute_peta(
+                    self.B0,
+                    points,
+                    vp_temp,
+                    self.mass,
+                    self.charge,
+                    self.helicity_M,
+                    self.helicity_N,
+                    self.helicity_Mp,
+                    self.helicity_Np,
+                )
+            except:
+                print(f"{vp_temp.shape=}", flush=True)
+                print(f"{points.shape=}", flush=True)
+                return None, None
+
             return output, peta.tolist()
 
     def trapped_passing_function(self, s, mu):
@@ -4282,6 +4291,8 @@ class MapPhaseSpace:
         for s_val in s_vals:
             for mu_val in mu_vals:
                 trapped, radial_like = self.surface_trapped_func_Eprime(mu_val, s_val)
+                if trapped is None:
+                    continue
 
                 if self.Eprime_slice:
                     pitch_val = mu_val / self.Eprime
@@ -4318,7 +4329,7 @@ class MapPhaseSpace:
             col = T[:, j]
             if not col.any() or col.all():
                 continue
-            i = int(np.argmin(col == 1))
+            i = int(np.argmin(col > 0.5))
             pitch_b = pitch_c[i] if i == 0 else 0.5 * (pitch_c[i - 1] + pitch_c[i])
 
             boundary_pitch.append(pitch_b)
@@ -4338,6 +4349,8 @@ class MapPhaseSpace:
 
         pitch_fit = np.linspace(boundary_pitch.min(), boundary_pitch.max(), 300)
         radlike_fit = poly(pitch_fit)
+
+        print(f'{pitch_fit=}, {radlike_fit=}')
 
         return poly, pitch_fit, radlike_fit
 
