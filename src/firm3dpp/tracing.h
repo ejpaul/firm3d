@@ -1,10 +1,12 @@
 #pragma once
 #include <memory>
 #include <vector>
+#include <cstdint>
 #include "boozermagneticfield.h"
 #include "shearalfvenwave.h"
 #include "regular_grid_interpolant_3d.h"
 #include "tracing_helpers.h"
+#include "collisions.h"
 
 using std::array;
 using std::shared_ptr;
@@ -29,7 +31,7 @@ solve(
     double dtau,
     double dtau_max,
     double abstol,
-    double reltol, 
+    double reltol,
     vector<double> phases,
     vector<double> n_zetas,
     vector<double> m_thetas,
@@ -76,6 +78,27 @@ particle_guiding_center_boozer_perturbed_tracing(
         double DP_hmin=0.0
 );
 
+
+tuple<vector<vector<double>>, vector<vector<double>>>
+particle_guiding_center_boozer_collision_tracing(
+        shared_ptr<BoozerMagneticField> field,
+        vector<double> stz_init,
+        double m,
+        double q,
+        double vtotal,
+        double vtang,
+        double tmax,
+        const vector<ThermalBackground>& backgrounds,
+        vector<shared_ptr<StoppingCriterion>> stopping_criteria={},
+        double dt_save=1e-6,
+        bool forget_exact_path=false,
+        int axis=2,
+        double abstol=1e-9,
+        double reltol=1e-9,
+        string ode_solver="dormand_prince",
+        double DP_hmin=0.0,
+        uint64_t rng_seed=0
+);
 
 tuple<vector<vector<double>>, vector<vector<double>>>
 particle_guiding_center_boozer_tracing(
