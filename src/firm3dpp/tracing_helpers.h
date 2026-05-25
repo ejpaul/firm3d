@@ -188,6 +188,84 @@ inline void stzvtdot_to_ydot(const vector<double>& stzvtdot, const vector<double
     }
 }
 
+// --------------------------------------------------------------------------
+// State transforms for the collision integrator.
+// Internal state y has the same spatial layout as the collisionless case
+// (axis transformation on [s,theta]), but elements 3 and 4 are
+// v/vnorm and xi (pitch, dimensionless) respectively.
+// --------------------------------------------------------------------------
+
+inline void stzv_xi_to_y(const vector<double>& stzv_xi, vector<double>& y,
+                          int axis, double vnorm)
+{
+    // stzv_xi = [s, theta, zeta, v, xi]   (5 elements)
+    // y       = [y0, y1, zeta, v/vnorm, xi]
+    if (stzv_xi.size() != 5 || y.size() != 5)
+        throw std::invalid_argument("stzv_xi_to_y: vectors must have size 5.");
+    if (axis == 1) {
+        y[0] = std::sqrt(stzv_xi[0]) * std::cos(stzv_xi[1]);
+        y[1] = std::sqrt(stzv_xi[0]) * std::sin(stzv_xi[1]);
+    } else if (axis == 2) {
+        y[0] = stzv_xi[0] * std::cos(stzv_xi[1]);
+        y[1] = stzv_xi[0] * std::sin(stzv_xi[1]);
+    } else {
+        y[0] = stzv_xi[0];
+        y[1] = stzv_xi[1];
+    }
+    y[2] = stzv_xi[2];
+    y[3] = stzv_xi[3] / vnorm;  // v normalised
+    y[4] = stzv_xi[4];          // xi: dimensionless, no normalisation
+}
+
+inline void y_to_stzv_xi(const vector<double>& y, vector<double>& stzv_xi,
+                          int axis, double vnorm)
+{
+    if (y.size() != 5 || stzv_xi.size() != 5)
+        throw std::invalid_argument("y_to_stzv_xi: vectors must have size 5.");
+    if (axis == 1) {
+        stzv_xi[0] = y[0] * y[0] + y[1] * y[1];
+        stzv_xi[1] = std::atan2(y[1], y[0]);
+    } else if (axis == 2) {
+        stzv_xi[0] = std::sqrt(y[0] * y[0] + y[1] * y[1]);
+        stzv_xi[1] = std::atan2(y[1], y[0]);
+    } else {
+        stzv_xi[0] = y[0];
+        stzv_xi[1] = y[1];
+    }
+    stzv_xi[2] = y[2];
+    stzv_xi[3] = y[3] * vnorm;  // v
+    stzv_xi[4] = y[4];          // xi
+}
+
+inline void stzv_xi_dot_to_ydot(const vector<double>& dot,
+                                  const vector<double>& stzv_xi,
+                                  vector<double>& ydot,
+                                  int axis, double vnorm, double tnorm)
+{
+    // dot = [sdot, thetadot, zetadot, vdot, xidot]
+    if (dot.size() != 5 || stzv_xi.size() != 5 || ydot.size() != 5)
+        throw std::invalid_argument("stzv_xi_dot_to_ydot: vectors must have size 5.");
+    double s     = stzv_xi[0];
+    double theta = stzv_xi[1];
+    double sdot  = dot[0];
+    double tdot  = dot[1];
+    if (axis == 1) {
+        ydot[0] = sdot * std::cos(theta) / (2.0 * std::sqrt(s)) - std::sqrt(s) * std::sin(theta) * tdot;
+        ydot[1] = sdot * std::sin(theta) / (2.0 * std::sqrt(s)) + std::sqrt(s) * std::cos(theta) * tdot;
+    } else if (axis == 2) {
+        ydot[0] = sdot * std::cos(theta) - s * std::sin(theta) * tdot;
+        ydot[1] = sdot * std::sin(theta) + s * std::cos(theta) * tdot;
+    } else {
+        ydot[0] = sdot;
+        ydot[1] = tdot;
+    }
+    ydot[0] *= tnorm;
+    ydot[1] *= tnorm;
+    ydot[2]  = dot[2] * tnorm;
+    ydot[3]  = dot[3] * tnorm / vnorm;  // vdot normalised
+    ydot[4]  = dot[4] * tnorm;          // xidot normalised by time only
+}
+
 // Vector-based version of check_stopping_criteria
 template<class DENSE>
 bool check_stopping_criteria(
@@ -266,11 +344,11 @@ bool check_stopping_criteria(
             }
         }
     }
-    
+
     assert(n_zetas.size() == m_thetas.size());
     assert(n_zetas.size() == omegas.size());
     assert(n_zetas.size() == phases.size());
-    
+
     /// Now check whether we have hit any of the phase planes:
     //  n*zeta + m*theta - omega*t = consts
     for (int i = 0; i < n_zetas.size(); ++i) {
@@ -280,12 +358,12 @@ bool check_stopping_criteria(
         double omega = omegas[i];
         double phase_last = nz * zeta_last + mt * theta_last - omega*t_last;
         double phase_current = nz * zeta_current + mt * theta_current - omega*t_current;
-        
+
         if((std::floor((phase_last-phase)/(2*M_PI)) != std::floor((phase_current-phase)/(2*M_PI))) && (phase_current != phase) && (phase_last != phase)) { // check whether phase+k*2pi for some k was crossed
             int fak = std::round(((phase_last+phase_current)/2-phase)/(2*M_PI));
             double phase_shift = fak*2*M_PI + phase;
             assert((phase_last <= phase_shift && phase_shift <= phase_current) || (phase_current <= phase_shift && phase_shift <= phase_last));
-            
+
             std::function<double(double)> rootfun = [&phase_shift, &nz, &mt, &omega, &dense, &y, &stzvt, &axis, &vnorm, &tnorm](double tau){
                 dense.calc_state(tau, y);
                 double t = tau * tnorm;
@@ -308,7 +386,7 @@ bool check_stopping_criteria(
             }
         }
     }
-    
+
     // check whether we have satisfied any of the extra stopping criteria (e.g. left a surface)
     for (int i = 0; i < stopping_criteria.size(); ++i) {
         if(stopping_criteria[i] && (*stopping_criteria[i])(iter, dt, t_current, s_current, theta_current, zeta_current, vpar_current)){

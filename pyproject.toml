@@ -36,6 +36,11 @@ docs = [
     "scipy"
 ]
 
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (deselect with -m 'not slow'); intended for Perlmutter or similar HPC resources",
+]
+
 [tool.ruff]
 line-length = 88
 exclude = [
