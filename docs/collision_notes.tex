@@ -1,0 +1,500 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{microtype}
+\geometry{margin=1.1in}
+
+\newcommand{\vpar}{v_{\!\parallel}}
+\newcommand{\vperp}{v_{\!\perp}}
+\newcommand{\vth}[1][]{v_{\mathrm{th}\ifx&#1&\else,#1\fi}}
+\newcommand{\lnL}{\ln\Lambda}
+\newcommand{\lambdaD}{\lambda_D}
+\newcommand{\eps}{\varepsilon_0}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\erf}{\operatorname{erf}}
+\newcommand{\half}{\tfrac{1}{2}}
+
+\title{Monte Carlo Coulomb Collisions for Guiding-Centre Particles\\
+       in Boozer Coordinates: Implementation Notes}
+\author{firm3d --- \texttt{ep\_thermal\_collisions}}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\bigskip
+
+%-----------------------------------------------------------------------
+\section{Overview}
+%-----------------------------------------------------------------------
+
+These notes describe the algorithm used in \texttt{trace\_particles\_boozer\_with\_collisions}
+to include stochastic Coulomb collisions for an energetic particle (EP) tracing through
+one or more Maxwellian background species.
+
+The approach couples the deterministic guiding-centre (GC) orbit equations in Boozer
+coordinates with a Milstein stochastic term for the velocity-space diffusion. The full
+state vector is $(s,\theta,\zeta,v,\xi)$, where $v=|\bm{v}|$ is the total speed and
+$\xi = \vpar/v$ is the pitch.
+
+Primary references:
+\begin{itemize}
+  \item Hirvijoki et al.\ \cite{hirvijoki2013} --- Monte Carlo implementation of the
+        guiding-centre Fokker--Planck equation in $(v,\xi)$ coordinates; Eqs.\ (32)--(33)
+        of that paper define the SDE system used here.
+  \item Hirvijoki et al.\ \cite{hirvijoki2014} --- ASCOT4/5 code description; source
+        file \texttt{mccc\_coefs.h} defines the Coulomb logarithm convention adopted here.
+  \item Boozer \& Kuo-Petravic \cite{boozer1981} --- pitch-angle representation
+        in Boozer coordinates.
+\end{itemize}
+
+%-----------------------------------------------------------------------
+\section{Guiding-Centre Equations in Boozer Coordinates}
+%-----------------------------------------------------------------------
+
+In Boozer coordinates $(s,\theta,\zeta)$, where $s$ is the normalised toroidal flux,
+$\theta$ the poloidal angle, and $\zeta$ the toroidal angle, the vacuum GC equations are
+
+\begin{align}
+  \dot s &= -\frac{m\,v^2(1+\xi^2)}{2\,q\,\psi_0}\,\frac{\partial B}{\partial\theta}\,\frac{1}{B},
+  \\[4pt]
+  \dot\theta &= \frac{m\,v^2(1+\xi^2)}{2\,q\,\psi_0}\,\frac{\partial B}{\partial s}\,\frac{1}{B}
+               + \frac{\iota\,\xi\,v\,B}{G},
+  \\[4pt]
+  \dot\zeta &= \frac{\xi\,v\,B}{G},
+  \\[4pt]
+  \dot\xi &= -\frac{(\iota\,\partial_\theta B + \partial_\zeta B)\,v\,(1-\xi^2)}{2G}
+             \quad[\text{mirror force}],
+\end{align}
+where $\psi_0$ is the reference poloidal flux, $G(s)$ is the covariant toroidal
+field component, and $\iota(s)$ is the rotational transform.  The magnetic moment
+$\mu = v^2(1-\xi^2)/(2B)$ is reconstructed locally at each evaluation.
+
+With collisions the equations for $v$ and $\xi$ acquire deterministic drift terms
+(Section~\ref{sec:coefs}) and stochastic noise terms (Section~\ref{sec:milstein}).
+
+%-----------------------------------------------------------------------
+\section{Background Species and Profiles}
+%-----------------------------------------------------------------------
+
+Each background species $b$ is described by a \texttt{ThermalBackground} object
+specifying:
+\begin{itemize}
+  \item $n_b(s)$ --- number density [m$^{-3}$], callable of the flux label $s\in[0,1]$;
+  \item $T_b(s)$ --- temperature [J], callable (use \texttt{T\_keV $\times$ 1e3 $\times e$});
+  \item $m_b$ --- species mass [kg];
+  \item $q_b$ --- species charge [C] (signed).
+\end{itemize}
+
+Internally the profiles are pre-evaluated on a uniform $s$-grid of 512 points and
+linearly interpolated in C++.
+
+%-----------------------------------------------------------------------
+\section{Collision Coefficients}
+\label{sec:coefs}
+%-----------------------------------------------------------------------
+
+\subsection{Debye Length}
+
+The total Debye screening length from all background species is \cite{spitzer1962,nrl}
+\begin{equation}
+  \frac{1}{\lambdaD^2}
+  = \sum_b \frac{n_b\,q_b^2}{\eps\,T_b}.
+  \label{eq:debye}
+\end{equation}
+
+\subsection{Coulomb Logarithm}
+\label{sec:clog}
+
+The Coulomb logarithm is defined as the ratio of maximum to minimum impact parameters
+\cite{spitzer1962,nrl,ichimaru1973}:
+\begin{equation}
+  \lnL_{ab} = \ln\!\left(\frac{\lambdaD}{b_{\min}}\right),
+  \qquad b_{\min} = \max(b_{\mathrm{cl}},\, b_{\mathrm{qm}}).
+  \label{eq:lnL}
+\end{equation}
+The maximum impact parameter is the Debye length (Eq.~\eqref{eq:debye}).
+The minimum impact parameter is the larger of the classical 90$^\circ$-deflection
+distance and the quantum-mechanical de~Broglie wavelength of the reduced mass:
+\begin{align}
+  b_{\mathrm{cl}} &= \frac{|q_a\,q_b|}{4\pi\eps\,m_r\,\bar{v}^2},
+  \label{eq:bcl}
+  \\[4pt]
+  b_{\mathrm{qm}} &= \frac{\hbar}{2\,m_r\,\sqrt{\bar{v}^2}},
+  \label{eq:bqm}
+\end{align}
+where $m_r = m_a m_b/(m_a + m_b)$ is the reduced mass.
+
+The effective velocity scale $\bar{v}^2$ is taken as
+\begin{equation}
+  \bar{v}^2 = v^2 + \vth[b]^2, \qquad \vth[b] = \sqrt{2T_b/m_b},
+  \label{eq:vbar}
+\end{equation}
+following the ASCOT5 convention \cite{hirvijoki2014,ascot5code}.
+This interpolation covers two limits: fast EP against ions
+($v\gg\vth[b]$, so $\bar{v}\approx v$) and slow EP against electrons
+($v\ll\vth[e]$, so $\bar{v}\approx\vth[e]$).
+
+The quantum branch $b_{\mathrm{qm}} > b_{\mathrm{cl}}$ applies when
+\begin{equation}
+  \frac{2\pi\eps\,\hbar\,\sqrt{\bar{v}^2}}{|q_a\,q_b|} > 1,
+\end{equation}
+i.e.\ when the de~Broglie wavelength of the reduced mass particle exceeds the
+classical distance of closest approach.  For 3.52\,MeV $\alpha$-particles
+scattering off 10\,keV electrons one finds $b_{\mathrm{qm}} \approx 22\,b_{\mathrm{cl}}$,
+so the quantum branch is active throughout alpha slowing-down against electrons.
+A floor $\lnL \geq 2$ is applied.
+
+\subsection{Chandrasekhar G Function}
+
+The Chandrasekhar function \cite{chandrasekhar1943} is
+\begin{equation}
+  G(x) = \frac{\erf(x) - \dfrac{2x}{\sqrt{\pi}}\,e^{-x^2}}{2x^2},
+  \qquad x = v/\vth[b].
+\end{equation}
+Its derivative satisfies the recurrence
+\begin{equation}
+  G'(x) = \frac{2}{\sqrt{\pi}}\,e^{-x^2} - \frac{G(x)}{x}.
+\end{equation}
+For $x<10^{-4}$ the Taylor expansion
+$G(x)\approx \dfrac{2x}{3\sqrt{\pi}}\!\left(1-\dfrac{2x^2}{5}\right)$
+is used to avoid cancellation.  Key limiting behaviours:
+\begin{align*}
+  x\to 0:&\quad G\to 0,\quad G'\to 2/(3\sqrt{\pi})\approx 0.376; \\
+  x\to\infty:&\quad G\to 1/(2x^2),\quad G'\to 0.
+\end{align*}
+
+\subsection{Collision Frequency Prefactor}
+
+Define the Rosenbluth prefactor for species $b$ \cite{rosenbluth1957,trubnikov1965}:
+\begin{equation}
+  \Gamma_b = \frac{n_b\,q_a^2\,q_b^2\,\lnL_{ab}}
+                  {4\pi\eps^2\,m_a^2}.
+  \label{eq:Gamma}
+\end{equation}
+
+\subsection{Pitch-Angle Scattering Frequency}
+
+\begin{equation}
+  \nu_D^{(b)} = \frac{\Gamma_b\,[\erf(x) - G(x)]}{v^3}.
+  \label{eq:nuD}
+\end{equation}
+This corresponds to $2D_\perp/v^2$ in ASCOT5 notation \cite{hirvijoki2013,hirvijoki2014}.
+
+\subsection{Parallel Diffusion Coefficient}
+
+\begin{equation}
+  D_{\parallel}^{(b)} = \frac{\Gamma_b\,G(x)}{v},
+  \qquad
+  \frac{\partial D_{\parallel}^{(b)}}{\partial v}
+  = \frac{\Gamma_b}{v}\!\left(\frac{G'(x)}{\vth[b]} - \frac{G(x)}{v}\right).
+  \label{eq:Dpar}
+\end{equation}
+The $v$-derivative is required by the Milstein correction term
+(Section~\ref{sec:milstein}).
+
+\subsection{Deterministic Drag in $v$}
+
+The friction (drag) coefficient \cite{trubnikov1965,helander2002} is
+\begin{equation}
+  Q^{(b)} = -\!\left(1 + \frac{m_a}{m_b}\right)\frac{\Gamma_b\,G(x)}{v^2}.
+\end{equation}
+The total deterministic drift in speed, including the It\^o correction
+\cite{hirvijoki2013}, is
+\begin{equation}
+  K^{(b)}
+  = Q^{(b)}
+    + \frac{\partial D_{\parallel}^{(b)}}{\partial v}
+    + \frac{2\,D_{\parallel}^{(b)}}{v}.
+    \label{eq:K}
+\end{equation}
+The two extra terms arise from transforming the Fokker--Planck operator from
+Cartesian velocity space to the speed coordinate $v$.  In ASCOT5 notation,
+$K \equiv Q + D_\parallel' + 2D_\parallel/v$ \cite{hirvijoki2014}.
+
+\subsection{Summation over Species}
+
+All coefficients are additive over background species:
+\begin{equation}
+  \nu_D = \sum_b \nu_D^{(b)}, \quad
+  D_{\parallel} = \sum_b D_{\parallel}^{(b)}, \quad
+  K = \sum_b K^{(b)}.
+\end{equation}
+The Debye length used in Eq.~\eqref{eq:lnL} is computed from all species
+simultaneously (Eq.~\eqref{eq:debye}), prior to the per-species loop.
+
+%-----------------------------------------------------------------------
+\section{Stochastic Differential Equations}
+%-----------------------------------------------------------------------
+
+\subsection{Full SDE System}
+
+The complete SDE for the five-dimensional state $(s,\theta,\zeta,v,\xi)$ is
+\cite{hirvijoki2013}
+
+\begin{align}
+  \dd s      &= \dot s_{\mathrm{orb}}\,\dd t, \\
+  \dd\theta  &= \dot\theta_{\mathrm{orb}}\,\dd t, \\
+  \dd\zeta   &= \dot\zeta_{\mathrm{orb}}\,\dd t, \\
+  \dd v      &= K(v,s)\,\dd t
+               + \sqrt{2D_{\parallel}}\,\dd W_v, \label{eq:sde_v}\\
+  \dd\xi     &= \dot\xi_{\mathrm{mirror}}\,\dd t
+               - \xi\,\nu_D\,\dd t
+               + \sqrt{\nu_D(1-\xi^2)}\,\dd W_\xi, \label{eq:sde_xi}
+\end{align}
+where $\dd W_v$ and $\dd W_\xi$ are independent Wiener increments with
+$\mathbb{E}[\dd W^2]=\dd t$.
+Equations~\eqref{eq:sde_v}--\eqref{eq:sde_xi} correspond to
+Eqs.\ (32)--(33) of Hirvijoki et al.\ \cite{hirvijoki2013}, with the
+identification $D_\parallel \leftrightarrow D_k/2$ and $\nu_D \leftrightarrow 2D_\perp/v^2$
+in their notation.  The noise amplitude for $\xi$ ensures that the marginal
+distribution of $\xi$ converges to a uniform distribution on $[-1,1]$ in the
+isotropisation limit $\nu_D t\gg 1$.
+
+\subsection{Milstein Scheme}
+\label{sec:milstein}
+
+After each accepted Dormand--Prince (DP) step of physical size $h$, the stochastic
+increments $\Delta W_v\sim\mathcal{N}(0,h)$ and $\Delta W_\xi\sim\mathcal{N}(0,h)$
+are generated and applied via the Milstein method \cite{kloeden1992}:
+
+\begin{align}
+  v  &\leftarrow v
+     + g_v\,\Delta W_v
+     + \half\frac{\partial g_v}{\partial v}\bigl(\Delta W_v^2 - h\bigr),
+  \\[4pt]
+  \xi &\leftarrow \xi
+     + g_\xi\,\Delta W_\xi
+     + \half\frac{\partial g_\xi}{\partial \xi}\bigl(\Delta W_\xi^2 - h\bigr),
+\end{align}
+where the noise amplitudes and their derivatives are
+\begin{align}
+  g_v  &= \sqrt{2D_{\parallel}},
+  &\frac{\partial g_v}{\partial v} &= \frac{\partial D_{\parallel}/\partial v}{\sqrt{2D_{\parallel}}},
+  \\[4pt]
+  g_\xi &= \sqrt{\nu_D(1-\xi^2)},
+  &\frac{\partial g_\xi}{\partial \xi} &= \frac{-\xi\,\nu_D}{\sqrt{\nu_D(1-\xi^2)}}.
+\end{align}
+In terms of the coefficient structs, the Milstein correction for $\xi$ simplifies to
+\begin{equation}
+  \delta\xi_{\mathrm{Milstein}}
+  = -\half\,\xi\,\nu_D\,\bigl(\Delta W_\xi^2 - h\bigr).
+\end{equation}
+Physical bounds are enforced after each step: $v\geq 0$ and $\xi\in[-1,1]$.
+
+%-----------------------------------------------------------------------
+\section{Adaptive Integration Strategy}
+%-----------------------------------------------------------------------
+
+\subsection{Dormand--Prince Solver}
+
+The deterministic ODE part (all five components of the drift) is integrated
+with the classic 4(5)-order embedded Dormand--Prince (FSAL) method \cite{dormand1980}.
+Step-size control uses mixed absolute/relative tolerances:
+\begin{equation}
+  \mathrm{err}_i = \bigl|y_i^{(5)} - y_i^{(4)}\bigr|
+  \leq \delta_{\mathrm{abs}} + \delta_{\mathrm{rel}}\,|y_i|.
+\end{equation}
+Default tolerances: $\delta_{\mathrm{abs}}=\delta_{\mathrm{rel}}=10^{-9}$.
+
+\subsection{Minimum Step Size}
+
+The parameter \texttt{DP\_hmin} (default \texttt{0.0}) sets a lower bound on the
+physical step size $h$ in seconds.  A value of $10^{-10}$--$10^{-9}$\,s prevents the
+solver from stalling at bounce points while keeping steps small enough that the orbital
+dynamics remain accurate.
+
+\subsection{Operator Splitting}
+
+The SDE is solved via Lie--Trotter operator splitting:
+\begin{enumerate}
+  \item \textbf{Deterministic half:} advance $(s,\theta,\zeta,v,\xi)$ by one DP step
+        of physical time $h$ using the full drift
+        $(\dot s,\dot\theta,\dot\zeta,K,-\xi\nu_D+\dot\xi_{\mathrm{mirror}})$.
+  \item \textbf{Stochastic half:} apply Milstein noise to $(v,\xi)$ at the accepted
+        state, using $h$ as the diffusion window.
+\end{enumerate}
+The trajectory is saved \emph{before} the Milstein step at each
+$t_{\mathrm{save}}$ checkpoint, so saved states correspond to the deterministic
+prediction (consistent with the standard output convention).
+
+%-----------------------------------------------------------------------
+\section{Output Format}
+%-----------------------------------------------------------------------
+
+Each particle trace is a NumPy array of shape $(\text{ntimesteps},\,6)$ with columns
+\[
+  [t,\; s,\; \theta,\; \zeta,\; \vpar,\; v].
+\]
+From these the kinetic energy $E = \half m v^2$ and the magnetic moment
+$\mu = (v^2 - \vpar^2)/(2B)$ can be reconstructed at each saved point.
+When \texttt{forget\_exact\_path=True} only the first and last rows are retained.
+
+Each particle uses RNG seed $\texttt{rng\_seed} + i$, making multi-particle
+MPI runs fully reproducible.
+
+%-----------------------------------------------------------------------
+\section{Python Interface}
+%-----------------------------------------------------------------------
+
+\begin{verbatim}
+from firm3d.field.collisions import ThermalBackground, \
+    trace_particles_boozer_with_collisions
+from firm3d.util.constants import (
+    PROTON_MASS, ELECTRON_MASS, ELEMENTARY_CHARGE, ONE_EV,
+    ALPHA_PARTICLE_MASS, ALPHA_PARTICLE_CHARGE,
+    FUSION_ALPHA_PARTICLE_ENERGY,
+)
+
+# Typical DT-fusion plasma backgrounds
+n0 = 1e20          # m^-3
+deuterium = ThermalBackground(
+    n_profile=lambda s: n0 * (1 - s),
+    T_profile=lambda s: 10e3 * ONE_EV * (1 - s),
+    mass=2 * PROTON_MASS,
+    charge=ELEMENTARY_CHARGE,
+)
+tritium = ThermalBackground(
+    n_profile=lambda s: n0 * (1 - s),
+    T_profile=lambda s: 10e3 * ONE_EV * (1 - s),
+    mass=3 * PROTON_MASS,
+    charge=ELEMENTARY_CHARGE,
+)
+electrons = ThermalBackground(
+    n_profile=lambda s: 2 * n0 * (1 - s),   # quasi-neutral
+    T_profile=lambda s: 10e3 * ONE_EV * (1 - s),
+    mass=ELECTRON_MASS,
+    charge=-ELEMENTARY_CHARGE,
+)
+
+res_tys, res_hits = trace_particles_boozer_with_collisions(
+    field,
+    stz_inits,                              # (N, 3) array
+    parallel_speeds,                        # (N,) array, m/s
+    backgrounds=[deuterium, tritium, electrons],
+    tmax=1e-1,                              # 100 ms
+    mass=ALPHA_PARTICLE_MASS,
+    charge=ALPHA_PARTICLE_CHARGE,
+    Ekin=FUSION_ALPHA_PARTICLE_ENERGY,      # 3.52 MeV
+    tol=1e-9,
+    dt_save=1e-4,                           # save every 0.1 ms
+    DP_hmin=1e-10,                          # s
+    rng_seed=42,
+)
+\end{verbatim}
+
+%-----------------------------------------------------------------------
+\section{Validity and Limitations}
+%-----------------------------------------------------------------------
+
+\begin{itemize}
+  \item \textbf{Vacuum field:} electric fields, $E\times B$ drifts, and
+        electromagnetic perturbations are not included in the collision model
+        (though perturbations can be combined via the existing SAW tracing infrastructure).
+
+  \item \textbf{Maxwellian backgrounds:} the collision operator assumes each
+        background species has a local Maxwellian distribution function.  Distorted
+        distributions (e.g.\ beam-driven) are not supported.
+
+  \item \textbf{Test-particle limit:} the EP density is assumed negligibly small
+        compared to the background, so no back-reaction on the background is included.
+
+  \item \textbf{Guiding-centre approximation:} valid when the Larmor radius
+        $r_L = mv_\perp/(|q|B)$ is small compared to the scale lengths of $B$ and the
+        density/temperature profiles.  For 3.52\,MeV $\alpha$-particles in a
+        $5$\,T stellarator $r_L\sim 5$\,cm, comparable to device scale, so
+        finite-Larmor-radius corrections may be non-negligible.
+
+  \item \textbf{Zeroth-order GC collision operator:} the implementation follows
+        Hirvijoki et al.\ \cite{hirvijoki2013} at zeroth order in $\rho_*/L$
+        (Larmor radius over gradient length).  The spatial diffusion term
+        $D_X \propto D_\perp/\Omega_g^2$ present in the full operator
+        \cite{hirvijoki2014} is neglected.
+
+  \item \textbf{Slow tests: \texttt{@pytest.mark.slow}} --- five physics-validation
+        tests require $N\sim 20$ particles integrated for $5$--$100\,\mu$s and are
+        intended for HPC resources (Perlmutter or similar).
+\end{itemize}
+
+%-----------------------------------------------------------------------
+\begin{thebibliography}{99}
+%-----------------------------------------------------------------------
+
+\bibitem{hirvijoki2013}
+E.~Hirvijoki, A.~Brizard, A.~Snicker, and T.~Kurki-Suonio,
+``Monte Carlo implementation of a guiding-center Fokker-Planck kinetic
+equation,''
+\textit{Phys.\ Plasmas} \textbf{20}, 092505 (2013).
+\texttt{doi:10.1063/1.4820951}
+
+\bibitem{hirvijoki2014}
+E.~Hirvijoki et al.,
+``ASCOT: Solving the kinetic equation of minority particle species in
+tokamak plasmas,''
+\textit{Comput.\ Phys.\ Commun.}\ \textbf{185}, 1310 (2014).
+\texttt{doi:10.1016/j.cpc.2013.10.019}
+
+\bibitem{ascot5code}
+ASCOT5 source code, \texttt{src/simulate/mccc/mccc\_coefs.h},
+\url{https://github.com/ascot4fusion/ascot5}.
+
+\bibitem{boozer1981}
+A.~H.~Boozer and G.~Kuo-Petravic,
+``Monte Carlo evaluation of transport coefficients,''
+\textit{Phys.\ Fluids} \textbf{24}, 851 (1981).
+\texttt{doi:10.1063/1.863445}
+
+\bibitem{spitzer1962}
+L.~Spitzer,
+\textit{Physics of Fully Ionized Gases}, 2nd ed.\
+(Interscience, New York, 1962), Chapter~5.
+
+\bibitem{nrl}
+J.~D.~Huba,
+\textit{NRL Plasma Formulary}
+(Naval Research Laboratory, Washington DC, 2019).
+Available at \url{https://www.nrl.navy.mil/ppd/content/nrl-plasma-formulary}
+
+\bibitem{ichimaru1973}
+S.~Ichimaru,
+\textit{Basic Principles of Plasma Physics: A Statistical Approach}
+(Benjamin, Reading MA, 1973).
+
+\bibitem{chandrasekhar1943}
+S.~Chandrasekhar,
+``Dynamical friction I: General considerations,''
+\textit{Astrophys.\ J.} \textbf{97}, 255 (1943).
+\texttt{doi:10.1086/144517}
+
+\bibitem{rosenbluth1957}
+M.~N.~Rosenbluth, W.~M.~MacDonald, and D.~L.~Judd,
+``Fokker-Planck equation for an inverse-square force,''
+\textit{Phys.\ Rev.} \textbf{107}, 1 (1957).
+\texttt{doi:10.1103/PhysRev.107.1}
+
+\bibitem{trubnikov1965}
+B.~A.~Trubnikov,
+``Particle interactions in a fully ionized plasma,''
+in \textit{Reviews of Plasma Physics}, Vol.~1,
+M.~A.~Leontovich, ed.\ (Consultants Bureau, New York, 1965), p.~105.
+
+\bibitem{helander2002}
+P.~Helander and D.~J.~Sigmar,
+\textit{Collisional Transport in Magnetized Plasmas}
+(Cambridge University Press, Cambridge, 2002), Chapter~3.
+
+\bibitem{kloeden1992}
+P.~E.~Kloeden and E.~Platen,
+\textit{Numerical Solution of Stochastic Differential Equations}
+(Springer, Berlin, 1992).
+
+\bibitem{dormand1980}
+J.~R.~Dormand and P.~J.~Prince,
+``A family of embedded Runge-Kutta formulae,''
+\textit{J.\ Comput.\ Appl.\ Math.} \textbf{6}, 19 (1980).
+\texttt{doi:10.1016/0771-050X(80)90013-3}
+
+\end{thebibliography}
+
+\end{document}
