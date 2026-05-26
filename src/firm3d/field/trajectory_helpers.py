@@ -3,6 +3,7 @@ from warnings import warn
 
 import numpy as np
 from scipy import integrate
+from scipy.stats import binned_statistic_2d
 
 from .._core.util import parallel_loop_bounds
 from ..field.boozermagneticfield import (
@@ -782,6 +783,8 @@ class TrappedPoincare:
     def __init__(
         self,
         field,
+        helicity_M,
+        helicity_N,
         mass,
         charge,
         Ekin,
@@ -796,8 +799,6 @@ class TrappedPoincare:
         Nmaps=500,
         comm=None,
         tmax=1e-2,
-        helicity_N=None,
-        helicity_M=None,
         helicity_Mp=None,
         helicity_Np=None,
         chaos_detection=False,
@@ -1417,7 +1418,6 @@ class TrappedPoincare:
 
         return omega_eta_prof, omega_b_prof, s_prof
 
-
 def compute_peta(
     field_or_saw,
     points,
@@ -1483,7 +1483,7 @@ def compute_peta(
         field = field_or_saw
         alpha = 0.0
         if points.shape[1] == 4:
-            np.ascontiguousarray(points[:, :3], dtype=np.float64)
+            points = points[:, :3]
         field.set_points(points)
 
     modB = field.modB()[:, 0]
@@ -1492,7 +1492,7 @@ def compute_peta(
     psi = field.psi0 * points[:, 0]
     psip = field.psip()[:, 0]
 
-    if helicity_Mp is None or helicity_Np is None:
+    if helicity_Mp is None and helicity_Np is None:
         # If modB contours close poloidally, then use theta as mapping coordinate
         if helicity_M == 0:
             helicity_Mp = 1
@@ -1516,7 +1516,6 @@ def compute_peta(
         / denom
     )
     return peta
-
 
 def compute_Eprime(
     saw, points, vpar, mu, mass, charge, helicity_M, helicity_N, nprime=None
@@ -4058,10 +4057,7 @@ class MapPhaseSpace:
 
             final_times.append(final_time)
 
-            if self.Eprime_slice:
-                pitch_val = float(start_state[6]) / self.Eprime
-            else:
-                pitch_val = float(start_state[6]) / self.Ekin
+            pitch_val = float(start_state[6]) / self.Ekin
             pitch_val *= self.sign
             pitch.append(pitch_val)
 
@@ -4164,8 +4160,8 @@ class MapPhaseSpace:
         """
         resolution = 500
         points = initialize_position_uniform_surf(self.B0, resolution, surface)
-        points = np.column_stack((points, np.zeros(points.shape[0])))  # add time column
-        self.saw.set_points(points)
+        points_phase = np.column_stack((points, np.zeros(points.shape[0])))  # add time column
+        self.saw.set_points(points_phase)
         modB = self.saw.B0.modB()[:, 0]
         Phi = self.saw.Phi()[:, 0]
 
@@ -4178,10 +4174,11 @@ class MapPhaseSpace:
         )
 
         mask = ~np.isnan(vp_temp)
-        vp_temp = vp_temp[mask]
         points = points[mask]
+        points_phase = points_phase[mask]
         modB = modB[mask]
         Phi = Phi[mask]
+        vp_temp = vp_temp[mask]
 
         E = 0.5 * self.mass * vp_temp**2 + mu * modB + self.charge * Phi
 
@@ -4192,6 +4189,7 @@ class MapPhaseSpace:
         else:
             if points.shape[0] == 0:
                 return [], []
+            
             peta = compute_peta(
                     self.B0,
                     points,
@@ -4203,7 +4201,11 @@ class MapPhaseSpace:
                     self.helicity_Mp,
                     self.helicity_Np,
                 )
-
+            if np.isnan(peta).any():
+                print(f"Warning: NaN values encountered in p_eta calculation at s={surface} PA = {mu/self.Eprime}", flush=True)
+            if np.isinf(peta).any():
+                print(f"Warning: Inf values encountered in p_eta calculation at s={surface} PA = {mu/self.Eprime}", flush=True)
+            
             return output, peta.tolist()
 
     def trapped_passing_function(self, s, mu):
@@ -4264,7 +4266,7 @@ class MapPhaseSpace:
         )
         return peta
 
-    def return_peta_trapped_contoured_boundary(self, binned_statistic_2d):
+    def return_peta_trapped_contoured_boundary(self):
         r"""
         Estimate the trapped-passing boundary in the (pitch, p_eta) plane by
         sampling many points on flux surfaces, binning the trapped/passing
@@ -4293,10 +4295,7 @@ class MapPhaseSpace:
             for mu_val in mu_vals:
                 trapped, radial_like = self.surface_trapped_func_Eprime(mu_val, s_val)
 
-                if self.Eprime_slice:
-                    pitch_val = mu_val / self.Eprime
-                else:
-                    pitch_val = mu_val / self.Ekin
+                pitch_val = mu_val / self.Ekin
                 pitch_val *= self.sign
 
                 if self.plot_s:
@@ -4310,10 +4309,17 @@ class MapPhaseSpace:
                 pitch_lst = [pitch_val] * len(radial_like)
                 volume_boundary_pitch += pitch_lst
 
+        volume_boundary_pitch = np.array(volume_boundary_pitch)
+        volume_boundary_radlike = np.array(volume_boundary_radlike)
+        volume_trapped = np.array(volume_trapped)
+
+        if np.isnan(volume_trapped).any():
+            print(f"volume trapped nan", flush=True)
+
         trapped_vals, pitch_edges, radlike_edges, binnumber = binned_statistic_2d(
-            np.array(volume_boundary_pitch),
-            np.array(volume_boundary_radlike),
-            np.array(volume_trapped),
+            volume_boundary_pitch,
+            volume_boundary_radlike,
+            volume_trapped,
             statistic="max",
             bins=[pa_space, radial_space],
         )
@@ -4328,7 +4334,7 @@ class MapPhaseSpace:
             col = T[:, j]
             if not col.any() or col.all():
                 continue
-            i = int(np.argmax(col > 0.5))
+            i = int(np.argmax(col < 0.5))
             pitch_b = pitch_c[i] if i == 0 else 0.5 * (pitch_c[i - 1] + pitch_c[i])
 
             boundary_pitch.append(pitch_b)
@@ -4338,27 +4344,14 @@ class MapPhaseSpace:
         boundary_radlike = np.array(boundary_radlike)
 
         order = np.argsort(boundary_pitch)
-        boundary_pitch, boundary_radlike = (
-            boundary_pitch[order],
-            boundary_radlike[order],
-        )
-
-        print("nonzero columns:", np.count_nonzero([T[:, j].any() and not T[:, j].all()
-                                            for j in range(T.shape[1])]))
-        print("unique pitch bins hit:", np.count_nonzero(T.sum(axis=1)))
-        print("unique boundary_pitch:", np.unique(boundary_pitch))
-        print("boundary_pitch len:", len(boundary_pitch))
-        print("argmax indices:", [int(np.argmax(T[:, j] > 0.5))
-                                for j in range(T.shape[1])
-                                if T[:, j].any() and not T[:, j].all()])
+        boundary_pitch = boundary_pitch[order]
+        boundary_radlike = boundary_radlike[order]
 
         coeffs = np.polyfit(boundary_pitch, boundary_radlike, 2)
         poly = np.poly1d(coeffs)
 
         pitch_fit = np.linspace(boundary_pitch.min(), boundary_pitch.max(), 300)
         radlike_fit = poly(pitch_fit)
-
-        print(f"{pitch_fit=} \n {radlike_fit=}", flush=True)
 
         return poly, pitch_fit, radlike_fit
 
@@ -4383,19 +4376,13 @@ class MapPhaseSpace:
             for mu in mu_scope:
                 if self.trapped_passing_function(s, mu) == 1:
                     s_tp.append(s)
-                    if self.Eprime_slice:
-                        pa_tp.append(mu * self.sign / self.Eprime)
-                    else:
-                        pa_tp.append(mu * self.sign * self.min_volmodB / self.Ekin)
+                    pa_tp.append(mu * self.sign * self.min_volmodB / self.Ekin)
                     break
 
         if not self.plot_s:
             peta_tp = []
             for s, p_a in zip(s_tp, pa_tp):
-                if self.Eprime_slice:
-                    mu = np.abs(p_a * self.Eprime)
-                else:
-                    mu = np.abs(p_a * self.Ekin / self.min_volmodB)
+                mu = np.abs(p_a * self.Ekin / self.min_volmodB)
                 peta_tp.append(self.s_peta_map(s, mu, self.sign)[0])
             s_tp = peta_tp
 
@@ -4443,7 +4430,6 @@ class MapPhaseSpace:
         """
         import matplotlib as mpl
         import matplotlib.pyplot as plt
-        from scipy.stats import binned_statistic_2d
 
         if self.verbose:
             print("plotting...", flush=True)
@@ -4465,10 +4451,7 @@ class MapPhaseSpace:
 
         norm = mpl.colors.Normalize(vmin=0, vmax=DA_max)
 
-        if not self.Eprime_slice:
-            plotting_pitch_normalized = np.array(self.pitch) * self.min_volmodB
-        else:
-            plotting_pitch_normalized = np.array(self.pitch)
+        plotting_pitch_normalized = np.array(self.pitch) * self.min_volmodB
 
         DA_stats, x_edges, y_edges, binnumber = binned_statistic_2d(
             plotting_pitch_normalized,
@@ -4483,9 +4466,8 @@ class MapPhaseSpace:
             Y *= -1
         im2 = ax.pcolormesh(X, Y, DA_stats.T, shading="auto", cmap=cmap, norm=norm)
 
-        poly, pa_fit, rad_fit = self.return_peta_trapped_contoured_boundary(
-            binned_statistic_2d
-        )
+        #poly, pa_fit, rad_fit = self.return_flux_trapped_boundary()
+        poly, pa_fit, rad_fit = self.return_peta_trapped_contoured_boundary()
         self.trapped_boundary_fit = poly
         ax.plot(
             pa_fit,
@@ -4510,6 +4492,7 @@ class MapPhaseSpace:
             Xc, Yc = np.meshgrid(x_centers, y_centers)
             xf = Xc.ravel()
             yf = Yc.ravel()
+            lost_frac = np.nan_to_num(lost_frac, nan=0.0).astype(int)
             af = lost_frac.T.ravel()
             if negate_peta:
                 yf = yf * -1
@@ -4524,12 +4507,7 @@ class MapPhaseSpace:
                 linewidths=1,
                 zorder=10,
             )
-        if self.Eprime_slice:
-            ax.set_xlabel(
-                r"$\lambda^\prime = \frac{\mu}{E^\prime} \text{sign}(v_{\|})$"
-            )
-        else:
-            ax.set_xlabel(r"$\lambda = \frac{\mu}{E} \text{sign}(v_{\|})$")
+        ax.set_xlabel(r"$\lambda = \frac{\mu}{E} \text{sign}(v_{\|})$")
 
         if self.plot_s:
             ax.set_ylabel(r"$s$")

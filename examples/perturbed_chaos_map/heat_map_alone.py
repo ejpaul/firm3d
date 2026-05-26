@@ -387,6 +387,10 @@ if verbose:
                 diff = trapped_passing_fit - resonance_peta
                 sign_changes = np.where(np.sign(diff[:-1]) != np.sign(diff[1:]))[0]
 
+                print(f"Resonant line: {resonance_pitch=}")
+                print(f"Resonant line: {resonance_peta=}")
+
+
                 (line,) = ax_right.plot(
                     resonance_pitch[: sign_changes[0]],
                     resonance_peta[: sign_changes[0]],
