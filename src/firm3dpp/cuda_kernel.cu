@@ -42,6 +42,18 @@ __host__ __device__ constexpr CoordSys map_rhs_to_coord(){
     }
 }
 
+template<RHS id>
+__host__ __device__ constexpr int map_rhs_to_n_interpolants(){
+    if constexpr(id == RHS::GC_CartesianVacuum){
+        return 7;
+    } else if constexpr(id == RHS::GC_BoozerVacuum){
+        return 6;
+    } else if constexpr(id == RHS::GC_Boozer){
+        return 12;
+    } else if constexpr(id == RHS::GC_BoozerVacuumSAW || id == RHS::GC_BoozerNoKSAW){
+        return 10; 
+    }
+}
 
 // this is a helper function to convert python arrays to C++ arrays
 template <typename T>
@@ -154,432 +166,412 @@ template <typename T, int n> __device__ void interpolate(double*  out, const T* 
     }
 }
 
-// calc_derivs computes the derivatives at points for which the corresponding
-// i,j,k indices and shape functions have been precomputed
-// the results are stored in the appropriate region of derivs
-// nparticles_blk stores the number of actual particles in the block
-//
-// this function is templated across rhs options
-template<RHS id, typename... Args>  
-__device__ void calc_derivs(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
-                                    int* index_i, int* index_j, int* index_k, double* x1_shape, double* x2_shape, double* x3_shape,
-                                    double* mu, int nparticles_blk, Args... args){
-    printf("default calc_derivs not implemented\n");
-};
-
 
 // calc_derivs implementation for guiding center cartesian vacuum tracing
-template <> 
-__device__ void calc_derivs<RHS::GC_CartesianVacuum>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
-                                    int* index_i, int* index_j, int* index_k, double* x1_shape, double* x2_shape, double* x3_shape,
-                                    double* mu, int nparticles_blk){
+template <typename T>
+__device__ void rhs_GC_CartesianVacuum(T* derivs, int deriv_id, T* x_temp, T* block_interpolants, bool* symmetry_exploited, T* mu){
 
-    __shared__ double block_interpolants[7*PARTICLES_PER_BLOCK];
+    T x = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
+    T y = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
+    T z = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
+    T v_par = x_temp[4*PARTICLES_PER_BLOCK + threadIdx.x];
 
-    __syncthreads();
-    interpolate<double, 7>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
-    __syncthreads();
+    T B_r = block_interpolants[0*PARTICLES_PER_BLOCK + threadIdx.x];
+    T B_phi = block_interpolants[1*PARTICLES_PER_BLOCK + threadIdx.x];
+    T B_z = block_interpolants[2*PARTICLES_PER_BLOCK + threadIdx.x];
+    T GradAbsB_r = block_interpolants[3*PARTICLES_PER_BLOCK + threadIdx.x];
+    T GradAbsB_phi = block_interpolants[4*PARTICLES_PER_BLOCK + threadIdx.x];
+    T GradAbsB_z = block_interpolants[5*PARTICLES_PER_BLOCK + threadIdx.x];
 
-    if(threadIdx.x < nparticles_blk){
-        double x = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
-        double y = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
-        double z = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
-        double v_par = x_temp[4*PARTICLES_PER_BLOCK + threadIdx.x];
-
-        double B_r = block_interpolants[0*PARTICLES_PER_BLOCK + threadIdx.x];
-        double B_phi = block_interpolants[1*PARTICLES_PER_BLOCK + threadIdx.x];
-        double B_z = block_interpolants[2*PARTICLES_PER_BLOCK + threadIdx.x];
-        double GradAbsB_r = block_interpolants[3*PARTICLES_PER_BLOCK + threadIdx.x];
-        double GradAbsB_phi = block_interpolants[4*PARTICLES_PER_BLOCK + threadIdx.x];
-        double GradAbsB_z = block_interpolants[5*PARTICLES_PER_BLOCK + threadIdx.x];
-
-        if(symmetry_exploited[threadIdx.x]){
-            B_r *= -1.0;
-            GradAbsB_phi *= -1.0;
-            GradAbsB_z *= -1.0;
-        }
-
-        double phi = atan2(y, x);
-        double B_x = cos(phi) * B_r - sin(phi) * B_phi;
-        double B_y = sin(phi) * B_r + cos(phi) * B_phi;
-        double GradAbsB_x = cos(phi) * GradAbsB_r - sin(phi) * GradAbsB_phi;
-        double GradAbsB_y = sin(phi) * GradAbsB_r + cos(phi) * GradAbsB_phi;
-
-        double AbsB = sqrt(B_x*B_x + B_y*B_y + B_z*B_z);
-        double v_perp2 = 2*mu[threadIdx.x]*AbsB;
-        double fak1 = (v_par/AbsB);
-        double fak2 = (mass_d/(charge_d*pow(AbsB, 3)))*(0.5*v_perp2 + v_par*v_par);
-
-        double BcrossGradAbsB_elt = B_y*GradAbsB_z - B_z*GradAbsB_y;
-        derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x] = fak1*B_x + fak2*BcrossGradAbsB_elt;
-        BcrossGradAbsB_elt = B_z*GradAbsB_x - B_x*GradAbsB_z;
-        derivs[(6*deriv_id + 1)*PARTICLES_PER_BLOCK + threadIdx.x] = fak1*B_y + fak2*BcrossGradAbsB_elt;
-        BcrossGradAbsB_elt = B_x*GradAbsB_y - B_y*GradAbsB_x;
-        derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x] = fak1*B_z + fak2*BcrossGradAbsB_elt;
-        derivs[(6*deriv_id + 3)*PARTICLES_PER_BLOCK + threadIdx.x] = -mu[threadIdx.x]*(B_x*GradAbsB_x + B_y*GradAbsB_y + B_z*GradAbsB_z)/AbsB;
-        derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = AbsB; // AbsB
-        derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = block_interpolants[6*PARTICLES_PER_BLOCK + threadIdx.x]; // boundary dist fn
+    if(symmetry_exploited[threadIdx.x]){
+        B_r *= -1.0;
+        GradAbsB_phi *= -1.0;
+        GradAbsB_z *= -1.0;
     }
+
+    T phi = atan2(y, x);
+    T B_x = cos(phi) * B_r - sin(phi) * B_phi;
+    T B_y = sin(phi) * B_r + cos(phi) * B_phi;
+    T GradAbsB_x = cos(phi) * GradAbsB_r - sin(phi) * GradAbsB_phi;
+    T GradAbsB_y = sin(phi) * GradAbsB_r + cos(phi) * GradAbsB_phi;
+
+    T AbsB = sqrt(B_x*B_x + B_y*B_y + B_z*B_z);
+    T v_perp2 = 2*mu[threadIdx.x]*AbsB;
+    T fak1 = (v_par/AbsB);
+    T fak2 = (mass_d/(charge_d*pow(AbsB, 3)))*(0.5*v_perp2 + v_par*v_par);
+
+    T BcrossGradAbsB_elt = B_y*GradAbsB_z - B_z*GradAbsB_y;
+    derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x] = fak1*B_x + fak2*BcrossGradAbsB_elt;
+    BcrossGradAbsB_elt = B_z*GradAbsB_x - B_x*GradAbsB_z;
+    derivs[(6*deriv_id + 1)*PARTICLES_PER_BLOCK + threadIdx.x] = fak1*B_y + fak2*BcrossGradAbsB_elt;
+    BcrossGradAbsB_elt = B_x*GradAbsB_y - B_y*GradAbsB_x;
+    derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x] = fak1*B_z + fak2*BcrossGradAbsB_elt;
+    derivs[(6*deriv_id + 3)*PARTICLES_PER_BLOCK + threadIdx.x] = -mu[threadIdx.x]*(B_x*GradAbsB_x + B_y*GradAbsB_y + B_z*GradAbsB_z)/AbsB;
+    derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = AbsB; // AbsB
+    derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = block_interpolants[6*PARTICLES_PER_BLOCK + threadIdx.x]; // boundary dist fn
+
 }
 
 
 // calc_derivs implementation for guiding center boozer vacuum tracing
-template <> 
-__device__ void calc_derivs<RHS::GC_BoozerVacuum>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
-                                    int* index_i, int* index_j, int* index_k, double* x1_shape, double* x2_shape, double* x3_shape,
-                                    double* mu, int nparticles_blk){
-   __shared__ double block_interpolants[6*PARTICLES_PER_BLOCK];
-    __syncthreads();
-    interpolate<double,6>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
+template <typename T> 
+__device__ void rhs_GC_BoozerVacuum(T* derivs, int deriv_id, T* x_temp, T* block_interpolants, bool* symmetry_exploited, T* mu){
+
+    T x1 = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
+    T x2 = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
+
+    T s = sqrt(x1*x1 + x2*x2);
+    T theta = atan2(x2, x1);
+    T zeta = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
+    T v_par = x_temp[4*PARTICLES_PER_BLOCK + threadIdx.x];
 
 
-    __syncthreads();   
-    
-    if(threadIdx.x < nparticles_blk){
-        double x1 = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
-        double x2 = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
+    T modB = block_interpolants[0*PARTICLES_PER_BLOCK + threadIdx.x];
+    T dmodBds = block_interpolants[1*PARTICLES_PER_BLOCK + threadIdx.x];
+    T dmodBdtheta = block_interpolants[2*PARTICLES_PER_BLOCK + threadIdx.x];
+    T dmodBdzeta = block_interpolants[3*PARTICLES_PER_BLOCK + threadIdx.x];
+    T G = block_interpolants[4*PARTICLES_PER_BLOCK + threadIdx.x];
+    T iota = block_interpolants[5*PARTICLES_PER_BLOCK + threadIdx.x];
 
-        double s = sqrt(x1*x1 + x2*x2);
-        double theta = atan2(x2, x1);
-        double zeta = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
-        double v_par = x_temp[4*PARTICLES_PER_BLOCK + threadIdx.x];
+    T mu_val = mu[threadIdx.x];
 
-
-        double modB = block_interpolants[0*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dmodBds = block_interpolants[1*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dmodBdtheta = block_interpolants[2*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dmodBdzeta = block_interpolants[3*PARTICLES_PER_BLOCK + threadIdx.x];
-        double G = block_interpolants[4*PARTICLES_PER_BLOCK + threadIdx.x];
-        double iota = block_interpolants[5*PARTICLES_PER_BLOCK + threadIdx.x];
-
-        double mu_val = mu[threadIdx.x];
-
-        if(symmetry_exploited[threadIdx.x]){
-            dmodBdtheta *= -1.0;
-            dmodBdzeta *= -1.0;
-        }
-
-        double fak1 = mass_d*v_par*v_par/modB + mass_d*mu_val;
-        double sdot = -dmodBdtheta*fak1 / (charge_d*psi0_d);
-        double tdot = dmodBds*fak1 / (charge_d*psi0_d) + iota*v_par*modB / G;
-
-        derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*cos(theta) - s*sin(theta)*tdot;
-        derivs[(6*deriv_id + 1)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*sin(theta) + s*cos(theta)*tdot;
-        derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x] = v_par*modB/G;
-        derivs[(6*deriv_id + 3)*PARTICLES_PER_BLOCK + threadIdx.x] = -(iota*dmodBdtheta + dmodBdzeta)*mu_val*modB / G;
-        derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = modB; // modB for setting mu
-        derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = G;
-        // derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = // no boundary dist fn
+    if(symmetry_exploited[threadIdx.x]){
+        dmodBdtheta *= -1.0;
+        dmodBdzeta *= -1.0;
     }
+
+    T fak1 = mass_d*v_par*v_par/modB + mass_d*mu_val;
+    T sdot = -dmodBdtheta*fak1 / (charge_d*psi0_d);
+    T tdot = dmodBds*fak1 / (charge_d*psi0_d) + iota*v_par*modB / G;
+
+    derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*cos(theta) - s*sin(theta)*tdot;
+    derivs[(6*deriv_id + 1)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*sin(theta) + s*cos(theta)*tdot;
+    derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x] = v_par*modB/G;
+    derivs[(6*deriv_id + 3)*PARTICLES_PER_BLOCK + threadIdx.x] = -(iota*dmodBdtheta + dmodBdzeta)*mu_val*modB / G;
+    derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = modB; // modB for setting mu
+    derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = G;
+    // derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = // no boundary dist fn
+    
 }
 
 
 // calc_derivs implementation for general guiding center Boozer tracing (with K != 0)
 // The equations in this function match those for the CPU tracing at
 // tracing.cpp::GuidingCenterBoozerRHS
-template <> 
-__device__ void calc_derivs<RHS::GC_Boozer>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
-                                    int* index_i, int* index_j, int* index_k, double* x1_shape, double* x2_shape, double* x3_shape,
-                                    double* mu, int nparticles_blk){
+template<typename T>
+__device__ void rhs_GC_Boozer(T* derivs, int deriv_id, T* x_temp, T* block_interpolants, bool* symmetry_exploited, T* mu){
 
-   __shared__ double block_interpolants[12*PARTICLES_PER_BLOCK];
+    T x1 = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
+    T x2 = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
 
-    __syncthreads();
-    interpolate<double,12>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
-    __syncthreads();
+    T s = sqrt(x1*x1 + x2*x2);
+    T theta = atan2(x2, x1);
+    T zeta = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
+    T v_par = x_temp[4*PARTICLES_PER_BLOCK + threadIdx.x];
 
-    if(threadIdx.x < nparticles_blk){
-        double x1 = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
-        double x2 = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
+    T modB = block_interpolants[0*PARTICLES_PER_BLOCK + threadIdx.x];
+    T dmodBdpsi = block_interpolants[1*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
+    T dmodBdtheta = block_interpolants[2*PARTICLES_PER_BLOCK + threadIdx.x];
+    T dmodBdzeta = block_interpolants[3*PARTICLES_PER_BLOCK + threadIdx.x];
+    T G = block_interpolants[4*PARTICLES_PER_BLOCK + threadIdx.x];
+    T dGdpsi = block_interpolants[5*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
+    T I = block_interpolants[6*PARTICLES_PER_BLOCK + threadIdx.x];
+    T dIdpsi = block_interpolants[7*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
+    T iota = block_interpolants[8*PARTICLES_PER_BLOCK + threadIdx.x];
+    T K = block_interpolants[9*PARTICLES_PER_BLOCK + threadIdx.x];
+    T dKdtheta = block_interpolants[10*PARTICLES_PER_BLOCK + threadIdx.x];
+    T dKdzeta = block_interpolants[11*PARTICLES_PER_BLOCK + threadIdx.x];
 
-        double s = sqrt(x1*x1 + x2*x2);
-        double theta = atan2(x2, x1);
-        double zeta = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
-        double v_par = x_temp[4*PARTICLES_PER_BLOCK + threadIdx.x];
+    T mu_val = mu[threadIdx.x];
 
-        double modB = block_interpolants[0*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dmodBdpsi = block_interpolants[1*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
-        double dmodBdtheta = block_interpolants[2*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dmodBdzeta = block_interpolants[3*PARTICLES_PER_BLOCK + threadIdx.x];
-        double G = block_interpolants[4*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dGdpsi = block_interpolants[5*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
-        double I = block_interpolants[6*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dIdpsi = block_interpolants[7*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
-        double iota = block_interpolants[8*PARTICLES_PER_BLOCK + threadIdx.x];
-        double K = block_interpolants[9*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dKdtheta = block_interpolants[10*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dKdzeta = block_interpolants[11*PARTICLES_PER_BLOCK + threadIdx.x];
-
-        double mu_val = mu[threadIdx.x];
-
-        if(symmetry_exploited[threadIdx.x]){
-            dmodBdtheta *= -1.0;
-            dmodBdzeta *= -1.0;
-            K *= -1.0;
-        }
-
-        // General guiding center equations (mode='gc')
-        // C = - m v|| K,zeta /|B| - q iota + m v|| G' / |B|
-        // F = - m v|| K,theta /|B| + q + m v|| I' / |B|
-        // D = (F G - C I) / iota
-        
-        double C = -mass_d * v_par * dKdzeta / modB - charge_d * iota + mass_d * v_par * dGdpsi / modB;
-        double F = -mass_d * v_par * dKdtheta / modB + charge_d + mass_d * v_par * dIdpsi / modB;
-        double D = (F * G - C * I) / iota;
-
-        double fak1 = mass_d * v_par * v_par / modB + mass_d * mu_val;
-        
-        // sdot = (I |B|,zeta - G |B|,theta) m (v||^2/|B| + mu) / (iota D psi0)
-        double sdot = (I * dmodBdzeta - G * dmodBdtheta) * fak1 / (iota * D * psi0_d);
-        
-        // tdot = ((G |B|,psi - K |B|,zeta) m (v||^2/|B| + mu) - C v|| |B|) / (iota D)
-        double tdot = ((G * dmodBdpsi - K * dmodBdzeta) * fak1 - C * v_par * modB) / (iota * D);
-        
-        // zetadot = (F v|| |B| - (|B|,psi I - |B|,theta K) m (v||^2/|B| + mu)) / (iota D)
-        double zetadot = (F * v_par * modB - (dmodBdpsi * I - dmodBdtheta * K) * fak1) / (iota * D);
-        
-        // v||dot = (C |B|,theta - F |B|,zeta) mu |B| / (iota D)
-        double vpardot = (C * dmodBdtheta - F * dmodBdzeta) * mu_val * modB / (iota * D);
-
-        derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*cos(theta) - s*sin(theta)*tdot;
-        derivs[(6*deriv_id + 1)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*sin(theta) + s*cos(theta)*tdot;
-        derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x] = zetadot;
-        derivs[(6*deriv_id + 3)*PARTICLES_PER_BLOCK + threadIdx.x] = vpardot;
-        derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = modB; // modB for setting mu
-        derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = G;
+    if(symmetry_exploited[threadIdx.x]){
+        dmodBdtheta *= -1.0;
+        dmodBdzeta *= -1.0;
+        K *= -1.0;
     }
 
+    // General guiding center equations (mode='gc')
+    // C = - m v|| K,zeta /|B| - q iota + m v|| G' / |B|
+    // F = - m v|| K,theta /|B| + q + m v|| I' / |B|
+    // D = (F G - C I) / iota
+    
+    T C = -mass_d * v_par * dKdzeta / modB - charge_d * iota + mass_d * v_par * dGdpsi / modB;
+    T F = -mass_d * v_par * dKdtheta / modB + charge_d + mass_d * v_par * dIdpsi / modB;
+    T D = (F * G - C * I) / iota;
+
+    T fak1 = mass_d * v_par * v_par / modB + mass_d * mu_val;
+    
+    // sdot = (I |B|,zeta - G |B|,theta) m (v||^2/|B| + mu) / (iota D psi0)
+    T sdot = (I * dmodBdzeta - G * dmodBdtheta) * fak1 / (iota * D * psi0_d);
+    
+    // tdot = ((G |B|,psi - K |B|,zeta) m (v||^2/|B| + mu) - C v|| |B|) / (iota D)
+    T tdot = ((G * dmodBdpsi - K * dmodBdzeta) * fak1 - C * v_par * modB) / (iota * D);
+    
+    // zetadot = (F v|| |B| - (|B|,psi I - |B|,theta K) m (v||^2/|B| + mu)) / (iota D)
+    T zetadot = (F * v_par * modB - (dmodBdpsi * I - dmodBdtheta * K) * fak1) / (iota * D);
+    
+    // v||dot = (C |B|,theta - F |B|,zeta) mu |B| / (iota D)
+    T vpardot = (C * dmodBdtheta - F * dmodBdzeta) * mu_val * modB / (iota * D);
+
+    derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*cos(theta) - s*sin(theta)*tdot;
+    derivs[(6*deriv_id + 1)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*sin(theta) + s*cos(theta)*tdot;
+    derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x] = zetadot;
+    derivs[(6*deriv_id + 3)*PARTICLES_PER_BLOCK + threadIdx.x] = vpardot;
+    derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = modB; // modB for setting mu
+    derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = G;
 };
 
 // calc_derivs implementation for guiding center boozer vacuum tracing with Shear Alfven Waves
-template <> 
-__device__ void calc_derivs<RHS::GC_BoozerVacuumSAW>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
-                                    int* index_i, int* index_j, int* index_k, double* x1_shape, double* x2_shape, double* x3_shape,
-                                    double* mu, int nparticles_blk, double saw_omega, int* saw_m, int* saw_n, double* saw_phihats, int saw_nharmonics){
-   __shared__ double block_interpolants[10*PARTICLES_PER_BLOCK];
+template <typename T>
+__device__ void rhs_GC_BoozerVacuumSAW(T* derivs, int deriv_id, T* x_temp, T* block_interpolants, bool* symmetry_exploited, T* mu,
+                                         T saw_omega, int* saw_m, int* saw_n, T* saw_phihats, int saw_nharmonics){
 
-    __syncthreads();
-    interpolate<double,10>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
-    __syncthreads();
+    double time = x_temp[threadIdx.x];
+    double x1 = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
+    double x2 = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
 
-    if(threadIdx.x < nparticles_blk){
-        double time = x_temp[threadIdx.x];
-        double x1 = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
-        double x2 = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
+    double s = sqrt(x1*x1 + x2*x2);
+    double theta = atan2(x2, x1);
+    double zeta = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
+    double v_par = x_temp[4*PARTICLES_PER_BLOCK + threadIdx.x];
 
-        double s = sqrt(x1*x1 + x2*x2);
-        double theta = atan2(x2, x1);
-        double zeta = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
-        double v_par = x_temp[4*PARTICLES_PER_BLOCK + threadIdx.x];
+    double modB = block_interpolants[0*PARTICLES_PER_BLOCK + threadIdx.x];
+    double dmodBdpsi = block_interpolants[1*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
+    double dmodBdtheta = block_interpolants[2*PARTICLES_PER_BLOCK + threadIdx.x];
+    double dmodBdzeta = block_interpolants[3*PARTICLES_PER_BLOCK + threadIdx.x];
+    double G = block_interpolants[4*PARTICLES_PER_BLOCK + threadIdx.x];
+    double dGdpsi = block_interpolants[5*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
+    double I = block_interpolants[6*PARTICLES_PER_BLOCK + threadIdx.x];
+    double dIdpsi = block_interpolants[7*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
+    double iota = block_interpolants[8*PARTICLES_PER_BLOCK + threadIdx.x];
+    double diotadpsi = block_interpolants[9*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
 
-        double modB = block_interpolants[0*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dmodBdpsi = block_interpolants[1*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
-        double dmodBdtheta = block_interpolants[2*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dmodBdzeta = block_interpolants[3*PARTICLES_PER_BLOCK + threadIdx.x];
-        double G = block_interpolants[4*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dGdpsi = block_interpolants[5*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
-        double I = block_interpolants[6*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dIdpsi = block_interpolants[7*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
-        double iota = block_interpolants[8*PARTICLES_PER_BLOCK + threadIdx.x];
-        double diotadpsi = block_interpolants[9*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
+    double mu_val = mu[threadIdx.x];
 
-        double mu_val = mu[threadIdx.x];
-
-        if(symmetry_exploited[threadIdx.x]){
-            dmodBdtheta *= -1.0;
-            dmodBdzeta *= -1.0;
-        }
-
-        // accumulate over harmonics
-        int s_index = (s - saw_srange_d[0]) / (saw_srange_d[3]);
-        s_index = min(s_index, (int)saw_srange_d[2]-1);
-        double s_diff = s - s_index*saw_srange_d[3];
-
-        // rhs values from SAW 
-        double dphidpsi = 0.0;
-        double dphidtheta = 0.0;
-        double dphidzeta = 0.0;
-
-        double dalphadpsi = 0.0;
-        double dalphadtheta = 0.0;
-        double alphadot = 0.0;
-
-        for(int i=0; i<saw_nharmonics; ++i){
-            double left_phihat = saw_phihats[s_index*saw_nharmonics + i];
-            double right_phihat = saw_phihats[min(s_index+1, (int)saw_srange_d[2]-1)*saw_nharmonics + i];
-            double s_slope = (right_phihat - left_phihat) / saw_srange_d[3];
-
-            int m = saw_m[i];
-            int n = saw_n[i];
-            double alpha_fac = (iota *m - n) / (saw_omega * G);
-            double dalpha_fac_dpsi = diotadpsi * m / (saw_omega * G);
-
-            double pt_cos = cos(m*theta - n*zeta + saw_omega*time);
-            double pt_sin = sin(m*theta - n*zeta + saw_omega*time);
-
-            double phihat_i = left_phihat + s_slope*(s_diff);
-            double dphihatdpsi = s_slope / psi0_d;
-
-            double phi_i = phihat_i * pt_sin;
-            double dphidpsi_i = dphihatdpsi * pt_sin;
-            double phidot_i = phihat_i * pt_cos * saw_omega;
-            double dphidtheta_i = phidot_i * (m / saw_omega);
-            double dphidzeta_i = -phidot_i * (n / saw_omega);
-
-            double alphadot_i = -phidot_i * alpha_fac;
-            double dalphadpsi_i = -dphidpsi_i * alpha_fac - phi_i*dalpha_fac_dpsi;
-            double dalphadtheta_i = -dphidtheta_i * alpha_fac;
-
-            dphidpsi += dphidpsi_i;
-            dphidtheta += dphidtheta_i;
-            dphidzeta += dphidzeta_i;
-
-            alphadot += alphadot_i;
-            dalphadpsi += dalphadpsi_i;
-            dalphadtheta += dalphadtheta_i;
-            
-        }
-
-        double fak1 = mass_d*v_par*v_par/modB + mass_d*mu_val;
-
-        double sdot = (-dmodBdtheta*fak1/charge_d + dalphadtheta*modB*v_par - dphidtheta) / psi0_d;
-        double tdot = (dmodBdpsi*fak1 / charge_d) + (iota - dalphadpsi*G)*v_par*modB / G + dphidpsi;
-
-        derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*cos(theta) - s * sin(theta) * tdot;
-        derivs[(6*deriv_id + 1)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*sin(theta) + s*cos(theta)*tdot;
-        derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x] = v_par*modB/G;
-        derivs[(6*deriv_id + 3)*PARTICLES_PER_BLOCK + threadIdx.x] = -modB/(G*mass_d) * (mass_d*mu_val*(dmodBdzeta + dalphadtheta*dmodBdpsi*G \
-                    + dmodBdtheta*(iota - dalphadpsi*G)) + charge_d*(alphadot*G \
-                    + dalphadtheta*G*dphidpsi + (iota - dalphadpsi*G)*dphidtheta + dphidzeta)) \
-                    + v_par/modB * (dmodBdtheta*dphidpsi - dmodBdpsi*dphidtheta);
-        derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = modB; // modB for setting mu
-        derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = G;
-
+    if(symmetry_exploited[threadIdx.x]){
+        dmodBdtheta *= -1.0;
+        dmodBdzeta *= -1.0;
     }
+
+    // accumulate over harmonics
+    int s_index = (s - saw_srange_d[0]) / (saw_srange_d[3]);
+    s_index = min(s_index, (int)saw_srange_d[2]-1);
+    double s_diff = s - s_index*saw_srange_d[3];
+
+    // rhs values from SAW 
+    double dphidpsi = 0.0;
+    double dphidtheta = 0.0;
+    double dphidzeta = 0.0;
+
+    double dalphadpsi = 0.0;
+    double dalphadtheta = 0.0;
+    double alphadot = 0.0;
+
+    for(int i=0; i<saw_nharmonics; ++i){
+        double left_phihat = saw_phihats[s_index*saw_nharmonics + i];
+        double right_phihat = saw_phihats[min(s_index+1, (int)saw_srange_d[2]-1)*saw_nharmonics + i];
+        double s_slope = (right_phihat - left_phihat) / saw_srange_d[3];
+
+        int m = saw_m[i];
+        int n = saw_n[i];
+        double alpha_fac = (iota *m - n) / (saw_omega * G);
+        double dalpha_fac_dpsi = diotadpsi * m / (saw_omega * G);
+
+        double pt_cos = cos(m*theta - n*zeta + saw_omega*time);
+        double pt_sin = sin(m*theta - n*zeta + saw_omega*time);
+
+        double phihat_i = left_phihat + s_slope*(s_diff);
+        double dphihatdpsi = s_slope / psi0_d;
+
+        double phi_i = phihat_i * pt_sin;
+        double dphidpsi_i = dphihatdpsi * pt_sin;
+        double phidot_i = phihat_i * pt_cos * saw_omega;
+        double dphidtheta_i = phidot_i * (m / saw_omega);
+        double dphidzeta_i = -phidot_i * (n / saw_omega);
+
+        double alphadot_i = -phidot_i * alpha_fac;
+        double dalphadpsi_i = -dphidpsi_i * alpha_fac - phi_i*dalpha_fac_dpsi;
+        double dalphadtheta_i = -dphidtheta_i * alpha_fac;
+
+        dphidpsi += dphidpsi_i;
+        dphidtheta += dphidtheta_i;
+        dphidzeta += dphidzeta_i;
+
+        alphadot += alphadot_i;
+        dalphadpsi += dalphadpsi_i;
+        dalphadtheta += dalphadtheta_i;
+        
+    }
+
+    double fak1 = mass_d*v_par*v_par/modB + mass_d*mu_val;
+
+    double sdot = (-dmodBdtheta*fak1/charge_d + dalphadtheta*modB*v_par - dphidtheta) / psi0_d;
+    double tdot = (dmodBdpsi*fak1 / charge_d) + (iota - dalphadpsi*G)*v_par*modB / G + dphidpsi;
+
+    derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*cos(theta) - s * sin(theta) * tdot;
+    derivs[(6*deriv_id + 1)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*sin(theta) + s*cos(theta)*tdot;
+    derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x] = v_par*modB/G;
+    derivs[(6*deriv_id + 3)*PARTICLES_PER_BLOCK + threadIdx.x] = -modB/(G*mass_d) * (mass_d*mu_val*(dmodBdzeta + dalphadtheta*dmodBdpsi*G \
+                + dmodBdtheta*(iota - dalphadpsi*G)) + charge_d*(alphadot*G \
+                + dalphadtheta*G*dphidpsi + (iota - dalphadpsi*G)*dphidtheta + dphidzeta)) \
+                + v_par/modB * (dmodBdtheta*dphidpsi - dmodBdpsi*dphidtheta);
+    derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = modB; // modB for setting mu
+    derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = G;
 
 };
 
 
 // calc_derivs implementation for guiding center boozer NoK tracing with Shear Alfven Waves
-template <> 
-__device__ void calc_derivs<RHS::GC_BoozerNoKSAW>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
-                                    int* index_i, int* index_j, int* index_k, double* x1_shape, double* x2_shape, double* x3_shape,
-                                    double* mu, int nparticles_blk, double saw_omega, int* saw_m, int* saw_n, double* saw_phihats, int saw_nharmonics){
+template <typename T> 
+__device__ void rhs_GC_BoozerNoKSAW(T* derivs, int deriv_id, T* x_temp, T* block_interpolants, bool* symmetry_exploited, T* mu,
+                                     T saw_omega, int* saw_m, int* saw_n, T* saw_phihats, int saw_nharmonics){
 
-   __shared__ double block_interpolants[10*PARTICLES_PER_BLOCK];
+    double time = x_temp[threadIdx.x];
+    double x1 = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
+    double x2 = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
 
-    __syncthreads();
-    interpolate<double, 10>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
-    __syncthreads();
+    double s = sqrt(x1*x1 + x2*x2);
+    double theta = atan2(x2, x1);
+    double zeta = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
+    double v_par = x_temp[4*PARTICLES_PER_BLOCK + threadIdx.x];
 
+    double modB = block_interpolants[0*PARTICLES_PER_BLOCK + threadIdx.x];
+    double dmodBdpsi = block_interpolants[1*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
+    double dmodBdtheta = block_interpolants[2*PARTICLES_PER_BLOCK + threadIdx.x];
+    double dmodBdzeta = block_interpolants[3*PARTICLES_PER_BLOCK + threadIdx.x];
+    double G = block_interpolants[4*PARTICLES_PER_BLOCK + threadIdx.x];
+    double dGdpsi = block_interpolants[5*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
+    double I = block_interpolants[6*PARTICLES_PER_BLOCK + threadIdx.x];
+    double dIdpsi = block_interpolants[7*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
+    double iota = block_interpolants[8*PARTICLES_PER_BLOCK + threadIdx.x];
+    double diotadpsi = block_interpolants[9*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
 
-    if(threadIdx.x < nparticles_blk){
-        double time = x_temp[threadIdx.x];
-        double x1 = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
-        double x2 = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
+    double mu_val = mu[threadIdx.x];
 
-        double s = sqrt(x1*x1 + x2*x2);
-        double theta = atan2(x2, x1);
-        double zeta = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
-        double v_par = x_temp[4*PARTICLES_PER_BLOCK + threadIdx.x];
-
-        double modB = block_interpolants[0*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dmodBdpsi = block_interpolants[1*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
-        double dmodBdtheta = block_interpolants[2*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dmodBdzeta = block_interpolants[3*PARTICLES_PER_BLOCK + threadIdx.x];
-        double G = block_interpolants[4*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dGdpsi = block_interpolants[5*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
-        double I = block_interpolants[6*PARTICLES_PER_BLOCK + threadIdx.x];
-        double dIdpsi = block_interpolants[7*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
-        double iota = block_interpolants[8*PARTICLES_PER_BLOCK + threadIdx.x];
-        double diotadpsi = block_interpolants[9*PARTICLES_PER_BLOCK + threadIdx.x] / psi0_d;
-
-        double mu_val = mu[threadIdx.x];
-
-        if(symmetry_exploited[threadIdx.x]){
-            dmodBdtheta *= -1.0;
-            dmodBdzeta *= -1.0;
-        }
-
-        // accumulate over harmonics
-        int s_index = (s - saw_srange_d[0]) / (saw_srange_d[3]);
-        s_index = min(s_index, (int)saw_srange_d[2]-1);
-        double s_diff = s - s_index*saw_srange_d[3];
-
-        // rhs values from SAW 
-        double dphidpsi = 0.0;
-        double dphidtheta = 0.0;
-        double dphidzeta = 0.0;
-        double dalphadzeta = 0.0;
-
-        double alpha = 0.0;
-        double dalphadpsi = 0.0;
-        double dalphadtheta = 0.0;
-        double alphadot = 0.0;
-
-        for(int i=0; i<saw_nharmonics; ++i){
-            double left_phihat = saw_phihats[s_index*saw_nharmonics + i];
-            double right_phihat = saw_phihats[min(s_index+1, (int)saw_srange_d[2]-1)*saw_nharmonics + i];
-            double s_slope = (right_phihat - left_phihat) / saw_srange_d[3];
-
-            int m = saw_m[i];
-            int n = saw_n[i];
-            double alpha_fac = (iota *m - n) / (saw_omega * (G + iota*I));
-            double dalpha_fac_dpsi = diotadpsi * m / (saw_omega * (G + iota*I)) - alpha_fac / (G+iota*I) * (dGdpsi + diotadpsi*I + iota*dIdpsi);
-
-            double pt_cos = cos(m*theta - n*zeta + saw_omega*time);
-            double pt_sin = sin(m*theta - n*zeta + saw_omega*time);
-
-            double phihat_i = left_phihat + s_slope*(s_diff);
-            double dphihatdpsi = s_slope / psi0_d;
-
-            double phi_i = phihat_i * pt_sin;
-            double dphidpsi_i = dphihatdpsi * pt_sin;
-            double phidot_i = phihat_i * pt_cos * saw_omega;
-            double dphidtheta_i = phidot_i * (m / saw_omega);
-            double dphidzeta_i = -phidot_i * (n / saw_omega);
-
-            double alpha_i = -phi_i*alpha_fac;
-            double alphadot_i = -phidot_i * alpha_fac;
-            double dalphadpsi_i = -dphidpsi_i * alpha_fac - phi_i*dalpha_fac_dpsi;
-            double dalphadtheta_i = -dphidtheta_i * alpha_fac;
-            double dalphadzeta_i = -dphidzeta_i*alpha_fac;
-
-            dphidpsi += dphidpsi_i;
-            dphidtheta += dphidtheta_i;
-            dphidzeta += dphidzeta_i;
-
-            alpha += alpha_i;
-            alphadot += alphadot_i;
-            dalphadpsi += dalphadpsi_i;
-            dalphadtheta += dalphadtheta_i;
-            dalphadzeta += dalphadzeta_i;
-        }
-        double fak1 = mass_d*v_par*v_par/modB + mass_d*mu_val;
-        double denom = (charge_d*(G + I*(-alpha*dGdpsi + iota) + alpha*G*dIdpsi)
-                + mass_d*v_par/modB * (-dGdpsi*I + G*dIdpsi)); 
-        double sdot = (-G*dphidtheta*charge_d + I*dphidzeta*charge_d + modB*charge_d*v_par*(dalphadtheta*G-dalphadzeta*I) + (-dmodBdtheta*G + dmodBdzeta*I)*fak1)/(denom*psi0_d);
-        double tdot = (G*charge_d*dphidpsi + modB*charge_d*v_par*(-dalphadpsi*G - alpha*dGdpsi + iota) - dGdpsi*mass_d*v_par*v_par \
-                      + dmodBdpsi*G*fak1)/denom;
-        derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*cos(theta) - s * sin(theta) * tdot;
-        derivs[(6*deriv_id + 1)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*sin(theta) + s*cos(theta)*tdot;
-        derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x] = v_par*modB/G;
-        derivs[(6*deriv_id + 3)*PARTICLES_PER_BLOCK + threadIdx.x] = (modB*charge_d/mass_d * ( -mass_d*mu_val * (dmodBdzeta*(1 + dalphadpsi*I + alpha*dIdpsi) \
-                      + dmodBdpsi*(dalphadtheta*G - dalphadzeta*I) + dmodBdtheta*(iota - alpha*dGdpsi - dalphadpsi*G)) \
-                      - charge_d*(alphadot*(G + I*(iota - alpha*dGdpsi) + alpha*G*dIdpsi) \
-                      + (dalphadtheta*G - dalphadzeta*I)*dphidpsi \
-                      + (iota - alpha*dGdpsi - dalphadpsi*G)*dphidtheta \
-                      + (1 + alpha*dIdpsi + dalphadpsi*I)*dphidzeta)) \
-                      + charge_d*v_par/modB * ((dmodBdtheta*G - dmodBdzeta*I)*dphidpsi \
-                      + dmodBdpsi*(I*dphidzeta - G*dphidtheta)) \
-                      + v_par*(mass_d*mu_val*(dmodBdtheta*dGdpsi - dmodBdzeta*dIdpsi) \
-                      + charge_d*(alphadot*(dGdpsi*I-G*dIdpsi) + dGdpsi*dphidtheta - dIdpsi*dphidzeta)))/denom;
-        derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = modB; // modB for setting mu
-        derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = G;
-        // derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = // no boundary dist fn
+    if(symmetry_exploited[threadIdx.x]){
+        dmodBdtheta *= -1.0;
+        dmodBdzeta *= -1.0;
     }
 
+    // accumulate over harmonics
+    int s_index = (s - saw_srange_d[0]) / (saw_srange_d[3]);
+    s_index = min(s_index, (int)saw_srange_d[2]-1);
+    double s_diff = s - s_index*saw_srange_d[3];
+
+    // rhs values from SAW 
+    double dphidpsi = 0.0;
+    double dphidtheta = 0.0;
+    double dphidzeta = 0.0;
+    double dalphadzeta = 0.0;
+
+    double alpha = 0.0;
+    double dalphadpsi = 0.0;
+    double dalphadtheta = 0.0;
+    double alphadot = 0.0;
+
+    for(int i=0; i<saw_nharmonics; ++i){
+        double left_phihat = saw_phihats[s_index*saw_nharmonics + i];
+        double right_phihat = saw_phihats[min(s_index+1, (int)saw_srange_d[2]-1)*saw_nharmonics + i];
+        double s_slope = (right_phihat - left_phihat) / saw_srange_d[3];
+
+        int m = saw_m[i];
+        int n = saw_n[i];
+        double alpha_fac = (iota *m - n) / (saw_omega * (G + iota*I));
+        double dalpha_fac_dpsi = diotadpsi * m / (saw_omega * (G + iota*I)) - alpha_fac / (G+iota*I) * (dGdpsi + diotadpsi*I + iota*dIdpsi);
+
+        double pt_cos = cos(m*theta - n*zeta + saw_omega*time);
+        double pt_sin = sin(m*theta - n*zeta + saw_omega*time);
+
+        double phihat_i = left_phihat + s_slope*(s_diff);
+        double dphihatdpsi = s_slope / psi0_d;
+
+        double phi_i = phihat_i * pt_sin;
+        double dphidpsi_i = dphihatdpsi * pt_sin;
+        double phidot_i = phihat_i * pt_cos * saw_omega;
+        double dphidtheta_i = phidot_i * (m / saw_omega);
+        double dphidzeta_i = -phidot_i * (n / saw_omega);
+
+        double alpha_i = -phi_i*alpha_fac;
+        double alphadot_i = -phidot_i * alpha_fac;
+        double dalphadpsi_i = -dphidpsi_i * alpha_fac - phi_i*dalpha_fac_dpsi;
+        double dalphadtheta_i = -dphidtheta_i * alpha_fac;
+        double dalphadzeta_i = -dphidzeta_i*alpha_fac;
+
+        dphidpsi += dphidpsi_i;
+        dphidtheta += dphidtheta_i;
+        dphidzeta += dphidzeta_i;
+
+        alpha += alpha_i;
+        alphadot += alphadot_i;
+        dalphadpsi += dalphadpsi_i;
+        dalphadtheta += dalphadtheta_i;
+        dalphadzeta += dalphadzeta_i;
+    }
+    double fak1 = mass_d*v_par*v_par/modB + mass_d*mu_val;
+    double denom = (charge_d*(G + I*(-alpha*dGdpsi + iota) + alpha*G*dIdpsi)
+            + mass_d*v_par/modB * (-dGdpsi*I + G*dIdpsi)); 
+    double sdot = (-G*dphidtheta*charge_d + I*dphidzeta*charge_d + modB*charge_d*v_par*(dalphadtheta*G-dalphadzeta*I) + (-dmodBdtheta*G + dmodBdzeta*I)*fak1)/(denom*psi0_d);
+    double tdot = (G*charge_d*dphidpsi + modB*charge_d*v_par*(-dalphadpsi*G - alpha*dGdpsi + iota) - dGdpsi*mass_d*v_par*v_par \
+                    + dmodBdpsi*G*fak1)/denom;
+    derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*cos(theta) - s * sin(theta) * tdot;
+    derivs[(6*deriv_id + 1)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*sin(theta) + s*cos(theta)*tdot;
+    derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x] = v_par*modB/G;
+    derivs[(6*deriv_id + 3)*PARTICLES_PER_BLOCK + threadIdx.x] = (modB*charge_d/mass_d * ( -mass_d*mu_val * (dmodBdzeta*(1 + dalphadpsi*I + alpha*dIdpsi) \
+                    + dmodBdpsi*(dalphadtheta*G - dalphadzeta*I) + dmodBdtheta*(iota - alpha*dGdpsi - dalphadpsi*G)) \
+                    - charge_d*(alphadot*(G + I*(iota - alpha*dGdpsi) + alpha*G*dIdpsi) \
+                    + (dalphadtheta*G - dalphadzeta*I)*dphidpsi \
+                    + (iota - alpha*dGdpsi - dalphadpsi*G)*dphidtheta \
+                    + (1 + alpha*dIdpsi + dalphadpsi*I)*dphidzeta)) \
+                    + charge_d*v_par/modB * ((dmodBdtheta*G - dmodBdzeta*I)*dphidpsi \
+                    + dmodBdpsi*(I*dphidzeta - G*dphidtheta)) \
+                    + v_par*(mass_d*mu_val*(dmodBdtheta*dGdpsi - dmodBdzeta*dIdpsi) \
+                    + charge_d*(alphadot*(dGdpsi*I-G*dIdpsi) + dGdpsi*dphidtheta - dIdpsi*dphidzeta)))/denom;
+    derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = modB; // modB for setting mu
+    derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = G;
+    // derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = // no boundary dist fn
+    
+
 };
+
+// calc_derivs computes the derivatives at points for which the corresponding
+// i,j,k indices and shape functions have been precomputed
+// the results are stored in the appropriate region of derivs
+// nparticles_blk stores the number of actual particles in the block
+//
+// this function is templated across rhs options
+template<typename T, RHS id, typename... Args>  
+__device__ void calc_derivs(T* derivs, int deriv_id, T* quadpts_arr, T* x_temp, bool* symmetry_exploited, 
+                                    int* index_i, int* index_j, int* index_k, T* x1_shape, T* x2_shape, T* x3_shape,
+                                    T* mu, int nparticles_blk, 
+                                // optional parameters for SAW cases
+                                T saw_omega = 0, int* saw_m = nullptr, int* saw_n = nullptr, 
+                                T* saw_phihats = nullptr, int saw_nharmonics = 0){
+    
+    
+    constexpr int n = map_rhs_to_n_interpolants<id>();
+    __shared__ T block_interpolants[n*PARTICLES_PER_BLOCK];
+    __syncthreads();
+    interpolate<T, n>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
+    __syncthreads();
+
+    if(threadIdx.x < nparticles_blk){
+        if constexpr (id == RHS::GC_CartesianVacuum){
+            rhs_GC_CartesianVacuum<T>(derivs, deriv_id, x_temp, block_interpolants, symmetry_exploited, mu);
+        } else if constexpr(id == RHS::GC_BoozerVacuum){
+            rhs_GC_BoozerVacuum<T>(derivs, deriv_id, x_temp, block_interpolants, symmetry_exploited, mu);
+        } else if constexpr(id == RHS::GC_Boozer){
+            rhs_GC_Boozer<T>(derivs, deriv_id, x_temp, block_interpolants, symmetry_exploited, mu);
+        } else if constexpr(id == RHS::GC_BoozerVacuumSAW){
+                rhs_GC_BoozerVacuumSAW<T>(derivs, deriv_id, x_temp, block_interpolants, symmetry_exploited, mu,
+                    saw_omega, saw_m, saw_n, saw_phihats, saw_nharmonics);
+        } else if constexpr(id == RHS::GC_BoozerNoKSAW){
+            rhs_GC_BoozerNoKSAW<T>(derivs, deriv_id, x_temp, block_interpolants, symmetry_exploited, mu,
+                saw_omega, saw_m, saw_n, saw_phihats,saw_nharmonics);
+        }
+    }
+};
+
+
 
 
 // map to grid takes a particle location and maps it to the interpolation grid
@@ -752,7 +744,7 @@ __device__ void calc_max_timestep_size<CoordSys::Boozer>(double* dtmax, double* 
 // use the derivatives function to calculate mu, max step size
 // store these values for the remainder of tracing
 
-template<RHS id, typename... Args>
+template<typename T, RHS id, typename... Args>
 __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax, double* x_temp, bool* symmetry_exploited, int* index_i, int* index_j, int* index_k,
                             double* quad_pts, double* x1_shape, double* x2_shape, double* x3_shape, double* state, double* derivs,
                             int nparticles_blk, Args... args){
@@ -767,7 +759,7 @@ __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax,
         mu[threadIdx.x] = -1.0; // initialize mu
     }
     __syncthreads();
-    calc_derivs<id>(derivs, 0, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k,
+    calc_derivs<T, id>(derivs, 0, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k,
                      x1_shape, x2_shape, x3_shape, mu, nparticles_blk, args...);
     __syncthreads();
 
@@ -917,7 +909,7 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
     __syncthreads();
 
     // calculate the particle's magnetic moment mu, dt, dtmax
-    setup_particle<id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
+    setup_particle<double, id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
                         quadpts_arr, x1_shape, x2_shape, x3_shape, state, derivs, nparticles_blk, args...);
     __syncthreads();
 
@@ -932,7 +924,7 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
             }
             // ensure that all threads have updated x_temp before calculating derivatives, where a data race would occur
             __syncthreads();
-            calc_derivs<id>(derivs, k, quadpts_arr, x_temp, symmetry_exploited, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, mu, nparticles_blk, args...);
+            calc_derivs<double, id>(derivs, k, quadpts_arr, x_temp, symmetry_exploited, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, mu, nparticles_blk, args...);
 
             // ensure all particles have derivative calculations before accepting/rejecting timestep
             __syncthreads();
@@ -1467,7 +1459,7 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* loc, double* vp
     }
     __syncthreads();
 
-    setup_particle<id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
+    setup_particle<double, id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
                         quad_pts, r_shape, phi_shape, z_shape, state, derivs, nparticles_blk, args...);
 
     __syncthreads();
@@ -1478,7 +1470,7 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* loc, double* vp
         build_state<id>(x_temp, 0, symmetry_exploited, index_i, index_j, index_k,
                     r_shape, phi_shape, z_shape, state, derivs, t, dt);
     }
-    calc_derivs<id>(derivs, 0, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, nparticles_blk, args...);
+    calc_derivs<double, id>(derivs, 0, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, nparticles_blk, args...);
     __syncthreads();
 
     if(is_valid){
@@ -1719,7 +1711,7 @@ __global__ void test_gpu_timestep_kernel(double* out, double* init_pos, double* 
     __syncthreads();
 
     // calculate the particle's magnetic moment mu, dt, dtmax
-    setup_particle<id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
+    setup_particle<double, id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
                         quadpts_arr, r_shape, phi_shape, z_shape, state, derivs, nparticles_blk, args...);
     __syncthreads();
 
@@ -1733,7 +1725,7 @@ __global__ void test_gpu_timestep_kernel(double* out, double* init_pos, double* 
             }
             // ensure that all threads have updated x_temp before calculating derivatives, where a data race would occur
             __syncthreads();
-            calc_derivs<id>(derivs, k, quadpts_arr, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, nparticles_blk, args...);
+            calc_derivs<double, id>(derivs, k, quadpts_arr, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, nparticles_blk, args...);
 
             // ensure all particles have derivative calculations before accepting/rejecting timestep
             __syncthreads();
