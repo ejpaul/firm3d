@@ -129,8 +129,8 @@ __host__ __device__ void shape(double& x, double& output, int i) {
 // nparticles_blk store the number of *actual* particles in the current block
 //
 // note that nparticles_blk isn't always equal to PARTICLES_PER_BLOCK
-template <int n> __device__ void interpolate(double*  out, const double* __restrict__ data, const int* __restrict__ index_i, const int* __restrict__ index_j, const int* __restrict__ index_k, 
-    const double* __restrict__ x1_shape, const double* __restrict__ x2_shape, const double* __restrict__ x3_shape, int nparticles_blk){
+template <typename T, int n> __device__ void interpolate(double*  out, const T* __restrict__ data, const int* __restrict__ index_i, const int* __restrict__ index_j, const int* __restrict__ index_k, 
+    const T* __restrict__ x1_shape, const T* __restrict__ x2_shape, const T* __restrict__ x3_shape, int nparticles_blk){
     for(int idx=threadIdx.x; idx<nparticles_blk*n; idx+= THREADS_PER_BLOCK){
         int zz = idx % n;
         int particle_id = idx / n;
@@ -177,7 +177,7 @@ __device__ void calc_derivs<RHS::GC_CartesianVacuum>(double* derivs, int deriv_i
     __shared__ double block_interpolants[7*PARTICLES_PER_BLOCK];
 
     __syncthreads();
-    interpolate<7>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
+    interpolate<double, 7>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
     __syncthreads();
 
     if(threadIdx.x < nparticles_blk){
@@ -230,7 +230,7 @@ __device__ void calc_derivs<RHS::GC_BoozerVacuum>(double* derivs, int deriv_id, 
                                     double* mu, int nparticles_blk){
    __shared__ double block_interpolants[6*PARTICLES_PER_BLOCK];
     __syncthreads();
-    interpolate<6>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
+    interpolate<double,6>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
 
 
     __syncthreads();   
@@ -285,7 +285,7 @@ __device__ void calc_derivs<RHS::GC_Boozer>(double* derivs, int deriv_id, double
    __shared__ double block_interpolants[12*PARTICLES_PER_BLOCK];
 
     __syncthreads();
-    interpolate<12>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
+    interpolate<double,12>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
     __syncthreads();
 
     if(threadIdx.x < nparticles_blk){
@@ -359,7 +359,7 @@ __device__ void calc_derivs<RHS::GC_BoozerVacuumSAW>(double* derivs, int deriv_i
    __shared__ double block_interpolants[10*PARTICLES_PER_BLOCK];
 
     __syncthreads();
-    interpolate<10>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
+    interpolate<double,10>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
     __syncthreads();
 
     if(threadIdx.x < nparticles_blk){
@@ -469,7 +469,7 @@ __device__ void calc_derivs<RHS::GC_BoozerNoKSAW>(double* derivs, int deriv_id, 
    __shared__ double block_interpolants[10*PARTICLES_PER_BLOCK];
 
     __syncthreads();
-    interpolate<10>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
+    interpolate<double, 10>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
     __syncthreads();
 
 
@@ -1308,7 +1308,7 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* loc, dou
     } 
 
     __syncthreads();
-    interpolate<n>(block_interpolants, quad_pts, index_i, index_j, index_k, r_shape, phi_shape, z_shape, nparticles_blk);
+    interpolate<double, n>(block_interpolants, quad_pts, index_i, index_j, index_k, r_shape, phi_shape, z_shape, nparticles_blk);
     __syncthreads();
     
     if(is_valid){
