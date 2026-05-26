@@ -12,6 +12,7 @@ using std::vector;
 static constexpr double COLL_PI          = 3.14159265358979323846;
 static constexpr double COLL_EPSILON0    = 8.8541878188e-12;   // F/m
 static constexpr double COLL_SQRT_PI     = 1.7724538509055159; // sqrt(pi)
+static constexpr double COLL_HBAR        = 1.054571817e-34;    // J·s (reduced Planck)
 
 // --------------------------------------------------------------------------
 // Chandrasekhar G function: G(x) = [erf(x) - (2x/sqrt(pi)) exp(-x^2)] / (2x^2)
@@ -114,10 +115,26 @@ inline CollisionCoefficients compute_collision_coefficients(
 
         // ln(4 pi eps0 lambda_D m_r v_eff^2 / |q_a q_b|)
         // v_eff^2 = v^2 + v_th^2 handles slow EP (v << v_th,e) and fast EP (v >> v_th,b)
+        // Coulomb logarithm: ln(lambda_D / b_min) where b_min = max(b_cl, b_qm).
+        //
+        // b_cl  = |qa qb| / (4 pi eps0 mr vbar)   classical 90-deg deflection
+        // b_qm  = hbar / (2 mr sqrt(vbar))         de Broglie wavelength
+        // vbar  = v^2 + v_th_b^2   (v_th_b = sqrt(2 T_b / m_b))
+        //
+        // Taking max(b_cl, b_qm) handles the quantum regime (fast EP against
+        // electrons) where the de Broglie wavelength exceeds the classical
+        // distance of closest approach.  This matches the ASCOT5 convention
+        // (Hirvijoki et al., Comput. Phys. Commun. 185, 1310, 2014).
+        //
+        // See also: NRL Plasma Formulary (Huba), "Collision Parameters" section;
+        // Spitzer, Physics of Fully Ionized Gases (1962), Ch. 5.
         double m_r      = m_a * m_b / (m_a + m_b);
         double v_eff_sq = v * v + v_th * v_th;
-        double lnL      = std::log(4.0 * COLL_PI * COLL_EPSILON0 * lambda_D
-                                   * m_r * v_eff_sq / std::abs(q_a * q_b));
+        double bcl      = std::abs(q_a * q_b)
+                          / (4.0 * COLL_PI * COLL_EPSILON0 * m_r * v_eff_sq);
+        double bqm      = COLL_HBAR / (2.0 * m_r * std::sqrt(v_eff_sq));
+        double b_min    = std::max(bcl, bqm);
+        double lnL      = std::log(lambda_D / b_min);
         lnL = std::max(lnL, 2.0);
 
         double G      = chandrasekhar_G(x);
