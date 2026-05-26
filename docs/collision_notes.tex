@@ -131,10 +131,15 @@ The effective velocity scale $\bar{v}^2$ is taken as
   \bar{v}^2 = v^2 + \vth[b]^2, \qquad \vth[b] = \sqrt{2T_b/m_b},
   \label{eq:vbar}
 \end{equation}
-following the ASCOT5 convention \cite{hirvijoki2014,ascot5code}.
-This interpolation covers two limits: fast EP against ions
-($v\gg\vth[b]$, so $\bar{v}\approx v$) and slow EP against electrons
-($v\ll\vth[e]$, so $\bar{v}\approx\vth[e]$).
+following the ASCOT5 source convention \cite{ascot5code}.
+This form is a numerical interpolation device, not derived from first
+principles: Ichimaru \cite{ichimaru1973} derives $b_{\mathrm{cl}}$ and
+$b_{\mathrm{qm}}$ only in the fast-particle limit $v\gg\vth[b]$
+(Section~4.3B of that reference), where $\bar{v}\approx v$.
+The $\bar{v}^2$ form extends the formula to the slow-particle regime
+without a discontinuous switch:
+fast EP against ions ($v\gg\vth[b]$, $\bar{v}\approx v$) and
+slow EP against electrons ($v\ll\vth[e]$, $\bar{v}\approx\vth[e]$).
 
 The quantum branch $b_{\mathrm{qm}} > b_{\mathrm{cl}}$ applies when
 \begin{equation}
@@ -437,7 +442,8 @@ tokamak plasmas,''
 
 \bibitem{ascot5code}
 ASCOT5 source code, \texttt{src/simulate/mccc/mccc\_coefs.h},
-\url{https://github.com/ascot4fusion/ascot5}.
+function \texttt{mccc\_coefs\_clog},
+\url{https://github.com/ascot4fusion/ascot5/blob/main/src/simulate/mccc/mccc_coefs.h}.
 
 \bibitem{boozer1981}
 A.~H.~Boozer and G.~Kuo-Petravic,
