@@ -20,19 +20,13 @@ static constexpr double COLL_HBAR        = 1.054571817e-34;    // J·s (reduced 
 // Satisfies G'(x) = (2/sqrt(pi)) exp(-x^2) - G(x)/x
 // --------------------------------------------------------------------------
 inline double chandrasekhar_G(double x) {
-    if (x < 1e-4) {
-        // Taylor: G(x) ~ 2x/(3sqrt(pi)) - 4x^3/(15sqrt(pi)) + ...
-        return x * (2.0 / (3.0 * COLL_SQRT_PI)) * (1.0 - 2.0 * x * x / 5.0);
-    }
+    if (x == 0.0) return 0.0;
     return (std::erf(x) - (2.0 * x / COLL_SQRT_PI) * std::exp(-x * x)) / (2.0 * x * x);
 }
 
 // dG/dx = (2/sqrt(pi)) exp(-x^2) - G(x)/x
 inline double chandrasekhar_G_deriv(double x) {
-    if (x < 1e-4) {
-        // Taylor: G'(x) ~ 2/(3sqrt(pi)) - 4x^2/(5sqrt(pi)) + ...
-        return (2.0 / (3.0 * COLL_SQRT_PI)) * (1.0 - 6.0 * x * x / 5.0);
-    }
+    if (x == 0.0) return 2.0 / (3.0 * COLL_SQRT_PI);
     return (2.0 / COLL_SQRT_PI) * std::exp(-x * x) - chandrasekhar_G(x) / x;
 }
 
