@@ -87,7 +87,8 @@ __constant__ double dp5_t_wgts[7] = {
 
 // each RHS has an associated 3 dimensional coordinates system (x1, x2, x3)
 // xi_range_d containts the beginning, end, number of grid points, and grid step size for an interpolant
-__constant__ double x1_range_d[4], x2_range_d[4], x3_range_d[4]; // contains start, end, number of points, grid size
+// __constant__ double x1_range_d[4], x2_range_d[4], x3_range_d[4]; // contains start, end, number of points, grid size
+__constant__ double grid_ranges_d[12];
 
 // store the particle's mass, charge, max tracing time, absolute and relative tolerances for timestepping
 __constant__ double mass_d, charge_d, tmax_d, atol_d, rtol_d; 
@@ -135,27 +136,30 @@ __host__ __device__ void shape(double& x, double& output, int i) {
 // with n contiguous entries at each point
 // 
 // shape values are precomputed in build_state and here we are computing the needed inner product
-// index_i, index_j, index_k store the grid index for interpolation in the r, phi, z coordinates
+// cell_index_start stores the grid index for interpolation in the r, phi, z coordinates
 // r_shape, phi_shape, z_shape store shape function elements
 // nphi and nz indicate how many grid pts there are in phi and z directions
 // nparticles_blk store the number of *actual* particles in the current block
 //
 // note that nparticles_blk isn't always equal to PARTICLES_PER_BLOCK
-template <typename T, int n> __device__ void interpolate(double*  out, const T* __restrict__ data, const int* __restrict__ index_i, const int* __restrict__ index_j, const int* __restrict__ index_k, 
-    const T* __restrict__ x1_shape, const T* __restrict__ x2_shape, const T* __restrict__ x3_shape, int nparticles_blk){
+template <typename T, int n> __device__ void interpolate(double*  out, const T* __restrict__ data, const int* __restrict__ cell_index_start, 
+    const T* __restrict__ shape_fun_vals, int nparticles_blk){
     for(int idx=threadIdx.x; idx<nparticles_blk*n; idx+= THREADS_PER_BLOCK){
         int zz = idx % n;
         int particle_id = idx / n;
-        int i = index_i[particle_id];
-        int j = index_j[particle_id];
-        int k = index_k[particle_id];
+
+        int i = cell_index_start[3*particle_id];
+        int j = cell_index_start[3*particle_id + 1];
+        int k = cell_index_start[3*particle_id + 2];
+
+        int row_start = 64*(i*n_x23_d + j*n_x3_d + k);
 
         double local_val = 0.0;
         for(int ii=0; ii<4; ++ii){
             for(int jj=0; jj<4; ++jj){
                 for(int kk=0; kk<4; ++kk){
-                    int row_idx = 64*(i*n_x23_d + j*n_x3_d + k) + 16*ii + 4*jj + kk;
-                    double shape_val = x1_shape[ii*PARTICLES_PER_BLOCK + particle_id] * x2_shape[jj*PARTICLES_PER_BLOCK + particle_id] * x3_shape[kk*PARTICLES_PER_BLOCK + particle_id];
+                    int row_idx = row_start + 16*ii + 4*jj + kk;
+                    double shape_val = shape_fun_vals[ii*PARTICLES_PER_BLOCK + particle_id] * shape_fun_vals[(4 + jj)*PARTICLES_PER_BLOCK + particle_id] * shape_fun_vals[(8 + kk)*PARTICLES_PER_BLOCK + particle_id];
                     local_val += data[n*row_idx + zz] * shape_val;
 
                 }
@@ -542,8 +546,7 @@ __device__ void rhs_GC_BoozerNoKSAW(T* derivs, T* x_temp, T* block_interpolants,
 // this function is templated across rhs options
 template<typename T, RHS id, int deriv_id, typename... Args>  
 __device__ void calc_derivs(T* derivs, T* quadpts_arr, T* x_temp, bool* symmetry_exploited, 
-                                    int* index_i, int* index_j, int* index_k, T* x1_shape, T* x2_shape, T* x3_shape,
-                                    T* mu, int nparticles_blk, 
+                                    int* cell_index_start, T* shape_fun_vals, T* mu, int nparticles_blk, 
                                 // optional parameters for SAW cases
                                 T saw_omega = 0, int* saw_m = nullptr, int* saw_n = nullptr, 
                                 T* saw_phihats = nullptr, int saw_nharmonics = 0){
@@ -552,7 +555,7 @@ __device__ void calc_derivs(T* derivs, T* quadpts_arr, T* x_temp, bool* symmetry
     constexpr int n = map_rhs_to_n_interpolants<id>();
     __shared__ T block_interpolants[n*PARTICLES_PER_BLOCK];
     __syncthreads();
-    interpolate<T, n>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
+    interpolate<T, n>(block_interpolants, quadpts_arr, cell_index_start, shape_fun_vals, nparticles_blk);
     __syncthreads();
 
     if(threadIdx.x < nparticles_blk){
@@ -601,7 +604,7 @@ __device__ void map_to_grid_cartesian(T* interp_pt, T* x_temp, bool* symmetry_ex
     T phi = atan2(y, x);
 
     // restrict phi to [0, 2pi / nfp]
-    T period = x2_range_d[1];
+    T period = grid_ranges_d[5];
     phi = fmod(phi, period);
     phi += period*(phi < 0);
 
@@ -614,9 +617,9 @@ __device__ void map_to_grid_cartesian(T* interp_pt, T* x_temp, bool* symmetry_ex
         phi += period*(phi < 0);
     }
 
-    interp_pt[0] = r;
-    interp_pt[1] = phi;
-    interp_pt[2] = z;
+    interp_pt[threadIdx.x] = r;
+    interp_pt[PARTICLES_PER_BLOCK + threadIdx.x] = phi;
+    interp_pt[2*PARTICLES_PER_BLOCK + threadIdx.x] = z;
 } 
 
 // map_to_grid implementation for Boozer tracing
@@ -634,7 +637,7 @@ __device__ void map_to_grid_boozer(T* interp_pt, T* x_temp, bool* symmetry_explo
     t += 2*M_PI*(t < 0);
 
     // we can modify z because it's only used to access the B-field location
-    T period = x3_range_d[1];
+    T period = grid_ranges_d[9];
     z = fmod(z, period);
     z += period*(z < 0);
 
@@ -645,9 +648,9 @@ __device__ void map_to_grid_boozer(T* interp_pt, T* x_temp, bool* symmetry_explo
         t = 2*M_PI - t;
 
     }
-    interp_pt[0] = s;
-    interp_pt[1] = t;
-    interp_pt[2] = z;
+    interp_pt[threadIdx.x] = s;
+    interp_pt[PARTICLES_PER_BLOCK + threadIdx.x] = t;
+    interp_pt[2*PARTICLES_PER_BLOCK + threadIdx.x] = z;
 }
 
 
@@ -664,62 +667,98 @@ __device__ void map_to_grid(T* interp_pt, T* xyz, bool* symmetry_exploited){
 
 // build_state is part of the DP5 implementation
 template <RHS id, int deriv_id>
-__device__ void build_state(double* x_temp, bool* symmetry_exploited, int* index_i, int* index_j, int* index_k,
-                            double* x1_shape, double* x2_shape, double* x3_shape, double* state, double* derivs, double* t, double* dt){
+__device__ void build_state(double* x_temp, bool* symmetry_exploited, int* cell_index_start,
+                            double* shape_fun_vals, double* state, double* derivs, double* t, double* dt, int nparticles_blk){
 
+    
     // store time
-    x_temp[threadIdx.x] = t[threadIdx.x] + dp5_t_wgts[deriv_id]*dt[threadIdx.x];
-    for (int i = 0; i < 4; i++) {
-        x_temp[(i+1)*PARTICLES_PER_BLOCK + threadIdx.x] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
+    if(threadIdx.x < nparticles_blk){
+        x_temp[threadIdx.x] = t[threadIdx.x] + dp5_t_wgts[deriv_id]*dt[threadIdx.x];
     }
 
-    for (int j=0; j<deriv_id; ++j){
-        for(int i=0; i<4; ++i){
-            x_temp[(i+1)*PARTICLES_PER_BLOCK + threadIdx.x] += dt[threadIdx.x] * dp5_wgts[deriv_id][j] * derivs[(6*j+i)*PARTICLES_PER_BLOCK + threadIdx.x];
+    // store current location in x_temp
+    for (int idx=threadIdx.x; idx<4*PARTICLES_PER_BLOCK; idx+=PARTICLES_PER_BLOCK) {
+        int particle_id = idx % PARTICLES_PER_BLOCK;
+        int state_var = idx / PARTICLES_PER_BLOCK;
+
+        x_temp[(state_var+1)*PARTICLES_PER_BLOCK + particle_id] = state[state_var*PARTICLES_PER_BLOCK + particle_id];
+        double dt_particle = dt[particle_id];
+        for(int j=0; j<deriv_id; ++j){
+            x_temp[(state_var+1)*PARTICLES_PER_BLOCK + particle_id] += dt_particle * dp5_wgts[deriv_id][j] * derivs[(6*j+state_var)*PARTICLES_PER_BLOCK + particle_id];
         }
     }
+    __syncthreads();
     
-    double interp_pt[3];
-    constexpr CoordSys coord = map_rhs_to_coord<id>();
-    map_to_grid<double, coord>(interp_pt, x_temp, symmetry_exploited);
-  
-    double x1 = interp_pt[0];
-    double x2 = interp_pt[1];
-    double x3 = interp_pt[2];
+    // one thread per particle maps the position to the interpolant grid.
 
-    /*
-    * index into the grid and calculate weights
-    // */ 
-    double x1_grid_size = x1_range_d[3];
-    double x2_grid_size = x2_range_d[3];
-    double x3_grid_size = x3_range_d[3];
+    __shared__ double interp_pt[3*PARTICLES_PER_BLOCK];
 
-    int i = 3*((int) ((x1 - x1_range_d[0]) / x1_grid_size) /3);
-    int j = 3*((int) ((x2 - x2_range_d[0]) / x2_grid_size) /3);
-    int k = 3*((int) ((x3 - x3_range_d[0]) / x3_grid_size) /3);
-
-    i = min(i, (int)x1_range_d[2]-4);
-    j = min(j, (int)x2_range_d[2]-4);
-    k = min(k, (int)x3_range_d[2]-4);
-
-    i = max(i, 0); // if r too small to be in the device, extrapolate
-
-    // normalized positions in local grid wrt e.g. r at index i
-    // maps the position to [0,3] in the "meta grid"
-    double x1_rel = (x1 - i*x1_grid_size - x1_range_d[0]) / x1_grid_size;
-    double x2_rel = (x2 - j*x2_grid_size - x2_range_d[0]) / x2_grid_size;
-    double x3_rel = (x3 - k*x3_grid_size - x3_range_d[0]) / x3_grid_size;
-   
-    for(int i=0; i<4; ++i){
-        shape(x1_rel, x1_shape[i*PARTICLES_PER_BLOCK + threadIdx.x], i);
-        shape(x2_rel, x2_shape[i*PARTICLES_PER_BLOCK + threadIdx.x], i);
-        shape(x3_rel, x3_shape[i*PARTICLES_PER_BLOCK + threadIdx.x], i);
+    if(threadIdx.x < nparticles_blk){
+        constexpr CoordSys coord = map_rhs_to_coord<id>();
+        map_to_grid<double, coord>(interp_pt, x_temp, symmetry_exploited);
     }
+    __syncthreads();
 
-    // convert to cell id
-    index_i[threadIdx.x] = i/3;
-    index_j[threadIdx.x] = j/3;
-    index_k[threadIdx.x] = k/3;
+    // threads map each coordinate for each particle and compute its shape functions.
+    for(int idx=threadIdx.x; idx<3*PARTICLES_PER_BLOCK; idx+=PARTICLES_PER_BLOCK){
+        int particle_id = idx % PARTICLES_PER_BLOCK;
+        int coord_id = idx / PARTICLES_PER_BLOCK;
+
+        double value = interp_pt[idx];
+        double grid_size = grid_ranges_d[coord_id*4 + 3];
+        double min_bound = grid_ranges_d[coord_id*4 + 0];
+
+        int index = 3*((int) ((value - min_bound) / grid_size) /3);
+        index = min(index, (int)grid_ranges_d[coord_id*4 + 2]-4);
+        index = max(index, 0);
+
+        double value_rel = (value - index*grid_size - min_bound) / grid_size;
+
+        for(int i=0; i<4; ++i){
+            shape(value_rel, shape_fun_vals[(coord_id*4 + i)*PARTICLES_PER_BLOCK + particle_id], i);
+        }
+        cell_index_start[3*particle_id + coord_id] = index/3;
+    }
+    __syncthreads();
+
+
+    // double x1 = interp_pt[0];
+    // double x2 = interp_pt[1];
+    // double x3 = interp_pt[2];
+
+    // /*
+    // * index into the grid and calculate weights
+    // // */ 
+    // double x1_grid_size = x1_range_d[3];
+    // double x2_grid_size = x2_range_d[3];
+    // double x3_grid_size = x3_range_d[3];
+
+    // int i = 3*((int) ((x1 - x1_range_d[0]) / x1_grid_size) /3);
+    // int j = 3*((int) ((x2 - x2_range_d[0]) / x2_grid_size) /3);
+    // int k = 3*((int) ((x3 - x3_range_d[0]) / x3_grid_size) /3);
+
+    // i = min(i, (int)x1_range_d[2]-4);
+    // j = min(j, (int)x2_range_d[2]-4);
+    // k = min(k, (int)x3_range_d[2]-4);
+
+    // i = max(i, 0); // if r too small to be in the device, extrapolate
+
+    // // normalized positions in local grid wrt e.g. r at index i
+    // // maps the position to [0,3] in the "meta grid"
+    // double x1_rel = (x1 - i*x1_grid_size - x1_range_d[0]) / x1_grid_size;
+    // double x2_rel = (x2 - j*x2_grid_size - x2_range_d[0]) / x2_grid_size;
+    // double x3_rel = (x3 - k*x3_grid_size - x3_range_d[0]) / x3_grid_size;
+   
+    // for(int i=0; i<4; ++i){
+    //     shape(x1_rel, x1_shape[i*PARTICLES_PER_BLOCK + threadIdx.x], i);
+    //     shape(x2_rel, x2_shape[i*PARTICLES_PER_BLOCK + threadIdx.x], i);
+    //     shape(x3_rel, x3_shape[i*PARTICLES_PER_BLOCK + threadIdx.x], i);
+    // }
+
+    // // convert to cell id
+    // index_i[threadIdx.x] = i/3;
+    // index_j[threadIdx.x] = j/3;
+    // index_k[threadIdx.x] = k/3;
 
 };
 
@@ -754,22 +793,22 @@ __device__ void calc_max_timestep_size<CoordSys::Boozer>(double* dtmax, double* 
 // store these values for the remainder of tracing
 
 template<typename T, RHS id, typename... Args>
-__device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax, double* x_temp, bool* symmetry_exploited, int* index_i, int* index_j, int* index_k,
-                            double* quad_pts, double* x1_shape, double* x2_shape, double* x3_shape, double* state, double* derivs,
+__device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax, double* x_temp, bool* symmetry_exploited, int* cell_index_start,
+                            double* quad_pts, double* shape_fun_vals, double* state, double* derivs,
                             int nparticles_blk, Args... args){
 
     
     if(threadIdx.x < nparticles_blk){
         t[threadIdx.x] = 0.0;
         symmetry_exploited[threadIdx.x] = false;
-        build_state<id, 0>(x_temp, symmetry_exploited, index_i, index_j, index_k,
-                                x1_shape, x2_shape, x3_shape, state, derivs, t, dt);
         // dummy call to get norm B
         mu[threadIdx.x] = -1.0; // initialize mu
     }
+    build_state<id, 0>(x_temp, symmetry_exploited, cell_index_start,
+                        shape_fun_vals, state, derivs, t, dt, nparticles_blk);
     __syncthreads();
-    calc_derivs<T, id, 0>(derivs, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k,
-                     x1_shape, x2_shape, x3_shape, mu, nparticles_blk, args...);
+    calc_derivs<T, id, 0>(derivs, quad_pts, x_temp, symmetry_exploited, cell_index_start,
+                     shape_fun_vals, mu, nparticles_blk, args...);
     __syncthreads();
 
     if(threadIdx.x < nparticles_blk){
@@ -878,16 +917,14 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
 
 // helper function for a single DP5 evaluation
 template<RHS id, int deriv_id, typename... Args>
-__device__ void dp5_one_step(double* x_temp, double* derivs, double* quadpts_arr, int* index_i, int* index_j, int* index_k, 
-                            double* x1_shape, double* x2_shape, double* x3_shape, double* t, double* dt,
-                            bool* symmetry_exploited, double* state, double* mu, int nparticles_blk, bool is_valid, Args... args){
+__device__ void dp5_one_step(double* x_temp, double* derivs, double* quadpts_arr, int* cell_index_start,
+                            double* shape_fun_vals, double* t, double* dt,
+                            bool* symmetry_exploited, double* state, double* mu, int nparticles_blk, Args... args){
     // if the thread is responsible for a particle, compute the point at which the derivative will be computed
-    if(is_valid){
-        build_state<id, deriv_id>(x_temp, symmetry_exploited, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, state, derivs, t, dt);
-    }
+    build_state<id, deriv_id>(x_temp, symmetry_exploited, cell_index_start, shape_fun_vals, state, derivs, t, dt, nparticles_blk);
     // ensure that all threads have updated x_temp before calculating derivatives, where a data race would occur
     __syncthreads();
-    calc_derivs<double, id, deriv_id>(derivs, quadpts_arr, x_temp, symmetry_exploited, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, mu, nparticles_blk, args...);
+    calc_derivs<double, id, deriv_id>(derivs, quadpts_arr, x_temp, symmetry_exploited, cell_index_start, shape_fun_vals, mu, nparticles_blk, args...);
 
     // ensure all particles have derivative calculations before accepting/rejecting timestep
     __syncthreads();
@@ -907,12 +944,8 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
     __shared__ double derivs[42 * PARTICLES_PER_BLOCK];
     __shared__ double dt[PARTICLES_PER_BLOCK];
     __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
-    __shared__ int index_i[PARTICLES_PER_BLOCK];
-    __shared__ int index_j[PARTICLES_PER_BLOCK];
-    __shared__ int index_k[PARTICLES_PER_BLOCK];
-    __shared__ double x1_shape[4 * PARTICLES_PER_BLOCK];
-    __shared__ double x2_shape[4 * PARTICLES_PER_BLOCK];
-    __shared__ double x3_shape[4 * PARTICLES_PER_BLOCK];
+    __shared__ int cell_index_start[3*PARTICLES_PER_BLOCK];
+    __shared__ double shape_fun_vals[12*PARTICLES_PER_BLOCK]; // 4 shape function values for each of the 3 coordinates
     __shared__ double mu[PARTICLES_PER_BLOCK];
     __shared__ double t[PARTICLES_PER_BLOCK];
     __shared__ double dtmax[PARTICLES_PER_BLOCK];
@@ -936,26 +969,26 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
     __syncthreads();
 
     // calculate the particle's magnetic moment mu, dt, dtmax
-    setup_particle<double, id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
-                        quadpts_arr, x1_shape, x2_shape, x3_shape, state, derivs, nparticles_blk, args...);
+    setup_particle<double, id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, cell_index_start,
+                        quadpts_arr, shape_fun_vals, state, derivs, nparticles_blk, args...);
     __syncthreads();
 
     // if there exists a particle which is real and hasn't not reached tmax or left, keep tracing
     while(__syncthreads_count(is_valid && !(t[threadIdx.x] >= tmax_d || has_left[threadIdx.x])) > 0){
-        dp5_one_step<id, 0>(x_temp, derivs, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, is_valid, args...);
-        dp5_one_step<id, 1>(x_temp, derivs, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, is_valid, args...);
-        dp5_one_step<id, 2>(x_temp, derivs, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, is_valid, args...);
-        dp5_one_step<id, 3>(x_temp, derivs, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, is_valid, args...);
-        dp5_one_step<id, 4>(x_temp, derivs, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, is_valid, args...);
-        dp5_one_step<id, 5>(x_temp, derivs, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, is_valid, args...);
-        dp5_one_step<id, 6>(x_temp, derivs, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, is_valid, args...);
+        dp5_one_step<id, 0>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+                            symmetry_exploited, state, mu, nparticles_blk, args...);
+        dp5_one_step<id, 1>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+                            symmetry_exploited, state, mu, nparticles_blk, args...);
+        dp5_one_step<id, 2>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+                            symmetry_exploited, state, mu, nparticles_blk, args...);
+        dp5_one_step<id, 3>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+                            symmetry_exploited, state, mu, nparticles_blk, args...);
+        dp5_one_step<id, 4>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+                            symmetry_exploited, state, mu, nparticles_blk, args...);
+        dp5_one_step<id, 5>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+                            symmetry_exploited, state, mu, nparticles_blk, args...);
+        dp5_one_step<id, 6>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+                            symmetry_exploited, state, mu, nparticles_blk, args...);
         if(is_valid){
             adjust_time<id>(t, dt, state, derivs, x_temp, has_left, dtmax);
         }
@@ -1004,9 +1037,17 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     int n_x3 = (x3_range_ext[2]-1)/3;
     int n_x23 = n_x2*n_x3;
 
-    gpuErrchk(cudaMemcpyToSymbol(x1_range_d, x1_range_ext, 4*sizeof(double)) );
-    gpuErrchk(cudaMemcpyToSymbol(x2_range_d, x2_range_ext, 4*sizeof(double)) );
-    gpuErrchk(cudaMemcpyToSymbol(x3_range_d, x3_range_ext, 4*sizeof(double)) );
+    // combine ranges into one array
+    double grid_ranges[12];
+    for(int i=0; i<4; ++i){
+        grid_ranges[i] = x1_range_ext[i];
+        grid_ranges[4 + i] = x2_range_ext[i];
+        grid_ranges[8 + i] = x3_range_ext[i];
+    }
+
+    gpuErrchk(cudaMemcpyToSymbol(grid_ranges_d, grid_ranges, 12*sizeof(double)) );
+    // gpuErrchk(cudaMemcpyToSymbol(x2_range_d, x2_range_ext, 4*sizeof(double)) );
+    // gpuErrchk(cudaMemcpyToSymbol(x3_range_d, x3_range_ext, 4*sizeof(double)) );
     gpuErrchk(cudaMemcpyToSymbol(tmax_d, &tmax, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(mass_d, &m, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(charge_d, &q, sizeof(double)));
@@ -1289,12 +1330,8 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* loc, dou
 
     __shared__ double x_temp[5 * PARTICLES_PER_BLOCK];
     __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
-    __shared__ int index_i[PARTICLES_PER_BLOCK];
-    __shared__ int index_j[PARTICLES_PER_BLOCK];
-    __shared__ int index_k[PARTICLES_PER_BLOCK];
-    __shared__ double r_shape[4 * PARTICLES_PER_BLOCK];
-    __shared__ double phi_shape[4 * PARTICLES_PER_BLOCK];
-    __shared__ double z_shape[4 * PARTICLES_PER_BLOCK];
+    __shared__ int cell_index_start[3*PARTICLES_PER_BLOCK];
+    __shared__ double shape_fun_vals[12*PARTICLES_PER_BLOCK];
     __shared__ double state[4 * PARTICLES_PER_BLOCK];
     __shared__ double derivs[42 * PARTICLES_PER_BLOCK];
     __shared__ double dt[PARTICLES_PER_BLOCK];
@@ -1317,15 +1354,16 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* loc, dou
         state[3*PARTICLES_PER_BLOCK + threadIdx.x] = 0.0; // dummy vpar value
         t[threadIdx.x] = 0.0; // dummy time value
 
-        build_state<id, 0>(x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, state, derivs, t, dt);
 
         for(int i=0; i<n; ++i){
             block_interpolants[i*PARTICLES_PER_BLOCK + threadIdx.x] = 0.0;
         }
     } 
 
+    build_state<id, 0>(x_temp, symmetry_exploited, cell_index_start, shape_fun_vals, state, derivs, t, dt, nparticles_blk);
+
     __syncthreads();
-    interpolate<double, n>(block_interpolants, quad_pts, index_i, index_j, index_k, r_shape, phi_shape, z_shape, nparticles_blk);
+    interpolate<double, n>(block_interpolants, quad_pts, cell_index_start, shape_fun_vals, nparticles_blk);
     __syncthreads();
     
     if(is_valid){
@@ -1400,9 +1438,14 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
     int n_x3 = (x3_range_ext[2]-1)/3;
     int n_x23 = n_x2*n_x3;
 
-    gpuErrchk(cudaMemcpyToSymbol(x1_range_d, x1_range_ext, 4*sizeof(double)) );
-    gpuErrchk(cudaMemcpyToSymbol(x2_range_d, x2_range_ext, 4*sizeof(double)) );
-    gpuErrchk(cudaMemcpyToSymbol(x3_range_d, x3_range_ext, 4*sizeof(double)) );
+    double grid_ranges[12];
+    for(int i=0; i<4; ++i){
+        grid_ranges[i] = x1_range_ext[i];
+        grid_ranges[4 + i] = x2_range_ext[i];
+        grid_ranges[8 + i] = x3_range_ext[i];
+    }
+
+    gpuErrchk(cudaMemcpyToSymbol(grid_ranges_d, grid_ranges, 12*sizeof(double)) );
 
     gpuErrchk(cudaMemcpyToSymbol(n_x2_d, &n_x2, sizeof(int)) );
     gpuErrchk(cudaMemcpyToSymbol(n_x3_d, &n_x3, sizeof(int)) );
@@ -1455,12 +1498,8 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* loc, double* vp
     __shared__ double derivs[42 * PARTICLES_PER_BLOCK];
     __shared__ double dt[PARTICLES_PER_BLOCK];
     __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
-    __shared__ int index_i[PARTICLES_PER_BLOCK];
-    __shared__ int index_j[PARTICLES_PER_BLOCK];
-    __shared__ int index_k[PARTICLES_PER_BLOCK];
-    __shared__ double r_shape[4 * PARTICLES_PER_BLOCK];
-    __shared__ double phi_shape[4 * PARTICLES_PER_BLOCK];
-    __shared__ double z_shape[4 * PARTICLES_PER_BLOCK];
+    __shared__ int cell_index_start[3*PARTICLES_PER_BLOCK];
+    __shared__ double shape_fun_vals[12*PARTICLES_PER_BLOCK];
     __shared__ double mu[PARTICLES_PER_BLOCK];
     __shared__ double t[PARTICLES_PER_BLOCK];
     __shared__ double dtmax[PARTICLES_PER_BLOCK];
@@ -1484,18 +1523,18 @@ __global__ void test_gpu_derivs_kernel(double* quad_pts, double* loc, double* vp
     }
     __syncthreads();
 
-    setup_particle<double, id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
-                        quad_pts, r_shape, phi_shape, z_shape, state, derivs, nparticles_blk, args...);
+    setup_particle<double, id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, cell_index_start,
+                        quad_pts, shape_fun_vals, state, derivs, nparticles_blk, args...);
 
     __syncthreads();
 
     // set non-zero time
     if(is_valid){
         t[threadIdx.x] = time[idx];
-        build_state<id, 0>(x_temp, symmetry_exploited, index_i, index_j, index_k,
-                    r_shape, phi_shape, z_shape, state, derivs, t, dt);
     }
-    calc_derivs<double, id, 0>(derivs, quad_pts, x_temp, symmetry_exploited, index_i, index_j, index_k, r_shape, phi_shape, z_shape, mu, nparticles_blk, args...);
+    build_state<id, 0>(x_temp, symmetry_exploited, cell_index_start,
+            shape_fun_vals, state, derivs, t, dt, nparticles_blk);
+    calc_derivs<double, id, 0>(derivs, quad_pts, x_temp, symmetry_exploited, cell_index_start, shape_fun_vals, mu, nparticles_blk, args...);
     __syncthreads();
 
     if(is_valid){
@@ -1557,9 +1596,14 @@ py::array_t<double> test_gpu_derivatives(py::array_t<double> quad_pts, py::array
     int n_x23 = n_x2*n_x3;
     double tmax = 1e-2; // needed for setup_particle
 
-    gpuErrchk(cudaMemcpyToSymbol(x1_range_d, x1_range_ext, 4*sizeof(double)) );
-    gpuErrchk(cudaMemcpyToSymbol(x2_range_d, x2_range_ext, 4*sizeof(double)) );
-    gpuErrchk(cudaMemcpyToSymbol(x3_range_d, x3_range_ext, 4*sizeof(double)) );
+    double grid_ranges[12];
+    for(int i=0; i<4; ++i){
+        grid_ranges[i] = x1_range_ext[i];
+        grid_ranges[4 + i] = x2_range_ext[i];
+        grid_ranges[8 + i] = x3_range_ext[i];
+    }
+
+    gpuErrchk(cudaMemcpyToSymbol(grid_ranges_d, grid_ranges, 12*sizeof(double)) );
     gpuErrchk(cudaMemcpyToSymbol(tmax_d, &tmax, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(mass_d, &m, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(charge_d, &q, sizeof(double)));
@@ -1708,12 +1752,8 @@ __global__ void test_gpu_timestep_kernel(double* out, double* init_pos, double* 
     __shared__ double derivs[42 * PARTICLES_PER_BLOCK];
     __shared__ double dt[PARTICLES_PER_BLOCK];
     __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
-    __shared__ int index_i[PARTICLES_PER_BLOCK];
-    __shared__ int index_j[PARTICLES_PER_BLOCK];
-    __shared__ int index_k[PARTICLES_PER_BLOCK];
-    __shared__ double x1_shape[4 * PARTICLES_PER_BLOCK];
-    __shared__ double x2_shape[4 * PARTICLES_PER_BLOCK];
-    __shared__ double x3_shape[4 * PARTICLES_PER_BLOCK];
+    __shared__ int cell_index_start[3 * PARTICLES_PER_BLOCK];
+    __shared__ double shape_fun_vals[12 * PARTICLES_PER_BLOCK];
     __shared__ double mu[PARTICLES_PER_BLOCK];
     __shared__ double t[PARTICLES_PER_BLOCK];
     __shared__ double dtmax[PARTICLES_PER_BLOCK];
@@ -1736,27 +1776,27 @@ __global__ void test_gpu_timestep_kernel(double* out, double* init_pos, double* 
     __syncthreads();
 
     // calculate the particle's magnetic moment mu, dt, dtmax
-    setup_particle<double, id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, index_i, index_j, index_k,
-                        quadpts_arr, x1_shape, x2_shape, x3_shape, state, derivs, nparticles_blk, args...);
+    setup_particle<double, id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, cell_index_start,
+                        quadpts_arr, shape_fun_vals, state, derivs, nparticles_blk, args...);
     __syncthreads();
 
     // if there exists a particle at t=0, which is a real particle, then keep tracing
     while(__syncthreads_count(t[threadIdx.x] == 0.0  && is_valid) > 0){
         // calculate the 7 Dormand-Prince 5 derivatives
-        dp5_one_step<id, 0>(x_temp, derivs, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, is_valid, args...);
-        dp5_one_step<id, 1>(x_temp, derivs, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, is_valid, args...);
-        dp5_one_step<id, 2>(x_temp, derivs, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, is_valid, args...);
-        dp5_one_step<id, 3>(x_temp, derivs, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, is_valid, args...);
-        dp5_one_step<id, 4>(x_temp, derivs, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, is_valid, args...);
-        dp5_one_step<id, 5>(x_temp, derivs, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, is_valid, args...);
-        dp5_one_step<id, 6>(x_temp, derivs, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, is_valid, args...);
+        dp5_one_step<id, 0>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+                            symmetry_exploited, state, mu, nparticles_blk, args...);
+        dp5_one_step<id, 1>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+                            symmetry_exploited, state, mu, nparticles_blk, args...);
+        dp5_one_step<id, 2>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+                            symmetry_exploited, state, mu, nparticles_blk, args...);
+        dp5_one_step<id, 3>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+                            symmetry_exploited, state, mu, nparticles_blk, args...);
+        dp5_one_step<id, 4>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+                            symmetry_exploited, state, mu, nparticles_blk, args...);
+        dp5_one_step<id, 5>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+                            symmetry_exploited, state, mu, nparticles_blk, args...);
+        dp5_one_step<id, 6>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+                            symmetry_exploited, state, mu, nparticles_blk, args...);
         if(is_valid && t[threadIdx.x] == 0.0){
             adjust_time<id>(t, dt, state, derivs, x_temp, has_left, dtmax);
         }
@@ -1805,9 +1845,14 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
     int n_x23 = n_x2*n_x3;
     double tmax = 1e-2; // needed for setup_particle
 
-    gpuErrchk(cudaMemcpyToSymbol(x1_range_d, x1_range_ext, 4*sizeof(double)) );
-    gpuErrchk(cudaMemcpyToSymbol(x2_range_d, x2_range_ext, 4*sizeof(double)) );
-    gpuErrchk(cudaMemcpyToSymbol(x3_range_d, x3_range_ext, 4*sizeof(double)) );
+    double grid_ranges[12];
+    for(int i=0; i<4; ++i){
+        grid_ranges[i] = x1_range_ext[i];
+        grid_ranges[4 + i] = x2_range_ext[i];
+        grid_ranges[8 + i] = x3_range_ext[i];
+    }
+
+    gpuErrchk(cudaMemcpyToSymbol(grid_ranges_d, grid_ranges, 12*sizeof(double)) );
     gpuErrchk(cudaMemcpyToSymbol(tmax_d, &tmax, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(mass_d, &m, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(charge_d, &q, sizeof(double)));
