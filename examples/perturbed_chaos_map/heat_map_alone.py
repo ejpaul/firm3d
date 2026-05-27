@@ -295,10 +295,6 @@ for plot_counter, mu_h in enumerate(mu_harmonics):
                     alpha=0.5,
                 )
             if len(crossings) != 0:
-                if verbose:
-                    print(
-                        f"Harmonic {h}, ell={ell}, length of crossings greater than 1: {crossings=}"
-                    )
                 for crossing_index, radius in enumerate(crossings):
                     if ell in harmonics[h]:
                         # if the resonance location intercepts the rotational
@@ -395,9 +391,6 @@ if verbose:
 
                 diff = trapped_passing_fit - resonance_peta
                 sign_changes = np.where(np.sign(diff[:-1]) != np.sign(diff[1:]))[0]
-
-                print(f"Resonant line: {resonance_pitch=}")
-                print(f"Resonant line: {resonance_peta=}")
 
                 if len(sign_changes) == 0:
                     stop_index = len(resonance_pitch)

@@ -4215,16 +4215,6 @@ class MapPhaseSpace:
                 self.helicity_Mp,
                 self.helicity_Np,
             )
-            if np.isnan(peta).any():
-                print(
-                    f"Warning: NaN values encountered in p_eta calculation at s={surface} PA = {mu / self.Eprime}",
-                    flush=True,
-                )
-            if np.isinf(peta).any():
-                print(
-                    f"Warning: Inf values encountered in p_eta calculation at s={surface} PA = {mu / self.Eprime}",
-                    flush=True,
-                )
 
             return output, peta.tolist()
 
@@ -4306,9 +4296,6 @@ class MapPhaseSpace:
         volume_boundary_pitch = np.array(volume_boundary_pitch)
         volume_boundary_radlike = np.array(volume_boundary_radlike)
         volume_trapped = np.array(volume_trapped)
-
-        if np.isnan(volume_trapped).any():
-            print("volume trapped nan", flush=True)
 
         trapped_vals, pitch_edges, radlike_edges, binnumber = binned_statistic_2d(
             volume_boundary_pitch,
