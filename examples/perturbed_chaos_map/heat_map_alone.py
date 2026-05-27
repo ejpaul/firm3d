@@ -193,9 +193,9 @@ def compute_rotational_profile(pitch, sgn, s_profile, comm):
         mass,
         charge,
         Ekin,
-        ns_poinc=120,
-        ntheta_poinc=1,
-        Nmaps=50,
+        ns_poinc=50,
+        ntheta_poinc=50,
+        Nmaps=100,
         comm=comm,
         tmax=1e-2,
         solver_options={"axis": 0},
@@ -251,9 +251,12 @@ mpl.rcParams["ytick.labelsize"] = 12
 for plot_counter, mu_h in enumerate(mu_harmonics):
     # compute rotational profile for given pitch angle
     profile = compute_rotational_profile(
-        mu_h / (min_volmodB * Ekin), sign_vpar, False, comm=comm
+        mu_h / Ekin, sign_vpar, False, comm=comm
     )
-    perturbed_pitch_angle.append(sign_vpar * np.abs(mu_h) / Eprime)
+    if profile.shape[0] < 2:
+        continue  # skip if not enough points to compute resonance:
+    pitch_angle_h = (sign_vpar * np.abs(mu_h) / Ekin) * min_volmodB
+    perturbed_pitch_angle.append(pitch_angle_h)
     drift_helicity = profile[:, 3]
     radial_position = profile[:, 0]
 
@@ -263,7 +266,7 @@ for plot_counter, mu_h in enumerate(mu_harmonics):
         plt.plot(
             radial_position,
             drift_helicity,
-            label=f"$\\lambda$={sign_vpar * np.abs(mu_h) / Eprime:.2f}",
+            label=f"$\\lambda$={sign_vpar * np.abs(mu_h) / Ekin * min_volmodB:.2f}",
         )
 
     # creates a dictionary of the form
@@ -285,7 +288,10 @@ for plot_counter, mu_h in enumerate(mu_harmonics):
                 ell=ell,
             )
             crossings = calculate_crossings(drift_helicity, h_res, radial_position)
+            if verbose:
+                plt.plot([min(radial_position), max(radial_position)], [h_res, h_res], linestyle=possible_linestyles[ell + max_ell], color="gray", alpha=0.5)
             if len(crossings) != 0:
+                if verbose: print(f"Harmonic {h}, ell={ell}, length of crossings greater than 1: {crossings=}")
                 for crossing_index, radius in enumerate(crossings):
                     if ell in harmonics[h]:
                         # if the resonance location intercepts the rotational
@@ -294,13 +300,11 @@ for plot_counter, mu_h in enumerate(mu_harmonics):
                         # empty lists
                         if crossing_index > (len(harmonics[h][ell]) - 1):
                             harmonics[h][ell].append([[], []])
-                        harmonics[h][ell][crossing_index][0].append(
-                            sign_vpar * np.abs(mu_h) / Eprime
-                        )
+                        harmonics[h][ell][crossing_index][0].append(pitch_angle_h)
                         harmonics[h][ell][crossing_index][1].append(radius)
                     else:
                         harmonics[h][ell] = [
-                            [[sign_vpar * np.abs(mu_h) / Eprime], [radius]]
+                            [[pitch_angle_h], [radius]]
                         ]
 
     if verbose:
@@ -353,7 +357,7 @@ if verbose:
 
     # create subplots
     fig, (ax_right, ax_dummy) = plt.subplots(
-        1, 2, gridspec_kw={"width_ratios": [4, 0.61]}, figsize=(17, 12)
+        1, 2, gridspec_kw={"width_ratios": [4, 0.61]}, figsize=(18, 12)
     )
 
     # plot heatmap
@@ -371,8 +375,8 @@ if verbose:
 
         for ell in harmonics[h]:
             for crossing_line_index, crossing_line in enumerate(harmonics[h][ell]):
-                resonance_peta = np.asarray(crossing_line[0])
-                resonance_pitch = np.asarray(crossing_line[1])
+                resonance_peta = np.asarray(crossing_line[1])
+                resonance_pitch = np.asarray(crossing_line[0])
                 color = harmonic_cmap(norm(h))
 
                 # don't repeat label if resonance line crosses multiple times
@@ -390,10 +394,14 @@ if verbose:
                 print(f"Resonant line: {resonance_pitch=}")
                 print(f"Resonant line: {resonance_peta=}")
 
+                if len(sign_changes) == 0:
+                    stop_index = len(resonance_pitch)
+                else:
+                    stop_index = sign_changes[0]
 
                 (line,) = ax_right.plot(
-                    resonance_pitch[: sign_changes[0]],
-                    resonance_peta[: sign_changes[0]],
+                    resonance_pitch[: stop_index],
+                    resonance_peta[: stop_index],
                     linewidth=5,
                     linestyle=possible_linestyles[ell + max_ell],
                     label=label,

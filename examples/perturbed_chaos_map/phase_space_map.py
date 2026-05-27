@@ -56,7 +56,7 @@ plot_losses = False
 # poincare parameters
 nchi_poinc = 5
 ns_poinc = 500
-Nmaps = 2000
+Nmaps = 1500
 
 # Eprime parameters
 lam = 0.0
@@ -214,9 +214,9 @@ def compute_rotational_profile(pitch, sgn, s_profile, comm):
         mass,
         charge,
         Ekin,
-        ns_poinc=120,
-        ntheta_poinc=1,
-        Nmaps=50,
+        ns_poinc=50,
+        ntheta_poinc=50,
+        Nmaps=100,
         comm=comm,
         tmax=1e-2,
         solver_options={"axis": 0},
@@ -272,9 +272,12 @@ mpl.rcParams["ytick.labelsize"] = 12
 for plot_counter, mu_h in enumerate(mu_harmonics):
     # compute rotational profile for given pitch angle
     profile = compute_rotational_profile(
-        mu_h / (min_volmodB * Ekin), sign_vpar, False, comm=comm
+        mu_h / Ekin, sign_vpar, False, comm=comm
     )
-    perturbed_pitch_angle.append(sign_vpar * np.abs(mu_h) / Eprime)
+    if profile.shape[0] < 2:
+        continue  # skip if not enough points to compute resonance:
+    pitch_angle_h = (sign_vpar * np.abs(mu_h) / Ekin) * min_volmodB
+    perturbed_pitch_angle.append(pitch_angle_h)
     drift_helicity = profile[:, 3]
     radial_position = profile[:, 0]
 
@@ -284,7 +287,7 @@ for plot_counter, mu_h in enumerate(mu_harmonics):
         plt.plot(
             radial_position,
             drift_helicity,
-            label=f"$\\lambda$={sign_vpar * np.abs(mu_h) / Eprime:.2f}",
+            label=f"$\\lambda$={pitch_angle_h:.2f}",
         )
 
     # creates a dictionary of the form
@@ -306,6 +309,8 @@ for plot_counter, mu_h in enumerate(mu_harmonics):
                 ell=ell,
             )
             crossings = calculate_crossings(drift_helicity, h_res, radial_position)
+            if verbose:
+                plt.plot([min(radial_position), max(radial_position)], [h_res, h_res], linestyle=possible_linestyles[ell + max_ell], color="gray", alpha=0.5)
             if len(crossings) != 0:
                 for crossing_index, radius in enumerate(crossings):
                     if ell in harmonics[h]:
@@ -316,12 +321,12 @@ for plot_counter, mu_h in enumerate(mu_harmonics):
                         if crossing_index > (len(harmonics[h][ell]) - 1):
                             harmonics[h][ell].append([[], []])
                         harmonics[h][ell][crossing_index][0].append(
-                            sign_vpar * np.abs(mu_h) / Eprime
+                            pitch_angle_h
                         )
                         harmonics[h][ell][crossing_index][1].append(radius)
                     else:
                         harmonics[h][ell] = [
-                            [[sign_vpar * np.abs(mu_h) / Eprime], [radius]]
+                            [[pitch_angle_h], [radius]]
                         ]
 
     if verbose:
@@ -435,6 +440,8 @@ if verbose:
         DA_colorbar=False,
         s_axis_label=False,
     )
+    ax_center.set_ylim(0,1)
+    ax_left.set_ylim(0,1)
     legend_handles, legend_labels = ax_center.get_legend_handles_labels()
     if ax_center.get_legend() is not None:
         ax_center.get_legend().remove()
@@ -451,6 +458,8 @@ if verbose:
     fig = ax_right.get_figure()
 
     lines = []
+    labels_lines = []
+    labels_text = []
     # iterate through harmonics to plot
     for h in harmonics:
         Phim_h = AE_temp.harmonics[h].m
@@ -458,15 +467,13 @@ if verbose:
 
         for ell in harmonics[h]:
             for crossing_line_index, crossing_line in enumerate(harmonics[h][ell]):
-                resonance_peta = np.asarray(crossing_line[0])
-                resonance_pitch = np.asarray(crossing_line[1])
-                color = harmonic_cmap(norm(h))
+                resonance_peta = np.asarray(crossing_line[1])
+                resonance_pitch = np.asarray(crossing_line[0])
 
-                # don't repeat label if resonance line crosses multiple times
-                if crossing_line_index == 0:
-                    label = rf"m,n={Phim_h},{Phin_h} $\ell$={ell}"
-                else:
-                    label = None
+                if len(resonance_peta) < 3:
+                    continue  # skip if not enough points to plot resonance line:
+
+                color = harmonic_cmap(norm(h))
 
                 # fit a curve to the resonance points to plot on the heatmap
                 trapped_passing_fit = heat_map.trapped_boundary_fit(resonance_pitch)
@@ -474,21 +481,38 @@ if verbose:
                 diff = trapped_passing_fit - resonance_peta
                 sign_changes = np.where(np.sign(diff[:-1]) != np.sign(diff[1:]))[0]
 
+                # don't repeat label if resonance line crosses multiple times
+                if crossing_line_index == 0:
+                    label = rf"m,n={Phim_h},{Phin_h} $\ell$={ell}"
+                else:
+                    label = None
+
+                if len(sign_changes) == 0:
+                    stop_index = len(resonance_pitch)
+                else:
+                    stop_index = sign_changes[0]
+
+                if stop_index == 0:
+                    continue  # skip if resonance line is entirely in trapped region
                 (line,) = ax_right.plot(
-                    resonance_pitch[: sign_changes[0]],
-                    resonance_peta[: sign_changes[0]],
+                    resonance_pitch[: stop_index],
+                    resonance_peta[: stop_index],
                     linewidth=5,
                     linestyle=possible_linestyles[ell + max_ell],
                     label=label,
                     color=color,
                 )
+                labels_lines.append(possible_linestyles[ell + max_ell])
+                labels_text.append(
+                   label
+                )  # for legend
 
                 if crossing_line_index == 0:
                     lines.append(line)
-    legend_handles, legend_labels = ax_right.get_legend_handles_labels()
+    #legend_handles, legend_labels = ax_right.get_legend_handles_labels()
     ax_right.legend(
-        legend_handles,
-        legend_labels,
+        labels_lines,
+        labels_text,
         loc="upper left",
         bbox_to_anchor=(1.2, 1.0),
         borderaxespad=0.0,

@@ -588,6 +588,12 @@ class PassingPoincare:
                 omega_theta_prof[i] = np.mean(omega_theta[np.where(init_peta == s)])
                 omega_zeta_prof[i] = np.mean(omega_zeta[np.where(init_peta == s)])
                 s_prof[i] = np.mean(init_s[np.where(init_peta == s)])
+
+            sort_idx = np.argsort(peta_prof)
+            peta_prof = peta_prof[sort_idx]
+            omega_theta_prof = omega_theta_prof[sort_idx]
+            omega_zeta_prof = omega_zeta_prof[sort_idx]
+            s_prof = s_prof[sort_idx]
             return omega_theta_prof, omega_zeta_prof, peta_prof, s_prof
 
     def compute_ds_dangle(self, helicity_M, helicity_N):
@@ -4164,6 +4170,7 @@ class MapPhaseSpace:
         self.saw.set_points(points_phase)
         modB = self.saw.B0.modB()[:, 0]
         Phi = self.saw.Phi()[:, 0]
+        max_modB = np.max(modB)
 
         sign_arrs = np.ones_like(modB) * self.sign
 
@@ -4182,7 +4189,9 @@ class MapPhaseSpace:
 
         E = 0.5 * self.mass * vp_temp**2 + mu * modB + self.charge * Phi
 
-        output = ((E - mu * modB) < 0).astype(int)
+        E_potential = mu * max_modB + self.charge * Phi
+
+        output = ((E - E_potential) < 0).astype(int)
         output = output.tolist()
         if self.plot_s:
             return np.sum(output), surface
@@ -4208,31 +4217,6 @@ class MapPhaseSpace:
             
             return output, peta.tolist()
 
-    def trapped_passing_function(self, s, mu):
-        r"""
-        Determine whether a particle with the given pitch angle is trapped on a
-        specified flux surface.
-
-        Args:
-            surface     : Flux-surface label s.
-            mu          : Magnetic moment, not per mass.
-        Returns:
-            trapped : Integers (0 or 1) indicating whether trapped.
-        """
-        resolution = 500
-        pitch = mu / self.Ekin
-        points_temp = initialize_position_uniform_surf(
-            self.B0,
-            resolution,
-            s,
-            comm=None,
-        )
-        self.B0.set_points(points_temp)
-        modB = self.B0.modB()[:, 0]
-
-        if np.any(1 - (pitch * modB) < 0):
-            return 1
-        return 0
 
     def s_peta_map(self, s, mu, sign):
         r"""
@@ -4285,8 +4269,8 @@ class MapPhaseSpace:
         volume_boundary_radlike = []
         volume_boundary_pitch = []
         volume_trapped = []
-        radial_space = 70
-        pa_space = 70
+        radial_space = 100
+        pa_space = 100
 
         s_vals = np.linspace(self.s_min, self.s_max, radial_space)
         mu_vals = np.linspace(self.mu_min, self.mu_max, pa_space)
@@ -4295,7 +4279,7 @@ class MapPhaseSpace:
             for mu_val in mu_vals:
                 trapped, radial_like = self.surface_trapped_func_Eprime(mu_val, s_val)
 
-                pitch_val = mu_val / self.Ekin
+                pitch_val = (mu_val / self.Ekin) * self.min_volmodB
                 pitch_val *= self.sign
 
                 if self.plot_s:
@@ -4321,24 +4305,25 @@ class MapPhaseSpace:
             volume_boundary_radlike,
             volume_trapped,
             statistic="max",
-            bins=[pa_space, radial_space],
+            bins=[int(pa_space*0.80), int(radial_space * 0.80)],
         )
 
         pitch_c = 0.5 * (pitch_edges[:-1] + pitch_edges[1:])
         radlike_c = 0.5 * (radlike_edges[:-1] + radlike_edges[1:])
 
         T = np.nan_to_num(trapped_vals, nan=0.0).astype(int)
+        # x, y -> (pitch, peta) dimensions
 
         boundary_pitch, boundary_radlike = [], []
-        for j in range(T.shape[1] - 1, -1, -1):
-            col = T[:, j]
-            if not col.any() or col.all():
-                continue
-            i = int(np.argmax(col < 0.5))
-            pitch_b = pitch_c[i] if i == 0 else 0.5 * (pitch_c[i - 1] + pitch_c[i])
 
-            boundary_pitch.append(pitch_b)
-            boundary_radlike.append(radlike_c[j])
+        for pitch_i in range(0, T.shape[0]):
+            peta_data = T[pitch_i, :]
+            if not peta_data.any() or peta_data.all():
+                continue
+            peta_i = int(np.argmax(peta_data > 0.5))
+            peta_value = radlike_c[peta_i] if peta_i == 0 else 0.5 * (radlike_c[peta_i - 1] + radlike_c[peta_i])
+            boundary_pitch.append(pitch_c[pitch_i])
+            boundary_radlike.append(peta_value)
 
         boundary_pitch = np.array(boundary_pitch)
         boundary_radlike = np.array(boundary_radlike)
@@ -4352,46 +4337,11 @@ class MapPhaseSpace:
 
         pitch_fit = np.linspace(boundary_pitch.min(), boundary_pitch.max(), 300)
         radlike_fit = poly(pitch_fit)
+        trunc = int(np.argmin(radlike_fit))
+        pitch_fit = pitch_fit[:trunc]
+        radlike_fit = radlike_fit[:trunc]
 
         return poly, pitch_fit, radlike_fit
-
-    def return_flux_trapped_boundary(self):
-        r"""
-        Estimate the trapped-passing boundary by, for each flux surface, finding
-        the smallest mu at which a sampled point becomes trapped. The resulting
-        (pitch, s) or (pitch, p_eta) points are fit with a quadratic polynomial.
-
-        Returns:
-            poly : numpy.poly1d quadratic fit of the boundary.
-            pa_fit : Pitch coordinates of the fitted curve.
-            s_fit : Radial-like values (s or p_eta) of the fitted curve.
-        """
-        s_scope = np.linspace(self.s_min, self.s_max, 75)[::-1]
-        mu_scope = np.linspace(self.mu_min, self.mu_max, 75)
-
-        s_tp = []
-        pa_tp = []
-
-        for s in s_scope:
-            for mu in mu_scope:
-                if self.trapped_passing_function(s, mu) == 1:
-                    s_tp.append(s)
-                    pa_tp.append(mu * self.sign * self.min_volmodB / self.Ekin)
-                    break
-
-        if not self.plot_s:
-            peta_tp = []
-            for s, p_a in zip(s_tp, pa_tp):
-                mu = np.abs(p_a * self.Ekin / self.min_volmodB)
-                peta_tp.append(self.s_peta_map(s, mu, self.sign)[0])
-            s_tp = peta_tp
-
-        coeffs = np.polyfit(pa_tp, s_tp, 2)
-        poly = np.poly1d(coeffs)
-        pa_fit = np.linspace(min(pa_tp), max(pa_tp), 100)
-        s_fit = poly(pa_fit)
-
-        return poly, pa_fit, s_fit
 
     def plot_heatmap(
         self,
@@ -4466,7 +4416,6 @@ class MapPhaseSpace:
             Y *= -1
         im2 = ax.pcolormesh(X, Y, DA_stats.T, shading="auto", cmap=cmap, norm=norm)
 
-        #poly, pa_fit, rad_fit = self.return_flux_trapped_boundary()
         poly, pa_fit, rad_fit = self.return_peta_trapped_contoured_boundary()
         self.trapped_boundary_fit = poly
         ax.plot(

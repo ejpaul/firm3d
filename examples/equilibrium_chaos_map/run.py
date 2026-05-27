@@ -75,7 +75,6 @@ heat_map = MapEquilibrium(
     charge=charge,
     Ekin=Ekin,
     sign=sign_vpar,
-    plot_s=True,
     helicity_N=helicity_N,
     helicity_M=helicity_M,
     helicity_Mp=helicity_Mp,
