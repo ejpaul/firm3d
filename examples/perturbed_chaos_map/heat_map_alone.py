@@ -250,9 +250,7 @@ mpl.rcParams["ytick.labelsize"] = 12
 
 for plot_counter, mu_h in enumerate(mu_harmonics):
     # compute rotational profile for given pitch angle
-    profile = compute_rotational_profile(
-        mu_h / Ekin, sign_vpar, False, comm=comm
-    )
+    profile = compute_rotational_profile(mu_h / Ekin, sign_vpar, False, comm=comm)
     if profile.shape[0] < 2:
         continue  # skip if not enough points to compute resonance:
     pitch_angle_h = (sign_vpar * np.abs(mu_h) / Ekin) * min_volmodB
@@ -289,9 +287,18 @@ for plot_counter, mu_h in enumerate(mu_harmonics):
             )
             crossings = calculate_crossings(drift_helicity, h_res, radial_position)
             if verbose:
-                plt.plot([min(radial_position), max(radial_position)], [h_res, h_res], linestyle=possible_linestyles[ell + max_ell], color="gray", alpha=0.5)
+                plt.plot(
+                    [min(radial_position), max(radial_position)],
+                    [h_res, h_res],
+                    linestyle=possible_linestyles[ell + max_ell],
+                    color="gray",
+                    alpha=0.5,
+                )
             if len(crossings) != 0:
-                if verbose: print(f"Harmonic {h}, ell={ell}, length of crossings greater than 1: {crossings=}")
+                if verbose:
+                    print(
+                        f"Harmonic {h}, ell={ell}, length of crossings greater than 1: {crossings=}"
+                    )
                 for crossing_index, radius in enumerate(crossings):
                     if ell in harmonics[h]:
                         # if the resonance location intercepts the rotational
@@ -303,9 +310,7 @@ for plot_counter, mu_h in enumerate(mu_harmonics):
                         harmonics[h][ell][crossing_index][0].append(pitch_angle_h)
                         harmonics[h][ell][crossing_index][1].append(radius)
                     else:
-                        harmonics[h][ell] = [
-                            [[pitch_angle_h], [radius]]
-                        ]
+                        harmonics[h][ell] = [[[pitch_angle_h], [radius]]]
 
     if verbose:
         # plot the rotational profile
@@ -400,8 +405,8 @@ if verbose:
                     stop_index = sign_changes[0]
 
                 (line,) = ax_right.plot(
-                    resonance_pitch[: stop_index],
-                    resonance_peta[: stop_index],
+                    resonance_pitch[:stop_index],
+                    resonance_peta[:stop_index],
                     linewidth=5,
                     linestyle=possible_linestyles[ell + max_ell],
                     label=label,

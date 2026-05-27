@@ -1424,6 +1424,7 @@ class TrappedPoincare:
 
         return omega_eta_prof, omega_b_prof, s_prof
 
+
 def compute_peta(
     field_or_saw,
     points,
@@ -1522,6 +1523,7 @@ def compute_peta(
         / denom
     )
     return peta
+
 
 def compute_Eprime(
     saw, points, vpar, mu, mass, charge, helicity_M, helicity_N, nprime=None
@@ -2303,7 +2305,7 @@ class PassingPerturbedPoincare:
             resonance_lines : List of resonance lines to plot on Poincare map.
                 Each element should be a s value.
             line_plotting_kwargs : List of dictionaries of keyword arguments for
-                plotting resonance lines. Should be the same length as 
+                plotting resonance lines. Should be the same length as
                 `resonance_lines`.
             ylims : Tuple specifying y-axis limits for the Poincare plot.
             DA_colorbar : Boolean indicating for DA colorbar inclusion.
@@ -2588,7 +2590,7 @@ class MapEquilibrium:
         """
         if solver_options is None:
             solver_options = {}
-        self.solver_options=solver_options
+        self.solver_options = solver_options
         if s_lims is None:
             s_lims = [0.05, 0.95]
 
@@ -3265,6 +3267,7 @@ class MapEquilibrium:
             plt.plot(self.convergence_times[i], self.convergence_DAs[i], alpha=0.5)
         plt.savefig(savepath[:-4] + "_convergence.pdf")
 
+
 def return_bounces_and_passes(vpar_path, zeta_path):
     r"""
     Count guiding-center bounces and toroidal transits along a trajectory.
@@ -3311,6 +3314,7 @@ def return_bounces_and_passes(vpar_path, zeta_path):
             true_passes.append(wrap_idx[passing_index])
 
     return bounce_indices, true_passes
+
 
 class MapPhaseSpace:
     r"""
@@ -3797,7 +3801,6 @@ class MapPhaseSpace:
 
         return points[:, 0], points[:, 1], points[:, 2], vpars_init, mus_per_mass
 
-
     def trace_particles(self):
         r"""
         Trace all initialized particles in the perturbed field and compute
@@ -4166,7 +4169,9 @@ class MapPhaseSpace:
         """
         resolution = 500
         points = initialize_position_uniform_surf(self.B0, resolution, surface)
-        points_phase = np.column_stack((points, np.zeros(points.shape[0])))  # add time column
+        points_phase = np.column_stack(
+            (points, np.zeros(points.shape[0]))
+        )  # add time column
         self.saw.set_points(points_phase)
         modB = self.saw.B0.modB()[:, 0]
         Phi = self.saw.Phi()[:, 0]
@@ -4198,25 +4203,30 @@ class MapPhaseSpace:
         else:
             if points.shape[0] == 0:
                 return [], []
-            
-            peta = compute_peta(
-                    self.B0,
-                    points,
-                    vp_temp,
-                    self.mass,
-                    self.charge,
-                    self.helicity_M,
-                    self.helicity_N,
-                    self.helicity_Mp,
-                    self.helicity_Np,
-                )
-            if np.isnan(peta).any():
-                print(f"Warning: NaN values encountered in p_eta calculation at s={surface} PA = {mu/self.Eprime}", flush=True)
-            if np.isinf(peta).any():
-                print(f"Warning: Inf values encountered in p_eta calculation at s={surface} PA = {mu/self.Eprime}", flush=True)
-            
-            return output, peta.tolist()
 
+            peta = compute_peta(
+                self.B0,
+                points,
+                vp_temp,
+                self.mass,
+                self.charge,
+                self.helicity_M,
+                self.helicity_N,
+                self.helicity_Mp,
+                self.helicity_Np,
+            )
+            if np.isnan(peta).any():
+                print(
+                    f"Warning: NaN values encountered in p_eta calculation at s={surface} PA = {mu / self.Eprime}",
+                    flush=True,
+                )
+            if np.isinf(peta).any():
+                print(
+                    f"Warning: Inf values encountered in p_eta calculation at s={surface} PA = {mu / self.Eprime}",
+                    flush=True,
+                )
+
+            return output, peta.tolist()
 
     def s_peta_map(self, s, mu, sign):
         r"""
@@ -4298,14 +4308,14 @@ class MapPhaseSpace:
         volume_trapped = np.array(volume_trapped)
 
         if np.isnan(volume_trapped).any():
-            print(f"volume trapped nan", flush=True)
+            print("volume trapped nan", flush=True)
 
         trapped_vals, pitch_edges, radlike_edges, binnumber = binned_statistic_2d(
             volume_boundary_pitch,
             volume_boundary_radlike,
             volume_trapped,
             statistic="max",
-            bins=[int(pa_space*0.80), int(radial_space * 0.80)],
+            bins=[int(pa_space * 0.80), int(radial_space * 0.80)],
         )
 
         pitch_c = 0.5 * (pitch_edges[:-1] + pitch_edges[1:])
@@ -4321,7 +4331,11 @@ class MapPhaseSpace:
             if not peta_data.any() or peta_data.all():
                 continue
             peta_i = int(np.argmax(peta_data > 0.5))
-            peta_value = radlike_c[peta_i] if peta_i == 0 else 0.5 * (radlike_c[peta_i - 1] + radlike_c[peta_i])
+            peta_value = (
+                radlike_c[peta_i]
+                if peta_i == 0
+                else 0.5 * (radlike_c[peta_i - 1] + radlike_c[peta_i])
+            )
             boundary_pitch.append(pitch_c[pitch_i])
             boundary_radlike.append(peta_value)
 
@@ -4688,7 +4702,7 @@ class WBAPerturbedParticles:
         (self.gc_tys, self.DAs, self.wall_lost, self.dense_output) = (
             self.trace_particles()
         )
-        return 
+        return
 
     def check_filepaths(self, filepaths):
         r"""
@@ -4717,10 +4731,10 @@ class WBAPerturbedParticles:
 
         for itrj in range(first, last):
             if self.trace:
-                pts = np.zeros((1,3))
-                pts[:,0] = self.points0[itrj, 0]
-                pts[:,1] = self.points0[itrj, 1]
-                pts[:,2] = self.points0[itrj, 2]
+                pts = np.zeros((1, 3))
+                pts[:, 0] = self.points0[itrj, 0]
+                pts[:, 1] = self.points0[itrj, 1]
+                pts[:, 2] = self.points0[itrj, 2]
                 gc_tys, gc_zeta_hits = trace_particles_boozer_perturbed(
                     perturbed_field=self.saw,
                     stz_inits=pts,
@@ -4893,6 +4907,7 @@ class WBAPerturbedParticles:
             res_tys = self.gc_tys
         self.build_lists(dense_output)
         return res_tys, DA_data, wall_lost, dense_output
+
     def build_lists(self, dense_output):
         r"""
         Process trajectory summary data into lists that can be compared
@@ -5187,7 +5202,6 @@ class WBAParticles:
             exists_all : True if every path exists, otherwise False.
         """
         return all(exists(fp) for fp in filepaths.values())
-
 
     def trace_particles(self):
         r"""

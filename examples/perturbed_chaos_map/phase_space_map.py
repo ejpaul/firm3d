@@ -271,9 +271,7 @@ mpl.rcParams["ytick.labelsize"] = 12
 
 for plot_counter, mu_h in enumerate(mu_harmonics):
     # compute rotational profile for given pitch angle
-    profile = compute_rotational_profile(
-        mu_h / Ekin, sign_vpar, False, comm=comm
-    )
+    profile = compute_rotational_profile(mu_h / Ekin, sign_vpar, False, comm=comm)
     if profile.shape[0] < 2:
         continue  # skip if not enough points to compute resonance:
     pitch_angle_h = (sign_vpar * np.abs(mu_h) / Ekin) * min_volmodB
@@ -310,7 +308,13 @@ for plot_counter, mu_h in enumerate(mu_harmonics):
             )
             crossings = calculate_crossings(drift_helicity, h_res, radial_position)
             if verbose:
-                plt.plot([min(radial_position), max(radial_position)], [h_res, h_res], linestyle=possible_linestyles[ell + max_ell], color="gray", alpha=0.5)
+                plt.plot(
+                    [min(radial_position), max(radial_position)],
+                    [h_res, h_res],
+                    linestyle=possible_linestyles[ell + max_ell],
+                    color="gray",
+                    alpha=0.5,
+                )
             if len(crossings) != 0:
                 for crossing_index, radius in enumerate(crossings):
                     if ell in harmonics[h]:
@@ -320,14 +324,10 @@ for plot_counter, mu_h in enumerate(mu_harmonics):
                         # empty lists
                         if crossing_index > (len(harmonics[h][ell]) - 1):
                             harmonics[h][ell].append([[], []])
-                        harmonics[h][ell][crossing_index][0].append(
-                            pitch_angle_h
-                        )
+                        harmonics[h][ell][crossing_index][0].append(pitch_angle_h)
                         harmonics[h][ell][crossing_index][1].append(radius)
                     else:
-                        harmonics[h][ell] = [
-                            [[pitch_angle_h], [radius]]
-                        ]
+                        harmonics[h][ell] = [[[pitch_angle_h], [radius]]]
 
     if verbose:
         # plot the rotational profile
@@ -392,8 +392,8 @@ if verbose:
         )
         # avoid repeating labels for multiple resonance lines
         # with the same ell value
-        if i > 0: # noqa: SIM102
-            if ell_list[i] == ell_list[i - 1]: # noqa: SIM102
+        if i > 0:  # noqa: SIM102
+            if ell_list[i] == ell_list[i - 1]:  # noqa: SIM102
                 line_kwargs_labeled.append(
                     {"color": linecolors[i], "linestyle": ls, "linewidth": 5}
                 )
@@ -440,8 +440,8 @@ if verbose:
         DA_colorbar=False,
         s_axis_label=False,
     )
-    ax_center.set_ylim(0,1)
-    ax_left.set_ylim(0,1)
+    ax_center.set_ylim(0, 1)
+    ax_left.set_ylim(0, 1)
     legend_handles, legend_labels = ax_center.get_legend_handles_labels()
     if ax_center.get_legend() is not None:
         ax_center.get_legend().remove()
@@ -495,21 +495,19 @@ if verbose:
                 if stop_index == 0:
                     continue  # skip if resonance line is entirely in trapped region
                 (line,) = ax_right.plot(
-                    resonance_pitch[: stop_index],
-                    resonance_peta[: stop_index],
+                    resonance_pitch[:stop_index],
+                    resonance_peta[:stop_index],
                     linewidth=5,
                     linestyle=possible_linestyles[ell + max_ell],
                     label=label,
                     color=color,
                 )
                 labels_lines.append(possible_linestyles[ell + max_ell])
-                labels_text.append(
-                   label
-                )  # for legend
+                labels_text.append(label)  # for legend
 
                 if crossing_line_index == 0:
                     lines.append(line)
-    #legend_handles, legend_labels = ax_right.get_legend_handles_labels()
+    # legend_handles, legend_labels = ax_right.get_legend_handles_labels()
     ax_right.legend(
         labels_lines,
         labels_text,
