@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <cmath>
+#include <cstdio>
 #include <stdexcept>
 #include <algorithm>
 #include <functional>
@@ -135,7 +136,12 @@ inline CollisionCoefficients compute_collision_coefficients(
         double bqm      = COLL_HBAR / (2.0 * m_r * std::sqrt(v_eff_sq));
         double b_min    = std::max(bcl, bqm);
         double lnL      = std::log(lambda_D / b_min);
-        lnL = std::max(lnL, 2.0);
+        if (lnL < 2.0) {
+            std::fprintf(stderr,
+                "collisions: warning: ln_Lambda = %.3f < 2 "
+                "(v=%.3e m/s, s=%.3f, species m=%.3e kg, q=%.3e C)\n",
+                lnL, v, s, m_b, q_b);
+        }
 
         double G      = chandrasekhar_G(x);
         double Gp     = chandrasekhar_G_deriv(x);   // dG/dx
