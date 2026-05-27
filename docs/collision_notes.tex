@@ -95,6 +95,30 @@ linearly interpolated in C++.
 \label{sec:coefs}
 %-----------------------------------------------------------------------
 
+\subsection*{Notation}
+
+The symbols used here follow the ASCOT5 source code (\texttt{mccc\_coefs.h},
+\cite{ascot5code}); Table~\ref{tab:notation} shows the correspondence with
+Hirvijoki et al.\ \cite{hirvijoki2013}, whose Eqs.~(32)--(33) define the
+SDE structure.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lll}
+\hline
+This paper & ASCOT5 \texttt{mccc\_coefs.h} & Hirvijoki et al.\ \cite{hirvijoki2013} \\
+\hline
+$D_{\parallel}$   & \texttt{Dpara}  & $D_k/2$ \\
+$\nu_D$           & \texttt{nu}~$= 2D_\perp/v^2$ & $2D_\perp/v^2$ \\
+$Q$               & \texttt{Q}      & (friction term in $K$) \\
+$K$               & \texttt{K}~$= Q + D_\parallel' + 2D_\parallel/v$ & $K$ (drift in Eq.~32) \\
+\hline
+\end{tabular}
+\caption{Notation correspondence. The noise amplitude for $v$ is
+$g_v = \sqrt{2D_\parallel}$~(this paper) $= \sqrt{D_k}$~(Hirvijoki~2013).}
+\label{tab:notation}
+\end{table}
+
 \subsection{Debye Length}
 
 The total Debye screening length from all background species is \cite{spitzer1962,nrl}
@@ -149,7 +173,8 @@ i.e.\ when the de~Broglie wavelength of the reduced mass particle exceeds the
 classical distance of closest approach.  For 3.52\,MeV $\alpha$-particles
 scattering off 10\,keV electrons one finds $b_{\mathrm{qm}} \approx 22\,b_{\mathrm{cl}}$,
 so the quantum branch is active throughout alpha slowing-down against electrons.
-A floor $\lnL \geq 2$ is applied.
+A warning is printed if $\lnL < 2$, where the perturbative binary-collision
+expansion underlying the Fokker--Planck operator begins to lose validity.
 
 \subsection{Chandrasekhar G Function}
 
@@ -162,9 +187,7 @@ Its derivative satisfies the recurrence
 \begin{equation}
   G'(x) = \frac{2}{\sqrt{\pi}}\,e^{-x^2} - \frac{G(x)}{x}.
 \end{equation}
-For $x<10^{-4}$ the Taylor expansion
-$G(x)\approx \dfrac{2x}{3\sqrt{\pi}}\!\left(1-\dfrac{2x^2}{5}\right)$
-is used to avoid cancellation.  Key limiting behaviours:
+Key limiting behaviours:
 \begin{align*}
   x\to 0:&\quad G\to 0,\quad G'\to 2/(3\sqrt{\pi})\approx 0.376; \\
   x\to\infty:&\quad G\to 1/(2x^2),\quad G'\to 0.
@@ -182,10 +205,14 @@ Define the Rosenbluth prefactor for species $b$ \cite{rosenbluth1957,trubnikov19
 \subsection{Pitch-Angle Scattering Frequency}
 
 \begin{equation}
-  \nu_D^{(b)} = \frac{\Gamma_b\,[\erf(x) - G(x)]}{v^3}.
+  \nu_D^{(b)} = \frac{\Gamma_b\,[\erf(x) - G(x)]}{v^3}
+  \;\equiv\; \frac{2D_\perp^{(b)}}{v^2}.
   \label{eq:nuD}
 \end{equation}
-This corresponds to $2D_\perp/v^2$ in ASCOT5 notation \cite{hirvijoki2013,hirvijoki2014}.
+The second form uses the perpendicular diffusion coefficient
+$D_\perp^{(b)} = \Gamma_b[\erf(x)-G(x)]/(2v)$
+and matches ASCOT5's \texttt{mccc\_coefs\_nu} and the $2D_\perp/v^2$
+notation of Hirvijoki et al.\ \cite{hirvijoki2013,hirvijoki2014}.
 
 \subsection{Parallel Diffusion Coefficient}
 
@@ -196,16 +223,23 @@ This corresponds to $2D_\perp/v^2$ in ASCOT5 notation \cite{hirvijoki2013,hirvij
   = \frac{\Gamma_b}{v}\!\left(\frac{G'(x)}{\vth[b]} - \frac{G(x)}{v}\right).
   \label{eq:Dpar}
 \end{equation}
+In Hirvijoki et al.\ \cite{hirvijoki2013} the parallel diffusion coefficient
+is denoted $D_k$, with $D_{\parallel} = D_k/2$; the noise amplitude for the
+speed SDE is $\sqrt{D_k} = \sqrt{2D_{\parallel}}$ in both conventions.
+ASCOT5 names this coefficient \texttt{Dpara}.
 The $v$-derivative is required by the Milstein correction term
 (Section~\ref{sec:milstein}).
 
 \subsection{Deterministic Drag in $v$}
 
-The friction (drag) coefficient \cite{trubnikov1965,helander2002} is
+The friction (drag) coefficient \cite{trubnikov1965,helander2002}
+(ASCOT5: \texttt{Q}) is
 \begin{equation}
   Q^{(b)} = -\!\left(1 + \frac{m_a}{m_b}\right)\frac{\Gamma_b\,G(x)}{v^2}.
 \end{equation}
 The total deterministic drift in speed, including the It\^o correction
+arising from the transformation of the Fokker--Planck operator from
+Cartesian velocity space to the speed coordinate $v$
 \cite{hirvijoki2013}, is
 \begin{equation}
   K^{(b)}
@@ -214,9 +248,12 @@ The total deterministic drift in speed, including the It\^o correction
     + \frac{2\,D_{\parallel}^{(b)}}{v}.
     \label{eq:K}
 \end{equation}
-The two extra terms arise from transforming the Fokker--Planck operator from
-Cartesian velocity space to the speed coordinate $v$.  In ASCOT5 notation,
-$K \equiv Q + D_\parallel' + 2D_\parallel/v$ \cite{hirvijoki2014}.
+This is ASCOT5's \texttt{mccc\_coefs\_K} \cite{ascot5code} and the drift
+coefficient $K$ in Eq.~(32) of Hirvijoki et al.\ \cite{hirvijoki2013}.
+Note that $Q$ alone is the physical friction; the remaining two terms are
+the It\^o correction $\tfrac{1}{2}\partial_v g_v^2 = \partial_v D_\parallel$
+plus the geometric term $2D_\parallel/v$ from the Jacobian $v^2$ of
+spherical velocity-space coordinates.
 
 \subsection{Summation over Species}
 
