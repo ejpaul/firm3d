@@ -2656,6 +2656,15 @@ class MapEquilibrium:
         self.convergence_points = nconvergence_points
 
         self.randomize = randomize_particles
+        if not randomize_particles:
+            self.ns_points = ns_points
+            self.nlambda_points = nlambda_points
+            self.nParticles = ns_points * particles_per_surface * nlambda_points
+        else:
+            self.nParticles = number_of_particles
+            xy_pts = int(np.sqrt(number_of_particles / particles_per_surface))
+            self.ns_points = xy_pts
+            self.nlambda_points = xy_pts
 
         if exists(self.savepath + "initial_conditions.txt"):
             initial_conditions = np.loadtxt(self.savepath + "initial_conditions.txt")
@@ -2667,16 +2676,6 @@ class MapEquilibrium:
                 initial_conditions[:, 4],
             )
         else:
-            if not randomize_particles:
-                self.ns_points = ns_points
-                self.nlambda_points = nlambda_points
-                self.nParticles = ns_points * particles_per_surface * nlambda_points
-            else:
-                self.nParticles = number_of_particles
-                xy_pts = int(np.sqrt(number_of_particles / particles_per_surface))
-                self.ns_points = xy_pts
-                self.nlambda_points = xy_pts
-
             self.particles_per_surface = particles_per_surface
             s, thetas, zetas, vpar, mu = self.initialize_particles()
 
@@ -2988,7 +2987,7 @@ class MapEquilibrium:
         lost_total = []
         final_times = []
         trapped = []
-        Peta_start = []
+        radial_coordinate_start = []
         pitch = []
 
         s0 = []
@@ -3013,9 +3012,9 @@ class MapEquilibrium:
 
             pitch.append(start_state[5] / self.Ekin)
             if self.plot_s:
-                Peta_start.append(start_state[0])
+                radial_coordinate_start.append(start_state[0])
             else:
-                Peta_start.append(start_state[4])
+                radial_coordinate_start.append(start_state[4])
             final_time = end_state[0]
             final_times.append(final_time)
             DAs_at_loss.append(end_state[8])
@@ -3052,7 +3051,7 @@ class MapEquilibrium:
         self.lost_total = lost_total
         self.final_times = final_times
         self.trapped = trapped
-        self.Peta_start = Peta_start
+        self.radial_coordinate_start = radial_coordinate_start
 
         self.s0 = s0
         self.mu0 = mu0
@@ -3085,7 +3084,7 @@ class MapEquilibrium:
             s : Flux-surface label (scalar or array-like).
             theta : Boozer poloidal angle.
             zeta : Boozer toroidal angle.
-            mu : Magnetic moment per mass.
+            mu : Magnetic moment.
             sgn : Desired sign of the parallel velocity.
 
         Returns:
@@ -3176,44 +3175,80 @@ class MapEquilibrium:
             )
             self.B0.set_points(points_temp)
             modB = self.B0.modB()[:, 0]
+            max_modB = np.max(modB)
+            mu = pitch * self.Ekin
 
-            if np.any(1 - (pitch * modB) < 0):
-                return 1
-            return 0
+            vp_temp = self.vpar_func(
+                points_temp[:, 0], points_temp[:, 1], points_temp[:, 2], mu, self.sign
+            )
 
-        def s_peta_map(s, mu, sign):
-            r"""
-            Map a point to canonical momentum p_eta using current settings.
+            mask = ~np.isnan(vp_temp)
+            points_temp = points_temp[mask]
+            modB = modB[mask]
+            vp_temp = vp_temp[mask]
 
-            Args:
-                s : Radial-like coordinate.
-                mu : Magnetic moment.
-                sign : Desired sign for parallel velocity.
-            Returns:
-                peta : Canonical momentum value at the requested point.
-            """
-            points = np.zeros((3, 1)) if np.isscalar(s) else np.zeros((3, len(s)))
-            points[0, :] = s
-
-            vp_temp = self.vpar_func(points[0, 0], points[0, 1], points[0, 2], mu, sign)
+            if points_temp.shape[0] == 0:
+                return 0, [None]
 
             peta = compute_peta(
                 self.B0,
-                points,
+                points_temp,
                 vp_temp,
                 self.mass,
                 self.charge,
                 self.helicity_M,
                 self.helicity_N,
+                self.helicity_Mp,
+                self.helicity_Np,
             )
-            return peta
+            # mask = ~np.isnan(peta)
+            # peta = peta[mask]
+
+            if np.any(1 - (pitch * max_modB) < 0):
+                return 1, peta
+            return 0, peta
+
+        def make_boundary(petas, pitches, trapped):
+
+            trapped_vals, pitch_edges, radlike_edges, binnumber = binned_statistic_2d(
+                pitches,
+                petas,
+                trapped,
+                statistic="mean",
+                bins=[70, 70],
+            )
+            pitch_c = 0.5 * (pitch_edges[:-1] + pitch_edges[1:])
+            radlike_c = 0.5 * (radlike_edges[:-1] + radlike_edges[1:])
+
+            T = np.nan_to_num(trapped_vals, nan=0.0).astype(int)
+            # x, y -> (pitch, peta) dimensions
+
+            boundary_pitch, boundary_radlike = [], []
+
+            for peta_i in range(0, T.shape[1]):
+                pitch_data = T[:, peta_i]
+                if not pitch_data.any() or pitch_data.all():
+                    continue
+                pitch_i = int(np.argmin(pitch_data > 0.5))
+                pitch_value = pitch_c[pitch_i]
+                boundary_pitch.append(pitch_value)
+                boundary_radlike.append(radlike_c[peta_i])
+
+            boundary_pitch = np.array(boundary_pitch)
+            boundary_radlike = np.array(boundary_radlike)
+
+            order = np.argsort(boundary_pitch)
+            boundary_pitch = boundary_pitch[order]
+            boundary_radlike = boundary_radlike[order]
+            boundary_pitch *= self.min_volmodB
+            return boundary_pitch, boundary_radlike
 
         normalized_pitch = np.array(self.pitch) * self.min_volmodB * self.sign
-        peta_start = np.array(self.Peta_start)
+        radial_coordinate_start = np.array(self.radial_coordinate_start)
 
         stat, x_edges, y_edges, binnumber = binned_statistic_2d(
             normalized_pitch,
-            peta_start,
+            radial_coordinate_start,
             fDA,
             statistic=statistic,
             bins=[nx, ny],
@@ -3229,29 +3264,39 @@ class MapEquilibrium:
         pa_min, pa_max = (self.mu_min / self.Ekin), (self.mu_max / self.Ekin)
         pa_scope = np.linspace(pa_min, pa_max, 75)
 
-        s_tp = []
+        rad_like_tp = []
         pa_tp = []
+        trapped_vals = []
 
         for s in s_scope:
             for pa in pa_scope:
-                if trapped_passing_function(s, pa) == 1:
-                    s_tp.append(s)
-                    pa_tp.append(pa * self.sign * self.min_volmodB)
+                normalized_pitch_i = pa * self.sign
+                trapped, rad_like = trapped_passing_function(s, pa)
+                if trapped == 1 and self.plot_s:
+                    rad_like_tp.append(s)
+                    pa_tp.append(normalized_pitch_i)
                     break
+                if not self.plot_s:
+                    if rad_like[0] is None:
+                        continue
+                    if not isinstance(rad_like, list):
+                        rad_like = rad_like.tolist()
+                    rad_like_tp += rad_like
+                    pa_tp += [normalized_pitch_i] * len(rad_like)
+                    trapped_vals += [trapped] * len(rad_like)
 
-        s_tp = np.array(s_tp)
+        rad_like_tp = np.array(rad_like_tp)
         pa_tp = np.array(pa_tp)
+        trapped_vals = np.array(trapped_vals)
 
         if self.plot_s:
             ax.set_ylabel(r"$s$")
         else:
             ax.set_ylabel(r"$P_\eta$")
-            peta_tp = []
-            for s, mu in zip(s_tp, (pa_tp * self.Ekin) / self.min_volmodB):
-                peta_tp.append(s_peta_map(s, mu, self.sign))
-            s_tp = np.array(peta_tp)
+            pa_tp, rad_like_tp = make_boundary(rad_like_tp, pa_tp, trapped_vals)
 
-        coeffs = np.polyfit(pa_tp, s_tp, 2)
+        print(f"{rad_like_tp=} \t {pa_tp=}")
+        coeffs = np.polyfit(pa_tp, rad_like_tp, 2)
         poly = np.poly1d(coeffs)
         pa_fit = np.linspace(min(pa_tp), max(pa_tp), 100)
         s_fit = poly(pa_fit)
@@ -3265,7 +3310,7 @@ class MapEquilibrium:
         plt.clf()
         for i in range(len(self.convergence_times)):
             plt.plot(self.convergence_times[i], self.convergence_DAs[i], alpha=0.5)
-        plt.savefig(savepath[:-4] + "_convergence.pdf")
+        plt.savefig(savepath[:-4] + "_convergence.png", dpi=300)
 
 
 def return_bounces_and_passes(vpar_path, zeta_path):
@@ -4217,38 +4262,6 @@ class MapPhaseSpace:
             )
 
             return output, peta.tolist()
-
-    def s_peta_map(self, s, mu, sign):
-        r"""
-        Map a point to canonical momentum p_eta using current settings.
-
-        Args:
-            s : Radial-like coordinate.
-            mu : Magnetic moment.
-            sign : Desired sign for parallel velocity.
-        Returns:
-            peta : Canonical momentum value at the requested point.
-        """
-        points = np.zeros((1, 3)) if np.isscalar(s) else np.zeros((len(s), 3))
-        points[:, 0] = s
-
-        if self.Eprime_slice:
-            vp_temp = self.vpar_func_perturbed(
-                points[:, 0], points[:, 1], points[:, 2], mu, sign
-            )
-        else:
-            vp_temp = self.vpar_func(points[:, 0], points[:, 1], points[:, 2], mu, sign)
-
-        peta = compute_peta(
-            self.B0,
-            points,
-            vp_temp,
-            self.mass,
-            self.charge,
-            self.helicity_M,
-            self.helicity_N,
-        )
-        return peta
 
     def return_peta_trapped_contoured_boundary(self):
         r"""
