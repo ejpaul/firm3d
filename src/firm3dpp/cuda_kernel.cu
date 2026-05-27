@@ -221,7 +221,8 @@ __device__ void rhs_GC_BoozerVacuum(T* derivs, T* x_temp, T* block_interpolants,
     T x2 = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
 
     T s = sqrt(x1*x1 + x2*x2);
-    T theta = atan2(x2, x1);
+    // T theta = atan2(x2, x1);
+    T inv_s = 1 / s;
     T zeta = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
     T v_par = x_temp[4*PARTICLES_PER_BLOCK + threadIdx.x];
 
@@ -244,8 +245,8 @@ __device__ void rhs_GC_BoozerVacuum(T* derivs, T* x_temp, T* block_interpolants,
     T sdot = -dmodBdtheta*fak1 / (charge_d*psi0_d);
     T tdot = dmodBds*fak1 / (charge_d*psi0_d) + iota*v_par*modB / G;
 
-    derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*cos(theta) - s*sin(theta)*tdot;
-    derivs[(6*deriv_id + 1)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*sin(theta) + s*cos(theta)*tdot;
+    derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*x1*inv_s - x2*tdot;
+    derivs[(6*deriv_id + 1)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*x2*inv_s + x1*tdot;
     derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x] = v_par*modB/G;
     derivs[(6*deriv_id + 3)*PARTICLES_PER_BLOCK + threadIdx.x] = -(iota*dmodBdtheta + dmodBdzeta)*mu_val*modB / G;
     derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = modB; // modB for setting mu
