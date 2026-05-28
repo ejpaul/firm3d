@@ -561,8 +561,8 @@ __device__ void calc_derivs(T* derivs, const T* __restrict__ quadpts_arr, T* x_t
         } else if constexpr(id == RHS::GC_Boozer){
             rhs_GC_Boozer<T, deriv_id>(derivs, x_temp, block_interpolants, symmetry_exploited, mu);
         } else if constexpr(id == RHS::GC_BoozerVacuumSAW){
-                rhs_GC_BoozerVacuumSAW<T, deriv_id>(derivs, x_temp, block_interpolants, symmetry_exploited, mu,
-                    saw_omega, saw_m, saw_n, saw_phihats, saw_nharmonics);
+            rhs_GC_BoozerVacuumSAW<T, deriv_id>(derivs, x_temp, block_interpolants, symmetry_exploited, mu,
+                saw_omega, saw_m, saw_n, saw_phihats, saw_nharmonics);
         } else if constexpr(id == RHS::GC_BoozerNoKSAW){
             rhs_GC_BoozerNoKSAW<T, deriv_id>(derivs, x_temp, block_interpolants, symmetry_exploited, mu,
                 saw_omega, saw_m, saw_n, saw_phihats,saw_nharmonics);
@@ -890,15 +890,15 @@ __device__ void adjust_time(T* t, T* dt, T* state, T* derivs, T* x_temp, bool* h
 }
 
 // helper function for a single DP5 evaluation
-template<RHS id, int deriv_id, typename... Args>
-__device__ void dp5_one_step(double* x_temp, double* derivs, double* quadpts_arr, int* cell_index_start,
-                            double* shape_fun_vals, double* t, double* dt,
-                            bool* symmetry_exploited, double* state, double* mu, int nparticles_blk, Args... args){
+template<typename T, RHS id, int deriv_id, typename... Args>
+__device__ void dp5_one_step(T* x_temp, T* derivs, const T* __restrict__ quadpts_arr, int* cell_index_start,
+                            T* shape_fun_vals, T* t, T* dt,
+                            bool* symmetry_exploited, T* state, T* mu, int nparticles_blk, Args... args){
     // if the thread is responsible for a particle, compute the point at which the derivative will be computed
-    build_state<double, id, deriv_id>(x_temp, symmetry_exploited, cell_index_start, shape_fun_vals, state, derivs, t, dt, nparticles_blk);
+    build_state<T, id, deriv_id>(x_temp, symmetry_exploited, cell_index_start, shape_fun_vals, state, derivs, t, dt, nparticles_blk);
     // ensure that all threads have updated x_temp before calculating derivatives, where a data race would occur
     __syncthreads();
-    calc_derivs<double, id, deriv_id>(derivs, quadpts_arr, x_temp, symmetry_exploited, cell_index_start, shape_fun_vals, mu, nparticles_blk, args...);
+    calc_derivs<T, id, deriv_id>(derivs, quadpts_arr, x_temp, symmetry_exploited, cell_index_start, shape_fun_vals, mu, nparticles_blk, args...);
 
     // ensure all particles have derivative calculations before accepting/rejecting timestep
     __syncthreads();
@@ -910,20 +910,20 @@ __device__ void dp5_one_step(double* x_temp, double* derivs, double* quadpts_arr
  * The inner loop computes the 7 Dormand Prince derivative estimates.
  * Everything lives in shared memory except the data for the interpolant
  */
-template<RHS id, typename... Args>
-__global__ void particle_trace_kernel(double* out, double* init_pos, double* quadpts_arr, double* dt_in, Args... args){
+template<typename T, RHS id, typename... Args>
+__global__ void particle_trace_kernel(T* out, T* init_pos, const T* __restrict__ quadpts_arr, T* dt_in, Args... args){
     int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
 
-    __shared__ double x_temp[5 * PARTICLES_PER_BLOCK];
-    __shared__ double derivs[42 * PARTICLES_PER_BLOCK];
-    __shared__ double dt[PARTICLES_PER_BLOCK];
+    __shared__ T x_temp[5 * PARTICLES_PER_BLOCK];
+    __shared__ T derivs[42 * PARTICLES_PER_BLOCK];
+    __shared__ T dt[PARTICLES_PER_BLOCK];
     __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
     __shared__ int cell_index_start[3*PARTICLES_PER_BLOCK];
-    __shared__ double shape_fun_vals[12*PARTICLES_PER_BLOCK]; // 4 shape function values for each of the 3 coordinates
-    __shared__ double mu[PARTICLES_PER_BLOCK];
-    __shared__ double t[PARTICLES_PER_BLOCK];
-    __shared__ double dtmax[PARTICLES_PER_BLOCK];
-    __shared__ double state[4 * PARTICLES_PER_BLOCK];
+    __shared__ T shape_fun_vals[12*PARTICLES_PER_BLOCK]; // 4 shape function values for each of the 3 coordinates
+    __shared__ T mu[PARTICLES_PER_BLOCK];
+    __shared__ T t[PARTICLES_PER_BLOCK];
+    __shared__ T dtmax[PARTICLES_PER_BLOCK];
+    __shared__ T state[4 * PARTICLES_PER_BLOCK];
     __shared__ bool has_left[PARTICLES_PER_BLOCK];
 
 
@@ -943,28 +943,28 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
     __syncthreads();
 
     // calculate the particle's magnetic moment mu, dt, dtmax
-    setup_particle<double, id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, cell_index_start,
+    setup_particle<T, id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, cell_index_start,
                         quadpts_arr, shape_fun_vals, state, derivs, nparticles_blk, args...);
     __syncthreads();
 
     // if there exists a particle which is real and hasn't not reached tmax or left, keep tracing
     while(__syncthreads_count(is_valid && !(t[threadIdx.x] >= tmax_d || has_left[threadIdx.x])) > 0){
-        dp5_one_step<id, 0>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+        dp5_one_step<T, id, 0>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
                             symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<id, 1>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+        dp5_one_step<T, id, 1>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
                             symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<id, 2>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+        dp5_one_step<T, id, 2>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
                             symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<id, 3>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+        dp5_one_step<T, id, 3>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
                             symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<id, 4>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+        dp5_one_step<T, id, 4>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
                             symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<id, 5>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+        dp5_one_step<T, id,  5>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
                             symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<id, 6>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+        dp5_one_step<T, id, 6>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
                             symmetry_exploited, state, mu, nparticles_blk, args...);
         if(is_valid){
-            adjust_time<double, id>(t, dt, state, derivs, x_temp, has_left, dtmax);
+            adjust_time<T, id>(t, dt, state, derivs, x_temp, has_left, dtmax);
         }
         __syncthreads();
     }
@@ -1074,7 +1074,7 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    particle_trace_kernel<id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, dt_in_d, args...);
+    particle_trace_kernel<double, id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, dt_in_d, args...);
 
     double out[6*nparticles];
     gpuErrchk(cudaMemcpy(out, out_d, 6 * nparticles * sizeof(double), cudaMemcpyDeviceToHost) );
@@ -1757,19 +1757,19 @@ __global__ void test_gpu_timestep_kernel(double* out, double* init_pos, double* 
     // if there exists a particle at t=0, which is a real particle, then keep tracing
     while(__syncthreads_count(t[threadIdx.x] == 0.0  && is_valid) > 0){
         // calculate the 7 Dormand-Prince 5 derivatives
-        dp5_one_step<id, 0>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+        dp5_one_step<double, id, 0>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
                             symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<id, 1>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+        dp5_one_step<double, id, 1>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
                             symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<id, 2>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+        dp5_one_step<double, id, 2>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
                             symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<id, 3>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+        dp5_one_step<double, id, 3>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
                             symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<id, 4>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+        dp5_one_step<double, id, 4>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
                             symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<id, 5>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+        dp5_one_step<double, id, 5>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
                             symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<id, 6>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
+        dp5_one_step<double, id, 6>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
                             symmetry_exploited, state, mu, nparticles_blk, args...);
         if(is_valid && t[threadIdx.x] == 0.0){
             adjust_time<double, id>(t, dt, state, derivs, x_temp, has_left, dtmax);
