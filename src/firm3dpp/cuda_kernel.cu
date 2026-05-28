@@ -685,11 +685,13 @@ __device__ void build_state(T* x_temp, bool* symmetry_exploited, int* cell_index
         T grid_size = grid_ranges_d[coord_id*4 + 3];
         T min_bound = grid_ranges_d[coord_id*4 + 0];
 
-        int index = 3*((int) ((value - min_bound) / grid_size) /3);
+        T inv_grid_size = (T)1.0 / grid_size;
+
+        int index = 3*((int) ((value - min_bound) * inv_grid_size) /3);
         index = min(index, (int)grid_ranges_d[coord_id*4 + 2]-4);
         index = max(index, 0);
 
-        T value_rel = (value - index*grid_size - min_bound) / grid_size;
+        T value_rel = (value - index*grid_size - min_bound) * inv_grid_size;
 
          // compute 4 shape values for this coordinate and particle
         T x_minus_1 = value_rel - (T)1.0;
