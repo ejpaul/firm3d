@@ -106,24 +106,18 @@ __constant__ bool is_test_d = false;
  * we assume the point x has been rescaled to be on the grid 0, 1, 2, 3
  * i indicates which shape function we are computing
  */
-template<typename T>
-__host__ __device__ void shape(T& x, T& output, int i) {
-    switch (i) {
-        case 0:
-            output = (1.0 - x) * (2.0 - x) * (3.0 - x) / 6.0;
-            break;
-        case 1:
-            output = x * (2.0 - x) * (3.0 - x) / 2.0;
-            break;
-        case 2:
-            output = x * (x - 1.0) * (3.0 - x) / 2.0;
-            break;
-        case 3:
-            output = x * (x - 1.0) * (x - 2.0) / 6.0;
-            break;
-        default:
-            output = 0.0;
-            break;
+template<typename T, int i>
+__host__ __device__ void shape(T& x, T& output) {
+    if constexpr(i == 0){
+        output = (1.0 - x) * (2.0 - x) * (3.0 - x) / 6.0;
+    } else if constexpr(i == 1) {
+        output = x * (2.0 - x) * (3.0 - x) / 2.0;
+    } else if constexpr(i == 2) {
+        output = x * (x - 1.0) * (3.0 - x) / 2.0;
+    } else if constexpr(i == 3) {
+        output = x * (x - 1.0) * (x - 2.0) / 6.0;
+    } else {    
+        output = 0.0;
     }
 }
 
@@ -715,9 +709,12 @@ __device__ void build_state(T* x_temp, bool* symmetry_exploited, int* cell_index
 
         T value_rel = (value - index*grid_size - min_bound) / grid_size;
 
-        for(int i=0; i<4; ++i){
-            shape<T>(value_rel, shape_fun_vals[(coord_id*4 + i)*PARTICLES_PER_BLOCK + particle_id], i);
-        }
+
+        shape<T, 0>(value_rel, shape_fun_vals[(coord_id*4 + 0)*PARTICLES_PER_BLOCK + particle_id]);
+        shape<T, 1>(value_rel, shape_fun_vals[(coord_id*4 + 1)*PARTICLES_PER_BLOCK + particle_id]);
+        shape<T, 2>(value_rel, shape_fun_vals[(coord_id*4 + 2)*PARTICLES_PER_BLOCK + particle_id]);
+        shape<T, 3>(value_rel, shape_fun_vals[(coord_id*4 + 3)*PARTICLES_PER_BLOCK + particle_id]);
+
         cell_index_start[3*particle_id + coord_id] = index/3;
     }
     __syncthreads();
