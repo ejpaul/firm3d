@@ -102,24 +102,6 @@ __constant__ double saw_srange_d[4]; // used for SAW RHS only
 __constant__ bool rescale_abstol_var_d = true;
 __constant__ bool is_test_d = false;
 
-/* shape computes shape functions for cubic interpolation on a a regular grid
- * we assume the point x has been rescaled to be on the grid 0, 1, 2, 3
- * i indicates which shape function we are computing
- */
-template<typename T, int i>
-__host__ __device__ void shape(T& x, T& output) {
-    if constexpr(i == 0){
-        output = (1.0 - x) * (2.0 - x) * (3.0 - x) / 6.0;
-    } else if constexpr(i == 1) {
-        output = x * (2.0 - x) * (3.0 - x) / 2.0;
-    } else if constexpr(i == 2) {
-        output = x * (x - 1.0) * (3.0 - x) / 2.0;
-    } else if constexpr(i == 3) {
-        output = x * (x - 1.0) * (x - 2.0) / 6.0;
-    } else {    
-        output = 0.0;
-    }
-}
 
 // interpolate performs tricubic interpolation in the r, phi, z coordinates
 // which we assume is on a regular grid
@@ -695,11 +677,11 @@ __device__ void build_state(T* x_temp, bool* symmetry_exploited, int* cell_index
     __syncthreads();
 
     // threads map each coordinate for each particle and compute its shape functions.
-    for(int idx=threadIdx.x; idx<3*PARTICLES_PER_BLOCK; idx+=PARTICLES_PER_BLOCK){
-        int particle_id = idx % PARTICLES_PER_BLOCK;
-        int coord_id = idx / PARTICLES_PER_BLOCK;
+    if(threadIdx.x < 3*PARTICLES_PER_BLOCK){ // assumes 64 threads per block, 8 particles per block (3*8 = 24 < 64)
+        int particle_id = threadIdx.x % PARTICLES_PER_BLOCK;
+        int coord_id = threadIdx.x / PARTICLES_PER_BLOCK;
 
-        T value = interp_pt[idx];
+        T value = interp_pt[threadIdx.x];
         T grid_size = grid_ranges_d[coord_id*4 + 3];
         T min_bound = grid_ranges_d[coord_id*4 + 0];
 
@@ -709,11 +691,23 @@ __device__ void build_state(T* x_temp, bool* symmetry_exploited, int* cell_index
 
         T value_rel = (value - index*grid_size - min_bound) / grid_size;
 
+         // compute 4 shape values for this coordinate and particle
+        T x_minus_1 = value_rel - (T)1.0;
+        T x_minus_2 = value_rel - (T)2.0;
+        T x_minus_3 = value_rel - (T)3.0;
 
-        shape<T, 0>(value_rel, shape_fun_vals[(coord_id*4 + 0)*PARTICLES_PER_BLOCK + particle_id]);
-        shape<T, 1>(value_rel, shape_fun_vals[(coord_id*4 + 1)*PARTICLES_PER_BLOCK + particle_id]);
-        shape<T, 2>(value_rel, shape_fun_vals[(coord_id*4 + 2)*PARTICLES_PER_BLOCK + particle_id]);
-        shape<T, 3>(value_rel, shape_fun_vals[(coord_id*4 + 3)*PARTICLES_PER_BLOCK + particle_id]);
+        constexpr T one_sixth = (T) (1.0/6.0);
+        constexpr T one_half = (T) 0.5;
+
+        // compute shared terms for shape functions
+        T prod23 = x_minus_2 * x_minus_3;
+        T prodx1 = value_rel * x_minus_1;
+        int base_idx = (coord_id*4)*PARTICLES_PER_BLOCK + particle_id;
+
+        shape_fun_vals[base_idx + 0] = - one_sixth * x_minus_1 * prod23;
+        shape_fun_vals[base_idx + 1*PARTICLES_PER_BLOCK] = one_half * value_rel * prod23;
+        shape_fun_vals[base_idx + 2*PARTICLES_PER_BLOCK] = -one_half * prodx1 * x_minus_3;
+        shape_fun_vals[base_idx + 3*PARTICLES_PER_BLOCK] = one_sixth * prodx1 * x_minus_2;
 
         cell_index_start[3*particle_id + coord_id] = index/3;
     }
