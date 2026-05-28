@@ -137,7 +137,7 @@ __host__ __device__ void shape(T& x, T& output) {
 // nparticles_blk store the number of *actual* particles in the current block
 //
 // note that nparticles_blk isn't always equal to PARTICLES_PER_BLOCK
-template <typename T, int n> __device__ void interpolate(double*  out, const T* __restrict__ data, const int* __restrict__ cell_index_start, 
+template <typename T, int n> __device__ void interpolate(T*  out, const T* __restrict__ data, const int* __restrict__ cell_index_start, 
     const T* __restrict__ shape_fun_vals, int nparticles_blk){
     for(int idx=threadIdx.x; idx<nparticles_blk*n; idx+= THREADS_PER_BLOCK){
         int zz = idx % n;
@@ -149,12 +149,12 @@ template <typename T, int n> __device__ void interpolate(double*  out, const T* 
 
         int row_start = 64*(i*n_x23_d + j*n_x3_d + k);
 
-        double local_val = 0.0;
+        T local_val = 0.0;
         for(int ii=0; ii<4; ++ii){
             for(int jj=0; jj<4; ++jj){
                 for(int kk=0; kk<4; ++kk){
                     int row_idx = row_start + 16*ii + 4*jj + kk;
-                    double shape_val = shape_fun_vals[ii*PARTICLES_PER_BLOCK + particle_id] * shape_fun_vals[(4 + jj)*PARTICLES_PER_BLOCK + particle_id] * shape_fun_vals[(8 + kk)*PARTICLES_PER_BLOCK + particle_id];
+                    T shape_val = shape_fun_vals[ii*PARTICLES_PER_BLOCK + particle_id] * shape_fun_vals[(4 + jj)*PARTICLES_PER_BLOCK + particle_id] * shape_fun_vals[(8 + kk)*PARTICLES_PER_BLOCK + particle_id];
                     local_val += data[n*row_idx + zz] * shape_val;
 
                 }
@@ -722,30 +722,38 @@ __device__ void build_state(T* x_temp, bool* symmetry_exploited, int* cell_index
 };
 
 
-// calculate maximum allowable timestep to allow at most a quarter of a revolution per step
-template<CoordSys coord>
-__device__ void calc_max_timestep_size(double* dtmax, double* loc, double* derivs){
-    printf("default calc_max_timestep_size not implemented\n");
-};
+template<typename T>
+__device__ void max_stepsize_cartesian(T* dtmax, T* loc, T* derivs){
+    T x = loc[1*PARTICLES_PER_BLOCK + threadIdx.x];
+    T y = loc[2*PARTICLES_PER_BLOCK + threadIdx.x];
+    T z = loc[3*PARTICLES_PER_BLOCK + threadIdx.x];
+    T v_par = loc[4*PARTICLES_PER_BLOCK + threadIdx.x];
 
-template<>
-__device__ void calc_max_timestep_size<CoordSys::Cartesian>(double* dtmax, double* loc, double* derivs){
-    double x = loc[1*PARTICLES_PER_BLOCK + threadIdx.x];
-    double y = loc[2*PARTICLES_PER_BLOCK + threadIdx.x];
-    double z = loc[3*PARTICLES_PER_BLOCK + threadIdx.x];
-    double v_par = loc[4*PARTICLES_PER_BLOCK + threadIdx.x];
-
-    double r = sqrt(x*x + y*y);
+    T r = sqrt(x*x + y*y);
     dtmax[threadIdx.x] = r*0.5*M_PI / v_total_d;
 }
 
 
-template<>
-__device__ void calc_max_timestep_size<CoordSys::Boozer>(double* dtmax, double* loc, double* derivs){
-    double modB = derivs[(6*0 + 4)*PARTICLES_PER_BLOCK + threadIdx.x];
-    double G = derivs[(6*0 + 5)*PARTICLES_PER_BLOCK + threadIdx.x];
+template<typename T>
+__device__ void max_stepsize_boozer(T* dtmax, T* loc, T* derivs){
+    T modB = derivs[(6*0 + 4)*PARTICLES_PER_BLOCK + threadIdx.x];
+    T G = derivs[(6*0 + 5)*PARTICLES_PER_BLOCK + threadIdx.x];
     dtmax[threadIdx.x] = (G / modB)*0.5*M_PI / v_total_d;
 }
+
+// calculate maximum allowable timestep to allow at most a quarter of a revolution per step
+template<typename T, CoordSys coord>
+__device__ void calc_max_timestep_size(T* dtmax, T* loc, T* derivs){
+    if constexpr (coord == CoordSys::Cartesian){
+        max_stepsize_cartesian(dtmax, loc, derivs);
+    } else if constexpr (coord == CoordSys::Boozer){
+        max_stepsize_boozer(dtmax, loc, derivs);
+    } else{
+        printf("max timestep size calculation not implemented for this coordinate system\n");
+    }
+};
+
+
 
 // set up particles for tracing
 // use the derivatives function to calculate mu, max step size
@@ -778,7 +786,7 @@ __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax,
         mu[threadIdx.x] = v_perp2 / (2*modB);
 
         constexpr CoordSys coord = map_rhs_to_coord<id>();
-        calc_max_timestep_size<coord>(dtmax, x_temp, derivs);
+        calc_max_timestep_size<T, coord>(dtmax, x_temp, derivs);
         dtmax[threadIdx.x] = fmin(dtmax[threadIdx.x], tmax_d);
 
         if(dt[threadIdx.x] == -1.0){ // dummy value from python when dt needs to be computed
