@@ -540,7 +540,7 @@ __device__ void rhs_GC_BoozerNoKSAW(T* derivs, T* x_temp, T* block_interpolants,
 //
 // this function is templated across rhs options
 template<typename T, RHS id, int deriv_id, typename... Args>  
-__device__ void calc_derivs(T* derivs, T* quadpts_arr, T* x_temp, bool* symmetry_exploited, 
+__device__ void calc_derivs(T* derivs, const T* __restrict__ quadpts_arr, T* x_temp, bool* symmetry_exploited, 
                                     int* cell_index_start, T* shape_fun_vals, T* mu, int nparticles_blk, 
                                 // optional parameters for SAW cases
                                 T saw_omega = 0, int* saw_m = nullptr, int* saw_n = nullptr, 
@@ -760,8 +760,8 @@ __device__ void calc_max_timestep_size(T* dtmax, T* loc, T* derivs){
 // store these values for the remainder of tracing
 
 template<typename T, RHS id, typename... Args>
-__device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax, double* x_temp, bool* symmetry_exploited, int* cell_index_start,
-                            double* quad_pts, double* shape_fun_vals, double* state, double* derivs,
+__device__ void setup_particle(T* mu, T* t, T* dt, T* dtmax, T* x_temp, bool* symmetry_exploited, int* cell_index_start,
+                            const T* __restrict__ quad_pts, T* shape_fun_vals, T* state, T* derivs,
                             int nparticles_blk, Args... args){
 
     
@@ -779,10 +779,10 @@ __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax,
     __syncthreads();
 
     if(threadIdx.x < nparticles_blk){
-        double v_par = state[3*PARTICLES_PER_BLOCK + threadIdx.x];
-        double v_perp2 = v_total_d*v_total_d - v_par*v_par;
+        T v_par = state[3*PARTICLES_PER_BLOCK + threadIdx.x];
+        T v_perp2 = v_total_d*v_total_d - v_par*v_par;
         
-        double modB = derivs[4*PARTICLES_PER_BLOCK + threadIdx.x];
+        T modB = derivs[4*PARTICLES_PER_BLOCK + threadIdx.x];
         mu[threadIdx.x] = v_perp2 / (2*modB);
 
         constexpr CoordSys coord = map_rhs_to_coord<id>();
@@ -795,59 +795,66 @@ __device__ void setup_particle(double* mu, double* t, double* dt, double* dtmax,
     }
 }
 
-
-// determine whether a particle has been lost or not
-// in cartesian coordinates, we check the signed distance function
-// in boozer coordinates we check for s >= 1
-template<CoordSys coord>
-__device__ void check_has_left(bool* has_left, double* state, double* derivs){
-    printf("default check_has_left not implemented\n");
-};
-
-template<>
-__device__ void check_has_left<CoordSys::Cartesian>(bool* has_left, double* state, double* derivs){
+template<typename T>
+__device__ void check_has_left_cartesian(bool* has_left, T* state, T* derivs){
     has_left[threadIdx.x] = derivs[(6*6 + 5)*PARTICLES_PER_BLOCK + threadIdx.x] < 0; // boundary dist fn at new location
 }
 
-template<>
-__device__ void check_has_left<CoordSys::Boozer>(bool* has_left, double* state, double* derivs){
-    double x1 = state[0*PARTICLES_PER_BLOCK + threadIdx.x];
-    double x2 = state[1*PARTICLES_PER_BLOCK + threadIdx.x];
-    double s = sqrt(x1*x1 + x2*x2);
+template<typename T>
+__device__ void check_has_left_boozer(bool* has_left, T* state, T* derivs){
+    T x1 = state[0*PARTICLES_PER_BLOCK + threadIdx.x];
+    T x2 = state[1*PARTICLES_PER_BLOCK + threadIdx.x];
+    T s = sqrt(x1*x1 + x2*x2);
 
     has_left[threadIdx.x] = s >= 1; 
 }
 
+
+// determine whether a particle has been lost or not
+// in cartesian coordinates, we check the signed distance function
+// in boozer coordinates we check for s >= 1
+template<typename T, CoordSys coord>
+__device__ void check_has_left(bool* has_left, T* state, T* derivs){
+    if constexpr (coord == CoordSys::Cartesian){
+        check_has_left_cartesian(has_left, state, derivs);
+    } else if constexpr (coord == CoordSys::Boozer){
+        check_has_left_boozer(has_left, state, derivs);
+    } else{
+        printf("default check_has_left not implemented\n");
+    }
+};
+
+
 // this function estimates error, accepts/rejects the proposed step
 // and adjust the step size
-template<RHS id>
-__device__ void adjust_time(double* t, double* dt, double* state, double* derivs, double* x_temp, bool* has_left, double* dtmax){
+template<typename T, RHS id>
+__device__ void adjust_time(T* t, T* dt, T* state, T* derivs, T* x_temp, bool* has_left, T* dtmax){
     if(has_left[threadIdx.x]){
         return;
     }
-    const double bhat1 = 71.0 / 57600.0, bhat3 = -71.0 / 16695.0, bhat4 = 71.0 / 1920.0, bhat5 = -17253.0 / 339200.0, bhat6 = 22.0 / 525.0, bhat7 = -1.0 / 40.0;
+    const T bhat1 = 71.0 / 57600.0, bhat3 = -71.0 / 16695.0, bhat4 = 71.0 / 1920.0, bhat5 = -17253.0 / 339200.0, bhat6 = 22.0 / 525.0, bhat7 = -1.0 / 40.0;
     // Compute  error
     // https://live.boost.org/doc/libs/1_82_0/libs/numeric/odeint/doc/html/boost_numeric_odeint/odeint_in_detail/steppers.html
     // resolve typo in boost docs: https://numerical.recipes/book.html
-    double max_err = 0.0;
-    double err_elt;
+    T max_err = 0.0;
+    T err_elt;
     for(int i = 0; i < 4; i++) {
-        double state_i = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
-        double deriv_i = derivs[(6*0 + i)*PARTICLES_PER_BLOCK + threadIdx.x];
+        T state_i = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
+        T deriv_i = derivs[(6*0 + i)*PARTICLES_PER_BLOCK + threadIdx.x];
         err_elt = dt[threadIdx.x]*(bhat1 * deriv_i
                                  + bhat3 * derivs[(6*2 + i)*PARTICLES_PER_BLOCK + threadIdx.x] 
                                  + bhat4 * derivs[(6*3 + i)*PARTICLES_PER_BLOCK + threadIdx.x] 
                                  + bhat5 * derivs[(6*4 + i)*PARTICLES_PER_BLOCK + threadIdx.x] 
                                  + bhat6 * derivs[(6*5 + i)*PARTICLES_PER_BLOCK + threadIdx.x] 
                                  + bhat7 * derivs[(6*6 + i)*PARTICLES_PER_BLOCK + threadIdx.x]);
-        double atol_i = (rescale_abstol_var_d) && (i == 3) ?  atol_d * v_total_d : atol_d;
+        T atol_i = (rescale_abstol_var_d) && (i == 3) ?  atol_d * v_total_d : atol_d;
         err_elt = fabs(err_elt) / (atol_i + rtol_d*(fabs(state_i) + dt[threadIdx.x]*fabs(deriv_i)));
         max_err = fmax(max_err, err_elt);
     }
 
     // Compute new step size
-    double dt_new = dt[threadIdx.x]*0.9;
-    double exponent = 0.0;
+    T dt_new = dt[threadIdx.x]*0.9;
+    T exponent = 0.0;
     if(max_err > 1.0){
         exponent = -1.0/3.0;
     } 
@@ -875,7 +882,7 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
         }
         // check if particle has left the device
         constexpr CoordSys coord = map_rhs_to_coord<id>();
-        check_has_left<coord>(has_left, state, derivs);
+        check_has_left<T, coord>(has_left, state, derivs);
     } else {
         // Reject the step and try again with smaller dt
         dt[threadIdx.x] = dt_new;
@@ -957,7 +964,7 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
         dp5_one_step<id, 6>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
                             symmetry_exploited, state, mu, nparticles_blk, args...);
         if(is_valid){
-            adjust_time<id>(t, dt, state, derivs, x_temp, has_left, dtmax);
+            adjust_time<double, id>(t, dt, state, derivs, x_temp, has_left, dtmax);
         }
         __syncthreads();
     }
@@ -1765,7 +1772,7 @@ __global__ void test_gpu_timestep_kernel(double* out, double* init_pos, double* 
         dp5_one_step<id, 6>(x_temp, derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
                             symmetry_exploited, state, mu, nparticles_blk, args...);
         if(is_valid && t[threadIdx.x] == 0.0){
-            adjust_time<id>(t, dt, state, derivs, x_temp, has_left, dtmax);
+            adjust_time<double, id>(t, dt, state, derivs, x_temp, has_left, dtmax);
         }
         __syncthreads();
     }
