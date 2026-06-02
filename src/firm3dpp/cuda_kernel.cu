@@ -17,7 +17,7 @@ namespace py = pybind11;
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
 {
-   if (code != cudaSuccess) 
+   if (code != cudaSuccess)
    {
       fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
       if (abort) exit(code);
@@ -49,7 +49,7 @@ __host__ T* create_array(py::array_t<T> x){
     py::buffer_info buf = x.request();
     T* arr = static_cast<T*>(buf.ptr);
     return arr;
-} 
+}
 
 
 /* below are declarations of data that are stored in the constant memory cache on the GPU
@@ -78,7 +78,7 @@ __constant__ double dp5_t_wgts[7] = {
 __constant__ double x1_range_d[4], x2_range_d[4], x3_range_d[4]; // contains start, end, number of points, grid size
 
 // store the particle's mass, charge, max tracing time, absolute and relative tolerances for timestepping
-__constant__ double mass_d, charge_d, atol_d, rtol_d; 
+__constant__ double mass_d, charge_d, atol_d, rtol_d;
 __constant__ int n_x2_d, n_x3_d, n_x23_d; // stores the number of interpolant cells in x2 and x3 direction, along with their product
 __constant__ int nparticles_d; // number of particles being traced
 __constant__ double v_total_d; // initial velocity
@@ -117,11 +117,11 @@ __host__ __device__ void shape(double& x, double& output, int i) {
 // which we assume is on a regular grid
 // the name of these coordinates only reflects the original cylindircal coordinates
 // this function works in general
-// 
+//
 // the n interpolant elements are written to out in order
-// interpolant data is stored in data in 64 interpolation pt windows 
+// interpolant data is stored in data in 64 interpolation pt windows
 // with n contiguous entries at each point
-// 
+//
 // shape values are precomputed in build_state and here we are computing the needed inner product
 // index_i, index_j, index_k store the grid index for interpolation in the r, phi, z coordinates
 // r_shape, phi_shape, z_shape store shape function elements
@@ -129,7 +129,7 @@ __host__ __device__ void shape(double& x, double& output, int i) {
 // nparticles_blk store the number of *actual* particles in the current block
 //
 // note that nparticles_blk isn't always equal to PARTICLES_PER_BLOCK
-template <int n> __device__ void interpolate(double*  out, const double* __restrict__ data, const int* __restrict__ index_i, const int* __restrict__ index_j, const int* __restrict__ index_k, 
+template <int n> __device__ void interpolate(double*  out, const double* __restrict__ data, const int* __restrict__ index_i, const int* __restrict__ index_j, const int* __restrict__ index_k,
     const double* __restrict__ x1_shape, const double* __restrict__ x2_shape, const double* __restrict__ x3_shape, int nparticles_blk){
     for(int idx=threadIdx.x; idx<nparticles_blk*n; idx+= THREADS_PER_BLOCK){
         int zz = idx % n;
@@ -160,8 +160,8 @@ template <int n> __device__ void interpolate(double*  out, const double* __restr
 // nparticles_blk stores the number of actual particles in the block
 //
 // this function is templated across rhs options
-template<RHS id, typename... Args>  
-__device__ void calc_derivs(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
+template<RHS id, typename... Args>
+__device__ void calc_derivs(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited,
                                     int* index_i, int* index_j, int* index_k, double* x1_shape, double* x2_shape, double* x3_shape,
                                     double* mu, int nparticles_blk, Args... args){
     printf("default calc_derivs not implemented\n");
@@ -169,8 +169,8 @@ __device__ void calc_derivs(double* derivs, int deriv_id, double* quadpts_arr, d
 
 
 // calc_derivs implementation for guiding center cartesian vacuum tracing
-template <> 
-__device__ void calc_derivs<RHS::GC_CartesianVacuum>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
+template <>
+__device__ void calc_derivs<RHS::GC_CartesianVacuum>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited,
                                     int* index_i, int* index_j, int* index_k, double* x1_shape, double* x2_shape, double* x3_shape,
                                     double* mu, int nparticles_blk){
 
@@ -224,8 +224,8 @@ __device__ void calc_derivs<RHS::GC_CartesianVacuum>(double* derivs, int deriv_i
 
 
 // calc_derivs implementation for guiding center boozer vacuum tracing
-template <> 
-__device__ void calc_derivs<RHS::GC_BoozerVacuum>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
+template <>
+__device__ void calc_derivs<RHS::GC_BoozerVacuum>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited,
                                     int* index_i, int* index_j, int* index_k, double* x1_shape, double* x2_shape, double* x3_shape,
                                     double* mu, int nparticles_blk){
    __shared__ double block_interpolants[6*PARTICLES_PER_BLOCK];
@@ -233,8 +233,8 @@ __device__ void calc_derivs<RHS::GC_BoozerVacuum>(double* derivs, int deriv_id, 
     interpolate<6>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
 
 
-    __syncthreads();   
-    
+    __syncthreads();
+
     if(threadIdx.x < nparticles_blk){
         double x1 = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
         double x2 = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
@@ -277,8 +277,8 @@ __device__ void calc_derivs<RHS::GC_BoozerVacuum>(double* derivs, int deriv_id, 
 // calc_derivs implementation for general guiding center Boozer tracing (with K != 0)
 // The equations in this function match those for the CPU tracing at
 // tracing.cpp::GuidingCenterBoozerRHS
-template <> 
-__device__ void calc_derivs<RHS::GC_Boozer>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
+template <>
+__device__ void calc_derivs<RHS::GC_Boozer>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited,
                                     int* index_i, int* index_j, int* index_k, double* x1_shape, double* x2_shape, double* x3_shape,
                                     double* mu, int nparticles_blk){
 
@@ -322,22 +322,22 @@ __device__ void calc_derivs<RHS::GC_Boozer>(double* derivs, int deriv_id, double
         // C = - m v|| K,zeta /|B| - q iota + m v|| G' / |B|
         // F = - m v|| K,theta /|B| + q + m v|| I' / |B|
         // D = (F G - C I) / iota
-        
+
         double C = -mass_d * v_par * dKdzeta / modB - charge_d * iota + mass_d * v_par * dGdpsi / modB;
         double F = -mass_d * v_par * dKdtheta / modB + charge_d + mass_d * v_par * dIdpsi / modB;
         double D = (F * G - C * I) / iota;
 
         double fak1 = mass_d * v_par * v_par / modB + mass_d * mu_val;
-        
+
         // sdot = (I |B|,zeta - G |B|,theta) m (v||^2/|B| + mu) / (iota D psi0)
         double sdot = (I * dmodBdzeta - G * dmodBdtheta) * fak1 / (iota * D * psi0_d);
-        
+
         // tdot = ((G |B|,psi - K |B|,zeta) m (v||^2/|B| + mu) - C v|| |B|) / (iota D)
         double tdot = ((G * dmodBdpsi - K * dmodBdzeta) * fak1 - C * v_par * modB) / (iota * D);
-        
+
         // zetadot = (F v|| |B| - (|B|,psi I - |B|,theta K) m (v||^2/|B| + mu)) / (iota D)
         double zetadot = (F * v_par * modB - (dmodBdpsi * I - dmodBdtheta * K) * fak1) / (iota * D);
-        
+
         // v||dot = (C |B|,theta - F |B|,zeta) mu |B| / (iota D)
         double vpardot = (C * dmodBdtheta - F * dmodBdzeta) * mu_val * modB / (iota * D);
 
@@ -352,8 +352,8 @@ __device__ void calc_derivs<RHS::GC_Boozer>(double* derivs, int deriv_id, double
 };
 
 // calc_derivs implementation for guiding center boozer vacuum tracing with Shear Alfven Waves
-template <> 
-__device__ void calc_derivs<RHS::GC_BoozerVacuumSAW>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
+template <>
+__device__ void calc_derivs<RHS::GC_BoozerVacuumSAW>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited,
                                     int* index_i, int* index_j, int* index_k, double* x1_shape, double* x2_shape, double* x3_shape,
                                     double* mu, int nparticles_blk, double saw_omega, int* saw_m, int* saw_n, double* saw_phihats, int saw_nharmonics){
    __shared__ double block_interpolants[10*PARTICLES_PER_BLOCK];
@@ -395,7 +395,7 @@ __device__ void calc_derivs<RHS::GC_BoozerVacuumSAW>(double* derivs, int deriv_i
         s_index = min(s_index, (int)saw_srange_d[2]-1);
         double s_diff = s - s_index*saw_srange_d[3];
 
-        // rhs values from SAW 
+        // rhs values from SAW
         double dphidpsi = 0.0;
         double dphidtheta = 0.0;
         double dphidzeta = 0.0;
@@ -437,7 +437,7 @@ __device__ void calc_derivs<RHS::GC_BoozerVacuumSAW>(double* derivs, int deriv_i
             alphadot += alphadot_i;
             dalphadpsi += dalphadpsi_i;
             dalphadtheta += dalphadtheta_i;
-            
+
         }
 
         double fak1 = mass_d*v_par*v_par/modB + mass_d*mu_val;
@@ -461,8 +461,8 @@ __device__ void calc_derivs<RHS::GC_BoozerVacuumSAW>(double* derivs, int deriv_i
 
 
 // calc_derivs implementation for guiding center boozer NoK tracing with Shear Alfven Waves
-template <> 
-__device__ void calc_derivs<RHS::GC_BoozerNoKSAW>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
+template <>
+__device__ void calc_derivs<RHS::GC_BoozerNoKSAW>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited,
                                     int* index_i, int* index_j, int* index_k, double* x1_shape, double* x2_shape, double* x3_shape,
                                     double* mu, int nparticles_blk, double saw_omega, int* saw_m, int* saw_n, double* saw_phihats, int saw_nharmonics){
 
@@ -506,7 +506,7 @@ __device__ void calc_derivs<RHS::GC_BoozerNoKSAW>(double* derivs, int deriv_id, 
         s_index = min(s_index, (int)saw_srange_d[2]-1);
         double s_diff = s - s_index*saw_srange_d[3];
 
-        // rhs values from SAW 
+        // rhs values from SAW
         double dphidpsi = 0.0;
         double dphidtheta = 0.0;
         double dphidzeta = 0.0;
@@ -557,7 +557,7 @@ __device__ void calc_derivs<RHS::GC_BoozerNoKSAW>(double* derivs, int deriv_id, 
         }
         double fak1 = mass_d*v_par*v_par/modB + mass_d*mu_val;
         double denom = (charge_d*(G + I*(-alpha*dGdpsi + iota) + alpha*G*dIdpsi)
-                + mass_d*v_par/modB * (-dGdpsi*I + G*dIdpsi)); 
+                + mass_d*v_par/modB * (-dGdpsi*I + G*dIdpsi));
         double sdot = (-G*dphidtheta*charge_d + I*dphidzeta*charge_d + modB*charge_d*v_par*(dalphadtheta*G-dalphadzeta*I) + (-dmodBdtheta*G + dmodBdzeta*I)*fak1)/(denom*psi0_d);
         double tdot = (G*charge_d*dphidpsi + modB*charge_d*v_par*(-dalphadpsi*G - alpha*dGdpsi + iota) - dGdpsi*mass_d*v_par*v_par \
                       + dmodBdpsi*G*fak1)/denom;
@@ -592,12 +592,12 @@ __device__ void calc_derivs<RHS::GC_BoozerNoKSAW>(double* derivs, int deriv_id, 
 //
 // interp_pt stores where the interpolant should be evaluated (in the grid)
 // xyz stores the particle's current location via the x_temp array in shared
-//  memory. 
+//  memory.
 // symmetry_exploited is a bool indicating whether stellarator symmetry was exploited
 // there's an option for optional parameters
 
 template<CoordSys coord, typename... Args>
-__device__ void map_to_grid(double* interp_pt, double * xyz, bool* symmetry_exploited, Args... args);                                    
+__device__ void map_to_grid(double* interp_pt, double * xyz, bool* symmetry_exploited, Args... args);
 
 
 // map_to_grid implementation for Cartesian tracing
@@ -628,7 +628,7 @@ __device__ void map_to_grid<CoordSys::Cartesian>(double* interp_pt, double* x_te
     interp_pt[0] = r;
     interp_pt[1] = phi;
     interp_pt[2] = z;
-} 
+}
 
 // map_to_grid implementation for Boozer tracing
 template <>
@@ -677,18 +677,18 @@ __device__ void build_state(double* x_temp, int deriv_id, bool* symmetry_exploit
             x_temp[(i+1)*PARTICLES_PER_BLOCK + threadIdx.x] += dt[threadIdx.x] * dp5_wgts[deriv_id][j] * derivs[(6*j+i)*PARTICLES_PER_BLOCK + threadIdx.x];
         }
     }
-    
+
     double interp_pt[3];
     constexpr CoordSys coord = map_rhs_to_coord<id>();
     map_to_grid<coord>(interp_pt, x_temp, symmetry_exploited);
-  
+
     double x1 = interp_pt[0];
     double x2 = interp_pt[1];
     double x3 = interp_pt[2];
 
     /*
     * index into the grid and calculate weights
-    // */ 
+    // */
     double x1_grid_size = x1_range_d[3];
     double x2_grid_size = x2_range_d[3];
     double x3_grid_size = x3_range_d[3];
@@ -708,7 +708,7 @@ __device__ void build_state(double* x_temp, int deriv_id, bool* symmetry_exploit
     double x1_rel = (x1 - i*x1_grid_size - x1_range_d[0]) / x1_grid_size;
     double x2_rel = (x2 - j*x2_grid_size - x2_range_d[0]) / x2_grid_size;
     double x3_rel = (x3 - k*x3_grid_size - x3_range_d[0]) / x3_grid_size;
-   
+
     for(int i=0; i<4; ++i){
         shape(x1_rel, x1_shape[i*PARTICLES_PER_BLOCK + threadIdx.x], i);
         shape(x2_rel, x2_shape[i*PARTICLES_PER_BLOCK + threadIdx.x], i);
@@ -757,7 +757,7 @@ __device__ void setup_particle(double* mu, double* t, double* dt, double* tmax, 
                             double* quad_pts, double* x1_shape, double* x2_shape, double* x3_shape, double* state, double* derivs,
                             int nparticles_blk, Args... args){
 
-    
+
     if(threadIdx.x < nparticles_blk){
         t[threadIdx.x] = 0.0;
         symmetry_exploited[threadIdx.x] = false;
@@ -774,7 +774,7 @@ __device__ void setup_particle(double* mu, double* t, double* dt, double* tmax, 
     if(threadIdx.x < nparticles_blk){
         double v_par = state[3*PARTICLES_PER_BLOCK + threadIdx.x];
         double v_perp2 = v_total_d*v_total_d - v_par*v_par;
-        
+
         double modB = derivs[4*PARTICLES_PER_BLOCK + threadIdx.x];
         mu[threadIdx.x] = v_perp2 / (2*modB);
 
@@ -808,7 +808,7 @@ __device__ void check_has_left<CoordSys::Boozer>(bool* has_left, double* state, 
     double x2 = state[1*PARTICLES_PER_BLOCK + threadIdx.x];
     double s = sqrt(x1*x1 + x2*x2);
 
-    has_left[threadIdx.x] = s >= 1; 
+    has_left[threadIdx.x] = s >= 1;
 }
 
 // this function estimates error, accepts/rejects the proposed step
@@ -828,10 +828,10 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
         double state_i = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
         double deriv_i = derivs[(6*0 + i)*PARTICLES_PER_BLOCK + threadIdx.x];
         err_elt = dt[threadIdx.x]*(bhat1 * deriv_i
-                                 + bhat3 * derivs[(6*2 + i)*PARTICLES_PER_BLOCK + threadIdx.x] 
-                                 + bhat4 * derivs[(6*3 + i)*PARTICLES_PER_BLOCK + threadIdx.x] 
-                                 + bhat5 * derivs[(6*4 + i)*PARTICLES_PER_BLOCK + threadIdx.x] 
-                                 + bhat6 * derivs[(6*5 + i)*PARTICLES_PER_BLOCK + threadIdx.x] 
+                                 + bhat3 * derivs[(6*2 + i)*PARTICLES_PER_BLOCK + threadIdx.x]
+                                 + bhat4 * derivs[(6*3 + i)*PARTICLES_PER_BLOCK + threadIdx.x]
+                                 + bhat5 * derivs[(6*4 + i)*PARTICLES_PER_BLOCK + threadIdx.x]
+                                 + bhat6 * derivs[(6*5 + i)*PARTICLES_PER_BLOCK + threadIdx.x]
                                  + bhat7 * derivs[(6*6 + i)*PARTICLES_PER_BLOCK + threadIdx.x]);
         double atol_i = (rescale_abstol_var_d) && (i == 3) ?  atol_d * v_total_d : atol_d;
         err_elt = fabs(err_elt) / (atol_i + rtol_d*(fabs(state_i) + dt[threadIdx.x]*fabs(deriv_i)));
@@ -843,13 +843,13 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
     double exponent = 0.0;
     if(max_err > 1.0){
         exponent = -1.0/3.0;
-    } 
+    }
     if(max_err < 0.5) {
         exponent = -1.0/5.0;
     }
     dt_new *= pow(max_err, exponent);
     dt_new = fmax(dt_new, 0.2 * dt[threadIdx.x]);
-    dt_new = fmin(dt_new, 5.0 * dt[threadIdx.x]);   
+    dt_new = fmin(dt_new, 5.0 * dt[threadIdx.x]);
 
     if(max_err <= 1.0) {
         // if the error is moderate, don't use a new step size
@@ -959,7 +959,7 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
 
 
 template<RHS id, typename... Args>
-vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, 
+vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range,
     py::array_t<double> loc_init, double m, double q, double vtotal, py::array_t<double> vtang, py::array_t<double> tmax, double tol, py::array_t<double> dt_in, int nparticles, Args... args){
 
     //  read data in from python
@@ -1012,23 +1012,23 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
 
         double s = loc_init_arr[start];
         double theta = loc_init_arr[start+1];
-        
+
         for(int j=0; j<3; j++){
             init_pos[4*i + j] = loc_init_arr[start + j];
         }
         init_pos[4*i + 3] = vtang_arr[i];
     }
-   
+
     double* init_pos_d;
     gpuErrchk(cudaMalloc((void**)&init_pos_d, 4 * nparticles * sizeof(double)) );
     gpuErrchk(cudaMemcpy(init_pos_d, init_pos, 4 * nparticles * sizeof(double), cudaMemcpyHostToDevice) );
 
     double* quadpts_d;
-    gpuErrchk(cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double)) ); 
+    gpuErrchk(cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double)) );
     gpuErrchk(cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice) );
 
     double* dt_in_d;
-    gpuErrchk(cudaMalloc((void**)&dt_in_d, dt_in.size() * sizeof(double)) ); 
+    gpuErrchk(cudaMalloc((void**)&dt_in_d, dt_in.size() * sizeof(double)) );
     gpuErrchk(cudaMemcpy(dt_in_d, dt_in_arr, dt_in.size() * sizeof(double), cudaMemcpyHostToDevice) );
 
     double* tmax_d;
@@ -1036,7 +1036,7 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     gpuErrchk(cudaMemcpy(tmax_d, tmax_arr, tmax.size()*sizeof(double), cudaMemcpyHostToDevice) );
 
     double* out_d;
-    gpuErrchk(cudaMalloc((void**)&out_d, 6 * nparticles * sizeof(double)) ); 
+    gpuErrchk(cudaMalloc((void**)&out_d, 6 * nparticles * sizeof(double)) );
 
 
     int nthreads = THREADS_PER_BLOCK;
@@ -1044,7 +1044,7 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     int nblks = nparticles  / PARTICLES_PER_BLOCK + 1;
     // std::cout << "starting particle tracing kernel\n";
 
-       
+
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
@@ -1066,19 +1066,19 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
 }
 
 extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> rrange,
-        py::array_t<double> phirange, py::array_t<double> zrange, py::array_t<double> xyz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        py::array_t<double> phirange, py::array_t<double> zrange, py::array_t<double> xyz_init, double m, double q, double vtotal, py::array_t<double> vtang,
         py::array_t<double> tmax, double tol, py::array_t<double> dt_in, int nparticles){
             return gpu_tracing<RHS::GC_CartesianVacuum>(quad_pts, rrange, phirange, zrange, xyz_init, m, q, vtotal, vtang, tmax, tol, dt_in, nparticles);
         }
 
 
 extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
-        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang,
         py::array_t<double> tmax, double tol, py::array_t<double> dt_in, double psi0, int nparticles, bool vacuum=false){
 
     //  read data in from python
     double* stz_init_arr = create_array(stz_init);
-    
+
     for(int i=0; i<nparticles; ++i){
         double s = stz_init_arr[3*i];
         double theta = stz_init_arr[3*i+1];
@@ -1107,7 +1107,7 @@ extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::a
 }
 
 
-extern "C" vector<double> boozer_saw_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, 
+extern "C" vector<double> boozer_saw_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange,
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
         py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, py::array_t<double> tmax, double tol, py::array_t<double> dt_in, double psi0, int nparticles){
 
@@ -1129,7 +1129,7 @@ extern "C" vector<double> boozer_saw_gpu_tracing(py::array_t<double> quad_pts, p
     double* saw_phihats_d;
     gpuErrchk( cudaMalloc((void**)&saw_phihats_d, saw_phihats.size() * sizeof(double)) );
     gpuErrchk( cudaMemcpy(saw_phihats_d, saw_phihats_arr, saw_phihats.size() * sizeof(double), cudaMemcpyHostToDevice) );
-    
+
     for(int i=0; i<nparticles; ++i){
         double s = stz_init_arr[3*i];
         double theta = stz_init_arr[3*i+1];
@@ -1140,7 +1140,7 @@ extern "C" vector<double> boozer_saw_gpu_tracing(py::array_t<double> quad_pts, p
     // copy saw s_range to constant memory
     double saw_srange_ext[4];
     for(int i=0; i<3; ++i){
-        saw_srange_ext[i] = saw_srange_arr[i];   
+        saw_srange_ext[i] = saw_srange_arr[i];
     }
     saw_srange_ext[3] = (saw_srange_ext[1] - saw_srange_ext[0]) / (saw_srange_ext[2] - 1);
     gpuErrchk(cudaMemcpyToSymbol(saw_srange_d, saw_srange_ext, 4*sizeof(double)) );
@@ -1164,7 +1164,7 @@ extern "C" vector<double> boozer_saw_gpu_tracing(py::array_t<double> quad_pts, p
     return results;
 }
 
-extern "C" vector<double> boozer_saw_nok_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, 
+extern "C" vector<double> boozer_saw_nok_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange,
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
         py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, py::array_t<double> tmax, double tol, py::array_t<double> dt_in, double psi0, int nparticles){
 
@@ -1186,7 +1186,7 @@ extern "C" vector<double> boozer_saw_nok_gpu_tracing(py::array_t<double> quad_pt
     double* saw_phihats_d;
     cudaMalloc((void**)&saw_phihats_d, saw_phihats.size() * sizeof(double));
     cudaMemcpy(saw_phihats_d, saw_phihats_arr, saw_phihats.size() * sizeof(double), cudaMemcpyHostToDevice);
-    
+
     for(int i=0; i<nparticles; ++i){
         double s = stz_init_arr[3*i];
         double theta = stz_init_arr[3*i+1];
@@ -1197,7 +1197,7 @@ extern "C" vector<double> boozer_saw_nok_gpu_tracing(py::array_t<double> quad_pt
     // copy saw s_range to constant memory
     double saw_srange_ext[4];
     for(int i=0; i<3; ++i){
-        saw_srange_ext[i] = saw_srange_arr[i];   
+        saw_srange_ext[i] = saw_srange_arr[i];
     }
     saw_srange_ext[3] = (saw_srange_ext[1] - saw_srange_ext[0]) / (saw_srange_ext[2] - 1);
     gpuErrchk(cudaMemcpyToSymbol(saw_srange_d, saw_srange_ext, 4*sizeof(double)) );
@@ -1225,7 +1225,7 @@ extern "C" vector<double> boozer_saw_nok_gpu_tracing(py::array_t<double> quad_pt
 /*
  * This function accounts for exploiting stellarator symmetry
  * It is only used in the interpolant test.
- */ 
+ */
 
 template<CoordSys coord>
 __device__ void account_for_symmetry(double* interpolants, bool* symmetry_exploited){
@@ -1312,12 +1312,12 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* loc, dou
         for(int i=0; i<n; ++i){
             block_interpolants[i*PARTICLES_PER_BLOCK + threadIdx.x] = 0.0;
         }
-    } 
+    }
 
     __syncthreads();
     interpolate<n>(block_interpolants, quad_pts, index_i, index_j, index_k, r_shape, phi_shape, z_shape, nparticles_blk);
     __syncthreads();
-    
+
     if(is_valid){
         for(int i=0; i<n; ++i){
             out_arr[i] = block_interpolants[i*PARTICLES_PER_BLOCK + threadIdx.x];
@@ -1337,14 +1337,14 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
     double* x2_range_arr = create_array(x2_range);
     double* x3_range_arr = create_array(x3_range);
     double* loc_arr = create_array(loc);
-    
+
     // map input data
     // Cartesian Coordinates
     if(rhs == "cartesian_vacuum"){
         for(int i=0; i<n_points; ++i){
             double x = loc_arr[3*i] * cos(loc_arr[3*i + 1]);
             double y = loc_arr[3*i] * sin(loc_arr[3*i + 1]);
-            
+
             loc_arr[3*i] = x;
             loc_arr[3*i+1] = y;
         }
@@ -1355,7 +1355,7 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
         for(int i=0; i<n_points; ++i){
             double x1 = loc_arr[3*i] * cos(loc_arr[3*i + 1]);
             double x2 = loc_arr[3*i] * sin(loc_arr[3*i + 1]);
-            
+
             loc_arr[3*i] = x1;
             loc_arr[3*i+1] = x2;
         }
@@ -1437,7 +1437,7 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
 
 template<RHS id, typename... Args>
 __global__ void test_gpu_derivs_kernel(double* quad_pts, double* loc, double* vpar, double* time, double* out, int n_points, Args... args){
-    int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;    
+    int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
     double* loc_arr = loc + 3*idx;
     double* out_arr  =  out + 4*idx;
 
@@ -1510,7 +1510,7 @@ py::array_t<double> test_gpu_derivatives(py::array_t<double> quad_pts, py::array
     double* loc_arr = create_array(loc);
     double* vpar_arr = create_array(vpar);
     double* time_arr = create_array(time);
-    
+
     double* quadpts_d;
     cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
     cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
@@ -1560,7 +1560,7 @@ py::array_t<double> test_gpu_derivatives(py::array_t<double> quad_pts, py::array
     gpuErrchk(cudaMemcpyToSymbol(n_x23_d, &n_x23, sizeof(int)) );
 
     bool is_test = true;
-    gpuErrchk(cudaMemcpyToSymbol(is_test_d, &is_test, sizeof(bool)) ); 
+    gpuErrchk(cudaMemcpyToSymbol(is_test_d, &is_test, sizeof(bool)) );
 
     int nthreads = THREADS_PER_BLOCK;
     int nblks = n_points / PARTICLES_PER_BLOCK + 1;
@@ -1569,19 +1569,19 @@ py::array_t<double> test_gpu_derivatives(py::array_t<double> quad_pts, py::array
     // cudaEventCreate(&start);
     // cudaEventCreate(&stop);
     // cudaEventRecord(start);
-        
+
     test_gpu_derivs_kernel<id><<<nblks, nthreads>>>(quadpts_d, loc_d, vpar_d, time_d, out_d, n_points, args...);
-    
+
     // cudaEventRecord(stop);
     // cudaEventSynchronize(stop);
     // float milliseconds = 0;
     // cudaEventElapsedTime(&milliseconds, start, stop);
     // std::cout << "derivatives kernel time (ms): " << milliseconds<< "\n";
-    
+
     double out[4*n_points];
     gpuErrchk( cudaMemcpy(&out, out_d, 4*n_points * sizeof(double), cudaMemcpyDeviceToHost) );
     auto result = py::array_t<double>(4*n_points, out);
-    
+
     gpuErrchk( cudaFree(quadpts_d) );
     gpuErrchk( cudaFree(loc_d) );
     gpuErrchk( cudaFree(vpar_d) );
@@ -1592,7 +1592,7 @@ py::array_t<double> test_gpu_derivatives(py::array_t<double> quad_pts, py::array
 }
 
 
-extern "C" py::array_t<double> test_derivatives_cartesian(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<double> loc, py::array_t<double> vpar, double v_total, double m, double q, int n_points){        
+extern "C" py::array_t<double> test_derivatives_cartesian(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<double> loc, py::array_t<double> vpar, double v_total, double m, double q, int n_points){
     py::array_t<double> time = py::array_t<double>(n_points); // dummy time
     return test_gpu_derivatives<RHS::GC_CartesianVacuum>(quad_pts, x1_range, x2_range, x3_range, loc, vpar, time, v_total, m, q, n_points);
 }
@@ -1609,7 +1609,7 @@ extern "C" py::array_t<double> test_derivatives_boozer(py::array_t<double> quad_
     }
 }
 
-extern "C" py::array_t<double> test_derivatives_saw(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, 
+extern "C" py::array_t<double> test_derivatives_saw(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range,
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
         py::array_t<double> loc, py::array_t<double> vpar, py::array_t<double> time, double v_total, double m, double q,  double psi0, int n_points){
 
@@ -1617,7 +1617,7 @@ extern "C" py::array_t<double> test_derivatives_saw(py::array_t<double> quad_pts
     int* saw_m_arr = create_array(saw_m);
     int* saw_n_arr = create_array(saw_n);
     double* saw_phihats_arr = create_array(saw_phihats);
-    
+
     int* saw_m_d;
     cudaMalloc((void**)&saw_m_d, saw_m.size() * sizeof(int));
     cudaMemcpy(saw_m_d, saw_m_arr, saw_m.size() * sizeof(int), cudaMemcpyHostToDevice);
@@ -1634,13 +1634,13 @@ extern "C" py::array_t<double> test_derivatives_saw(py::array_t<double> quad_pts
     double saw_srange_ext[4];
     for(int i=0; i<3; ++i){
         saw_srange_ext[i] = saw_srange_arr[i];
-        
+
     }
     saw_srange_ext[3] = (saw_srange_ext[1] - saw_srange_ext[0]) / (saw_srange_ext[2] - 1);
 
     gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(saw_srange_d, saw_srange_ext, 4*sizeof(double)) );
-    
+
     py::array_t<double> out = test_gpu_derivatives<RHS::GC_BoozerVacuumSAW>(quad_pts, x1_range, x2_range, x3_range, loc, vpar, time, v_total, m, q, n_points,
                                                                         saw_omega, saw_m_d, saw_n_d, saw_phihats_d, saw_nharmonics);
 
@@ -1650,7 +1650,7 @@ extern "C" py::array_t<double> test_derivatives_saw(py::array_t<double> quad_pts
     return out;
 }
 
-extern "C" py::array_t<double> test_derivatives_saw_nok(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, 
+extern "C" py::array_t<double> test_derivatives_saw_nok(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range,
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
         py::array_t<double> loc, py::array_t<double> vpar, py::array_t<double> time, double v_total, double m, double q,  double psi0, int n_points){
 
@@ -1680,7 +1680,7 @@ extern "C" py::array_t<double> test_derivatives_saw_nok(py::array_t<double> quad
 
     gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(saw_srange_d, saw_srange_ext, 4*sizeof(double)) );
-        
+
     py::array_t<double> out = test_gpu_derivatives<RHS::GC_BoozerNoKSAW>(quad_pts, x1_range, x2_range, x3_range, loc, vpar, time, v_total, m, q, n_points,
                                                                         saw_omega, saw_m_d, saw_n_d, saw_phihats_d, saw_nharmonics);
     gpuErrchk( cudaFree(saw_m_d) );
@@ -1768,7 +1768,7 @@ __global__ void test_gpu_timestep_kernel(double* out, double* init_pos, double* 
 
 template<RHS id, typename... Args>
 vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<double> x1_range,
-        py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<double> loc_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<double> loc_init, double m, double q, double vtotal, py::array_t<double> vtang,
         double tol, int nparticles, Args... args){
 
     //  read data in from python
@@ -1817,14 +1817,14 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
         int start = 3*i;
         double r = loc_init_arr[start];
         double phi =  loc_init_arr[start + 1];
-        
+
         init_pos[4*i] = r*cos(phi);
         init_pos[4*i+1] = r*sin(phi);
         init_pos[4*i+2] = loc_init_arr[start+2];
         init_pos[4*i + 3] = vtang_arr[i];
     }
 
-   
+
     double* init_pos_d;
     gpuErrchk(cudaMalloc((void**)&init_pos_d, 4 * nparticles * sizeof(double)) );
     gpuErrchk(cudaMemcpy(init_pos_d, init_pos, 4 * nparticles * sizeof(double), cudaMemcpyHostToDevice) );
@@ -1857,7 +1857,7 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
     // float milliseconds = 0;
     // cudaEventElapsedTime(&milliseconds, start, stop);
     // std::cout << "tracing kernels time (ms): " << milliseconds<< "\n";
-    
+
     vector<double> particle_output(5*nparticles);
     for(int i=0; i<5*nparticles; ++i){
         particle_output[i] = out[i];
@@ -1871,7 +1871,7 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
 }
 
 extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, py::array_t<double> x1_range,
-        py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<double> loc_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<double> loc_init, double m, double q, double vtotal, py::array_t<double> vtang,
         double tol, int nparticles){
     bool rescale_abstol_var = false;
     gpuErrchk(cudaMemcpyToSymbol(rescale_abstol_var_d, &rescale_abstol_var, sizeof(bool)) );
@@ -1879,7 +1879,7 @@ extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, 
 }
 
 extern "C" vector<double> test_timestep_boozer(py::array_t<double> quad_pts, py::array_t<double> x1_range,
-        py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<double> loc_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<double> loc_init, double m, double q, double vtotal, py::array_t<double> vtang,
         double tol, double psi0, int nparticles, bool vacuum){
 
     gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
@@ -1906,11 +1906,11 @@ extern "C" vector<double> test_timestep_boozer(py::array_t<double> quad_pts, py:
     return particle_output;
 }
 
-extern "C" vector<double> test_timestep_saw(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, 
+extern "C" vector<double> test_timestep_saw(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range,
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
         py::array_t<double> loc_init, double m, double q, double v_total, py::array_t<double> vtang, py::array_t<double> time,
         double tol, double psi0, int nparticles){
- 
+
     double* saw_srange_arr = create_array(saw_srange);
     int* saw_m_arr = create_array(saw_m);
     int* saw_n_arr = create_array(saw_n);
@@ -1958,16 +1958,16 @@ extern "C" vector<double> test_timestep_saw(py::array_t<double> quad_pts, py::ar
     gpuErrchk( cudaFree(saw_n_d) );
     gpuErrchk( cudaFree(saw_phihats_d) );
     gpuErrchk( cudaFree(out_d) );
- 
+
     return particle_output;
 
 };
 
-extern "C" vector<double> test_timestep_saw_nok(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, 
+extern "C" vector<double> test_timestep_saw_nok(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range,
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
         py::array_t<double> loc_init, double m, double q, double v_total, py::array_t<double> vtang, py::array_t<double> time,
         double tol, double psi0, int nparticles){
- 
+
     double* saw_srange_arr = create_array(saw_srange);
     int* saw_m_arr = create_array(saw_m);
     int* saw_n_arr = create_array(saw_n);

@@ -19,7 +19,7 @@ namespace py = pybind11;
 
 
 extern "C" vector<bool> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
-        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang,
         py::array_t<double> tmax, double tol, double psi0,  int nparticles);
 
 extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, int n, int n_points);
@@ -27,5 +27,5 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
 extern "C" py::array_t<double> test_derivatives(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> loc, double m, double q, double mu, double psi0);
 
 extern "C" vector<double> test_timestep(py::array_t<double> quad_pts, py::array_t<double> srange,
-        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang,
         double tol, double psi0, int nparticles);
