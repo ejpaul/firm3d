@@ -146,10 +146,6 @@ class PassingPoincare:
         comm=None,
         tmax=1e-2,
         solver_options=None,
-        mu=None,
-        Eprime=None,
-        nprime=None,
-        omega=None,
         helicity_N=None,
         helicity_M=None,
         helicity_Np=None,
@@ -596,47 +592,6 @@ class PassingPoincare:
             s_prof = s_prof[sort_idx]
             return omega_theta_prof, omega_zeta_prof, peta_prof, s_prof
 
-    def compute_ds_dangle(self, helicity_M, helicity_N):
-        if "axis" in self.solver_options and self.solver_options["axis"] != 0:
-            raise ValueError(
-                'ODE solver must integrate with solver_options["axis"]=0 to '
-                "compute passing frequencies."
-            )
-
-        self.field.set_points(np.array([[1], [0], [0]]).T)
-        sign_G = np.sign(self.field.G()[0])
-
-        omega_theta = []
-        omega_zeta = []
-        init_s = []
-        for s_traj, theta_traj, _vpar_traj, t_traj in zip(
-            self.s_all, self.thetas_all, self.vpars_all, self.t_all
-        ):
-            if (
-                len(s_traj) < 2
-            ):  # Need at least one full Poincare return maps to compute frequency
-                continue
-            delta_theta = np.array(theta_traj[1:]) - np.array(theta_traj[0:-1])
-            np.array(s_traj[1:]) - np.array(s_traj[0:-1])
-            t_traj[1::]
-            delta_zeta = 2 * np.pi * self.sign_vpar * sign_G
-            helicity_M * delta_theta + helicity_N * delta_zeta
-
-        omega_theta = np.array(omega_theta)
-        omega_zeta = np.array(omega_zeta)
-        init_s = np.array(init_s)
-
-        s_prof = np.unique(init_s)
-        omega_theta_prof = np.zeros((len(s_prof),))
-        omega_zeta_prof = np.zeros((len(s_prof),))
-
-        # Average over field-line label
-        for i, s in enumerate(s_prof):
-            omega_theta_prof[i] = np.mean(omega_theta[np.where(init_s == s)])
-            omega_zeta_prof[i] = np.mean(omega_zeta[np.where(init_s == s)])
-
-        return omega_theta_prof, omega_zeta_prof, s_prof
-
     def get_poincare_data(self):
         """
         Return the Poincare map data.
@@ -649,6 +604,7 @@ class PassingPoincare:
     def plot_poincare(
         self,
         ax=None,
+        y_axis_flux=True,
         filename="passing_poincare.pdf",
         colorbar=True,
         DA_max=7,
@@ -663,6 +619,11 @@ class PassingPoincare:
                  created.
             filename : Name of the file to save the plot
                        (default: 'passing_poincare.pdf').
+            colorbar : If True, include a colorbar indicating the digit accuracy of the
+                          Weighted Birkhoff Average if chaos_detection=True (default: True).
+                          Will not error if WBA is not computed.
+            DA_max : Maximum digit accuracy to display on the colorbar if colorbar=True (default: 7).
+            title : Title for the plot (default: "").
         Returns:
             ax : The Matplotlib axis containing the plot.
         """
@@ -683,6 +644,13 @@ class PassingPoincare:
         else:
             fig = ax.get_figure()
 
+        if not y_axis_flux and not self.peta_profile:
+            raise ValueError(
+                "To plot with p_\eta as y axis, the Poincare map " \
+                "must be initialized with helicity_M and helicity_N " \
+                "to compute p_\eta along the trajectory."
+            )
+
         def normalize(numbers):
             if not numbers:
                 return []
@@ -690,19 +658,25 @@ class PassingPoincare:
             normalized_numbers = [(x - min_val) / (max_val - min_val) for x in numbers]
             return normalized_numbers
 
-        convergence_test_indicies = list(range(len(self.s_all)))
-        if self.DA_poinc and self.nconvergence_points > 1:
-            s_itrj_map = {}
-            for itrj in convergence_test_indicies:
-                s_itrj_map[itrj] = self.s_all[itrj][0]
+        y_coordinate = self.s_all if y_axis_flux else self.peta_all
 
-            min_s = min(list(s_itrj_map.values()))
-            max_s = max(list(s_itrj_map.values()))
-            s_lst_true = list(s_itrj_map.values())
-            cmap_s = mpl.colormaps["copper"].resampled(len(s_lst_true) ** 2)
+        convergence_test_indicies = list(range(len(y_coordinate)))
+        if self.DA_poinc and self.nconvergence_points > 1:
+            radial_itrj_map = {}
+            for itrj in convergence_test_indicies:
+                radial_itrj_map[itrj] = y_coordinate[itrj][0]
+
+            min_radial = min(list(radial_itrj_map.values()))
+            max_radial = max(list(radial_itrj_map.values()))
+            radial_lst_true = list(radial_itrj_map.values())
+            color_space = len(radial_lst_true) ** 2
+            cmap_radial = mpl.colormaps["copper"].resampled(color_space)
 
         ax.set_xlabel(r"$\theta$")
-        ax.set_ylabel(r"$s$")
+        if y_axis_flux:
+            ax.set_ylabel(r"$s$")
+        else:
+            ax.set_ylabel(r"$p_\eta$")
         ax.set_xlim([0, 2 * np.pi])
         ax.set_ylim([0, 1])
 
@@ -723,7 +697,7 @@ class PassingPoincare:
             for i in range(len(self.thetas_all)):
                 ax.scatter(
                     np.mod(self.thetas_all[i], 2 * np.pi),
-                    self.s_all[i],
+                    self.s_all[i] if y_axis_flux else self.peta_all[i],
                     marker="o",
                     s=0.5,
                     c=cmap_object(DA_norm_all[i]),
@@ -742,7 +716,7 @@ class PassingPoincare:
             for i in range(len(self.thetas_all)):
                 ax.scatter(
                     np.mod(self.thetas_all[i], 2 * np.pi),
-                    self.s_all[i],
+                    self.s_all[i] if y_axis_flux else self.peta_all[i],
                     marker="o",
                     s=2,
                     edgecolors="none",
@@ -757,20 +731,20 @@ class PassingPoincare:
             ax2.set_ylabel(r"Digit Accuracy")
             ax2.set_xlabel(r"Toroidal Periods")
 
-            for itrj in s_itrj_map:
+            for itrj in radial_itrj_map:
                 ax2.plot(
                     self.DA_times[itrj],
                     self.DA_all[itrj],
-                    color=cmap_s((s_itrj_map[itrj] - min_s) / (max_s - min_s)),
+                    color=cmap_radial((radial_itrj_map[itrj] - min_radial) / (max_radial - min_radial)),
                     alpha=0.75,
-                    label=f"{s_itrj_map[itrj]}",
+                    label=f"{radial_itrj_map[itrj]}",
                 )
-            norm = plt.Normalize(min(s_lst_true), max(s_lst_true))
+            norm = plt.Normalize(min(radial_lst_true), max(radial_lst_true))
             fig_convergence.colorbar(
-                ScalarMappable(norm=norm, cmap=cmap_s),
+                ScalarMappable(norm=norm, cmap=cmap_radial),
                 ax=ax2,
                 orientation="vertical",
-                label="$s$",
+                label="$s$" if y_axis_flux else "$p_\eta$",
             )
 
             fig_convergence.tight_layout()
@@ -1265,7 +1239,7 @@ class TrappedPoincare:
         ax=None,
         filename="trapped_poincare.pdf",
         convergence_test_indicies=None,
-        DA_max=7,
+        DA_max=None,
     ):
         r"""
         Plot the trapped Poincare map and save to a file. It is recommended to only
@@ -1300,13 +1274,6 @@ class TrappedPoincare:
         if convergence_test_indicies is None:
             convergence_test_indicies = list(range(len(self.s_all)))
 
-        def normalize(numbers):
-            if not numbers:
-                return []
-            min_val, max_val = 0, DA_max
-            normalized_numbers = [(x - min_val) / (max_val - min_val) for x in numbers]
-            return normalized_numbers
-
         if self.DA_poinc:
             final_DAs = []
             # retrieve final DA for each trajectory if the particle is not lost
@@ -1317,6 +1284,17 @@ class TrappedPoincare:
                 else:
                     final_DAs.append(np.nan)
             # normalized DA values for colormap
+            if DA_max is None:
+                DA_max = np.nanmax(final_DAs)
+
+        def normalize(numbers):
+            if not numbers:
+                return []
+            min_val, max_val = 0, DA_max
+            normalized_numbers = [(x - min_val) / (max_val - min_val) for x in numbers]
+            return normalized_numbers
+
+        if self.DA_poinc:
             DA_norm_all = normalize(final_DAs)
             cmap_object = mpl.colormaps[cmap].resampled(len(self.DA_all) ** 2)
 
@@ -1651,13 +1629,16 @@ def return_DA(array):
     diff = np.abs(t_wavg - T_wavg)
     denom = 0.5 * (np.abs(t_wavg) + np.abs(T_wavg))
 
+    normalizing_DA_factor = - np.log10(np.nanmax(np.abs(T_mom)))
+
     if diff == 0.0:
         return T, 16
 
     ratio = diff / denom
-    da_c = -np.log10(ratio)
+    da_absolute = -np.log10(ratio)
+    da_relative = -np.log10(diff) - normalizing_DA_factor 
 
-    return T, da_c
+    return T, max(da_relative, da_absolute)
 
 
 class PassingPerturbedPoincare:
@@ -1678,7 +1659,7 @@ class PassingPerturbedPoincare:
         lam=None,
         ns_poinc=None,
         nchi_poinc=None,
-        DA_poinc=False,
+        chaos_detection=False,
         nconvergence_points=None,
         s_init=None,
         chis_init=None,
@@ -1793,8 +1774,8 @@ class PassingPerturbedPoincare:
         self.charge = charge
         self.sign_vpar = sign_vpar
 
-        self.DA_poinc = DA_poinc
-        if DA_poinc:
+        self.chaos_detection = chaos_detection
+        if chaos_detection:
             if nconvergence_points is None:
                 self.nconvergence_points = 1
                 self.WBA_transit_steps = [Nmaps - 1]
@@ -2156,7 +2137,7 @@ class PassingPerturbedPoincare:
                 MinToroidalFluxStoppingCriterion(0.01),
                 MaxToroidalFluxStoppingCriterion(0.999),
             ],
-            forget_exact_path=not self.DA_poinc,
+            forget_exact_path=not self.chaos_detection,
             vpars_stop=True,
             phases_stop=True,
             **self.solver_options,
@@ -2174,7 +2155,7 @@ class PassingPerturbedPoincare:
         else:
             raise RuntimeError("Alternative stopping criterion reached in passing_map.")
 
-        if not self.DA_poinc:
+        if not self.chaos_detection:
             return point, res_hit[0] + t, self.eta(res_hit[3], res_hit[4])
         else:
             # define trajectories
@@ -2231,7 +2212,7 @@ class PassingPerturbedPoincare:
             particle_DA_times = []
             for jj in range(self.Nmaps):
                 try:
-                    if self.DA_poinc:
+                    if self.chaos_detection:
                         if jj == 0:
                             tr, time, eta, Peta = self.passing_map(
                                 tr, t_traj[-1], eta_traj[-1]
@@ -2249,12 +2230,12 @@ class PassingPerturbedPoincare:
                     vpars_traj.append(tr[2])
                     t_traj.append(time)
                     eta_traj.append(eta)
-                    if self.DA_poinc and jj in self.WBA_transit_steps:
+                    if self.chaos_detection and jj in self.WBA_transit_steps:
                         time_at_evaluation, DA_at_evaluation = return_DA(Peta)
                         particle_DAs.append(DA_at_evaluation)
                         particle_DA_times.append(jj)
                 except RuntimeError:
-                    if self.DA_poinc:
+                    if self.chaos_detection:
                         particle_DAs.append(np.nan)
                         particle_DA_times.append(np.nan)
                     break
@@ -2352,7 +2333,7 @@ class PassingPerturbedPoincare:
                 {} for _ in resonance_lines if resonance_lines is not None
             ]
 
-        if self.DA_poinc and self.nconvergence_points > 1:
+        if self.chaos_detection and self.nconvergence_points > 1:
             s_itrj_map = {}
             for itrj in convergence_test_indicies:
                 s_itrj_map[itrj] = self.s_all[itrj][0]
@@ -2369,7 +2350,7 @@ class PassingPerturbedPoincare:
             normalized_numbers = [(x - min_val) / (max_val - min_val) for x in numbers]
             return normalized_numbers
 
-        if self.DA_poinc:
+        if self.chaos_detection:
             final_DAs = []
             # retrieve final DA for each trajectory if the particle is not lost
             # put it into a list
@@ -2390,7 +2371,7 @@ class PassingPerturbedPoincare:
 
         for i in range(len(self.chis_all)):
             # if len(self.chis_all[i]) < Nmaps
-            if self.DA_poinc:
+            if self.chaos_detection:
                 ax.scatter(
                     np.mod(self.chis_all[i], 2 * np.pi),
                     self.s_all[i],
@@ -2421,7 +2402,7 @@ class PassingPerturbedPoincare:
                     edgecolors="magenta",
                 )
 
-        if self.DA_poinc:
+        if self.chaos_detection:
             # make colorbar for DA values
             max_val = DA_max
             norm = plt.Normalize(0, max_val)
@@ -2484,7 +2465,7 @@ class PassingPerturbedPoincare:
 
         # convergence plot - change in DA with number of transit evaluations
         # histogram of final DA values
-        if self.DA_poinc and self.nconvergence_points > 1:
+        if self.chaos_detection and self.nconvergence_points > 1:
             fig, ax2 = plt.subplots(1, 1)
             ax2.set_ylabel(r"Digit Accuracy")
             ax2.set_xlabel(r"Toroidal Periods")
@@ -3110,7 +3091,7 @@ class MapEquilibrium:
         savepath="heatmap_digit_accuracy.pdf",
         plot_at_loss=True,
         ax=None,
-        DA_max=7,
+        DA_max=None,
         statistic="mean",
         plot_losses=False,
     ):
@@ -3146,6 +3127,9 @@ class MapEquilibrium:
             fDA = np.array(self.DAs_at_loss)
         else:
             fDA = np.array(self.DA_at_tfinal)
+
+        if DA_max is None:
+            DA_max = np.nanmax(fDA)
 
         mpl.use("Agg")  # Don't use interactive backend
 
@@ -3229,7 +3213,10 @@ class MapEquilibrium:
                 pitch_data = T[:, peta_i]
                 if not pitch_data.any() or pitch_data.all():
                     continue
-                pitch_i = int(np.argmin(pitch_data > 0.5))
+                if self.sign == 1:
+                    pitch_i = int(np.argmax(pitch_data > 0.5))
+                else:
+                    pitch_i = int(np.argmin(pitch_data > 0.5))
                 pitch_value = pitch_c[pitch_i]
                 boundary_pitch.append(pitch_value)
                 boundary_radlike.append(radlike_c[peta_i])
@@ -3295,7 +3282,6 @@ class MapEquilibrium:
             ax.set_ylabel(r"$P_\eta$")
             pa_tp, rad_like_tp = make_boundary(rad_like_tp, pa_tp, trapped_vals)
 
-        print(f"{rad_like_tp=} \t {pa_tp=}")
         coeffs = np.polyfit(pa_tp, rad_like_tp, 2)
         poly = np.poly1d(coeffs)
         pa_fit = np.linspace(min(pa_tp), max(pa_tp), 100)
@@ -3304,6 +3290,32 @@ class MapEquilibrium:
         ax.plot(
             pa_fit, s_fit, color="grey", linewidth=5, label="Trapped-passing boundary"
         )
+        if plot_losses: 
+            lost_frac, x_edges, y_edges, _ = binned_statistic_2d(
+                normalized_pitch,
+                radial_coordinate_start,
+                np.array(self.lost_total),
+                statistic="mean",
+                bins=[nx, ny],
+            )
+            x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
+            y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
+            Xc, Yc = np.meshgrid(x_centers, y_centers)
+            xf = Xc.ravel()
+            yf = Yc.ravel()
+            lost_frac = np.nan_to_num(lost_frac, nan=0.0).astype(int)
+            af = lost_frac.T.ravel()
+            ax.scatter(
+                xf,
+                yf,
+                marker="s",
+                s=500,
+                c="darkorange",
+                edgecolors="k",
+                alpha=af,
+                linewidths=1,
+                zorder=10,
+            )
 
         plt.tight_layout()
         plt.savefig(savepath)
