@@ -37,6 +37,7 @@ def trace_particles_boozer_gpu(
     dt: the initial time step size for the solver (optional)
     """
     nparticles = stz_inits.shape[0]
+    tmax = tmax * np.ones(nparticles)
 
     if isinstance(field, ShearAlfvenWavesSuperposition):
         B0 = field.B0
@@ -165,6 +166,7 @@ def trace_particles_cartesian_gpu(
     dt: the initial time step size for the solver (optional)
     """
     nparticles = xyz_inits.shape[0]
+    tmax = tmax * np.ones(nparticles)
     r_range, phi_range, z_range, quad_info = cartesian_interpolant(
         field, surface_classifier
     )
