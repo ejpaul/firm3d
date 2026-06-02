@@ -4517,7 +4517,6 @@ class WBAPerturbedParticles:
         mu_per_mass=None,
         tmax=1e-2,
         min_timestep=1e-7,
-        DA_cutoff=3,
         tol=1e-9,
         gc_tys=None,
         savedata=False,
@@ -5045,6 +5044,11 @@ class WBAPerturbedParticles:
         self.Eprime_mean = Eprime_mean
         self.Eprime_final = Eprime_final
 
+        self.s0 = s0
+        self.theta0 = theta0
+        self.zeta0 = zeta0
+        self.vpar0 = vpar0
+
         self.convergence_bounces = convergence_bounces
         self.convergence_passes = convergence_passes
         self.convergence_times = convergence_times
@@ -5055,6 +5059,61 @@ class WBAPerturbedParticles:
         if self.verbose:
             print("Done Building Lists", flush=True)
         return
+        
+    def return_chaotic_boolean_array(self, cutoff=3):
+        r"""
+        Return a boolean array classifying particles as chaotic or regular based
+        on their final WBA digit accuracy.
+
+        Args:
+            cutoff : Digit accuracy threshold for classifying chaos. If None,
+                uses self.DA_cutoff.
+
+        Returns:
+            chaotic_indices : Boolean array of shape (N,) where True indicates
+                a chaotic particle.
+        """
+        if cutoff is None:
+            cutoff = self.DA_cutoff
+        return np.array(self.DA_at_tfinal) < cutoff
+
+    def return_chaotic_percentage(self, cutoff=3):
+        r"""
+        Return the percentage of particles classified as chaotic based on their
+        final WBA digit accuracy.
+
+        Args:
+            cutoff : Digit accuracy threshold for classifying chaos. If None,
+                uses self.DA_cutoff.
+
+        Returns:
+            chaotic_percentage : Percentage of particles classified as chaotic.
+        """
+        chaotic_indices = self.return_chaotic_boolean_array(cutoff)
+        return np.mean(chaotic_indices) * 100
+
+    def return_chaotic_initial_conditions(self):
+        r"""
+        Return the initial conditions of particles classified as chaotic based on
+        their final WBA digit accuracy.
+
+        Returns:
+            chaotic_points : Array of shape (N_chaotic, 3) of (s, theta, zeta)
+                initial conditions for chaotic particles.
+            chaotic_vpars : Array of shape (N_chaotic,) of initial parallel
+                velocities for chaotic particles.
+            chaotic_mus : Array of shape (N_chaotic,) of initial magnetic moments
+                divided by mass for chaotic particles.
+        """
+        chaotic_indices = self.return_chaotic_boolean_array()
+
+        chaotic_s0s = self.s0[chaotic_indices]
+        chaotic_theta0s = self.theta0[chaotic_indices]
+        chaotic_zeta0s = self.zeta0[chaotic_indices]
+        chaotic_points = np.stack((chaotic_s0s, chaotic_theta0s, chaotic_zeta0s), axis=-1)
+        chaotic_vpars = self.vpar0[chaotic_indices]
+        chaotic_mus = self.mus[chaotic_indices]
+        return chaotic_points, chaotic_vpars, chaotic_mus
 
 
 class WBAParticles:
@@ -5077,7 +5136,6 @@ class WBAParticles:
         save_gc_trajectories=False,
         savepath="",
         comm=None,
-        DA_cutoff=3,
         solver_options=None,
         tol=1e-9,
         convergence_points=1,
@@ -5122,9 +5180,6 @@ class WBAParticles:
         self.B0 = B0
         self.helicity_M = helicity_M
         self.helicity_N = helicity_N
-
-        if gc_tys is None and points is None:
-            raise ValueError("Need to provide trajctories or points.")
 
         if gc_tys is None and points is None:
             raise ValueError("Need to provide traced trajectories or points to trace.")
@@ -5487,6 +5542,12 @@ class WBAParticles:
         self.bounces = bounces
         self.passes = passes
 
+        self.s0 = s0
+        self.theta0 = theta0
+        self.zeta0 = zeta0
+        self.vpar0 = vpar0
+        self.mus = mu0
+
         self.convergence_bounces = convergence_bounces
         self.convergence_passes = convergence_passes
         self.convergence_times = convergence_times
@@ -5496,6 +5557,57 @@ class WBAParticles:
         if self.verbose:
             print("Done Building Lists", flush=True)
         return
+    
+    def return_chaotic_boolean_array(self, cutoff=3):
+        r"""
+        Return a boolean array classifying particles as chaotic or regular based
+        on their final WBA digit accuracy.
+
+        Args:
+            cutoff : Digit accuracy threshold for classifying chaos. 
+
+        Returns:
+            chaotic_indices : Boolean array of shape (N,) where True indicates
+                a chaotic particle.
+        """
+        return np.array(self.DA_at_tfinal) < cutoff
+
+    def return_chaotic_percentage(self, cutoff=3):
+        r"""
+        Return the percentage of particles classified as chaotic based on their
+        final WBA digit accuracy.
+
+        Args:
+            cutoff : Digit accuracy threshold for classifying chaos. 
+
+        Returns:
+            chaotic_percentage : Percentage of particles classified as chaotic.
+        """
+        chaotic_indices = self.return_chaotic_boolean_array(cutoff)
+        return np.mean(chaotic_indices) * 100
+
+    def return_chaotic_initial_conditions(self):
+        r"""
+        Return the initial conditions of particles classified as chaotic based on
+        their final WBA digit accuracy.
+
+        Returns:
+            chaotic_points : Array of shape (N_chaotic, 3) of (s, theta, zeta)
+                initial conditions for chaotic particles.
+            chaotic_vpars : Array of shape (N_chaotic,) of initial parallel
+                velocities for chaotic particles.
+            chaotic_mus : Array of shape (N_chaotic,) of initial magnetic moments
+                divided by mass for chaotic particles.
+        """
+        chaotic_indices = self.return_chaotic_boolean_array()
+
+        chaotic_s0s = self.s0[chaotic_indices]
+        chaotic_theta0s = self.theta0[chaotic_indices]
+        chaotic_zeta0s = self.zeta0[chaotic_indices]
+        chaotic_points = np.stack((chaotic_s0s, chaotic_theta0s, chaotic_zeta0s), axis=-1)
+        chaotic_vpars = self.vpar0[chaotic_indices]
+        chaotic_mus = self.mus[chaotic_indices]
+        return chaotic_points, chaotic_vpars, chaotic_mus
 
 
 def trajectory_to_vtk(res_ty, field, filename="trajectory"):

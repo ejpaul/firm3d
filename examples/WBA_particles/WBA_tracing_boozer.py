@@ -73,6 +73,9 @@ charge = ALPHA_PARTICLE_CHARGE
 vpar0 = np.sqrt(2 * Ekin / mass)
 vpar_init = initialize_velocity_uniform(vpar0, nParticles, comm=comm, seed=0)
 
+### Alternatively: one could provide the traced trajectories to the WBAParticles class,
+# which will then compute the DA for those trajectories.
+# pass gc_tys to the WBAParticles class, and provide
 object_WBA = WBAParticles(
     field,
     mass,
@@ -94,3 +97,7 @@ object_WBA = WBAParticles(
 DAs_all = np.array(object_WBA.DAs)
 convergence_DAs = object_WBA.convergence_DAs
 convergence_times = object_WBA.convergence_times
+
+chaotic_percentage = object_WBA.return_chaotic_percentage()
+
+print('Percent of space that is chaotic: ', chaotic_percentage, '%')

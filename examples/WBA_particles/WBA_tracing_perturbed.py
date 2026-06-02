@@ -108,3 +108,8 @@ object_WBA = WBAPerturbedParticles(
 DAs_all = np.array(object_WBA.DAs)
 convergence_DAs = object_WBA.convergence_DAs
 convergence_times = object_WBA.convergence_times
+
+
+chaotic_percentage = object_WBA.return_chaotic_percentage()
+
+print('Percent of space that is chaotic: ', chaotic_percentage, '%')
