@@ -39,8 +39,8 @@ read -p "Your input; " env_name
 conda create -n "$env_name" -y python=3.9 --no-default-packages
 
 conda activate "$env_name"
-export LD_LIBRARY_PATH=/usr/local/openmpi/4.1.0/gcc/lib64:$LD_LIBRARY_PATH
 check_success "Failed to activate conda environment $env_name"
+export LD_LIBRARY_PATH=/usr/local/openmpi/4.1.0/gcc/lib64:$LD_LIBRARY_PATH
 
 echo "Installing FIRM3D dependencies..."
 #conda remove mpi mpi4py --force -y
