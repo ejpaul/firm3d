@@ -129,7 +129,7 @@ Phin = AE_temp.harmonics[harmonic].n
 Phim = AE_temp.harmonics[harmonic].m
 saw = ShearAlfvenHarmonic(Phihat, Phim=Phim, Phin=Phin, omega=omega, B0=field, phase=0)
 
-filepath = f"qa_{Phim}_{Phin}_{dir}" if perfect else f"bqa_{Phim}_{Phin}_{dir}"
+filepath = f"qh_{Phim}_{Phin}_{dir}" if perfect else f"bqh_{Phim}_{Phin}_{dir}"
 
 mass = ALPHA_PARTICLE_MASS
 charge = ALPHA_PARTICLE_CHARGE
@@ -181,9 +181,11 @@ heat_map = MapPhaseSpace(
     tmax=1e-2,
     comm=comm,
     savedata=True,
-    file_name="",
+    file_name=filepath,
     convergence_points=5,
 )
+if verbose:
+    print("Finished computing heatmap ", flush=True)
 
 map = PassingPerturbedPoincare(
     saw,
@@ -200,10 +202,12 @@ map = PassingPerturbedPoincare(
     ns_poinc=ns_poinc,
     nchi_poinc=nchi_poinc,
     Nmaps=Nmaps,
-    DA_poinc=True,
+    chaos_detection=True,
     comm=comm,
     nconvergence_points=5,
 )
+if verbose:
+    print("Finished computing poincare ", flush=True)
 
 
 def compute_rotational_profile(pitch, sgn, s_profile, comm):
@@ -214,9 +218,9 @@ def compute_rotational_profile(pitch, sgn, s_profile, comm):
         mass,
         charge,
         Ekin,
-        ns_poinc=50,
-        ntheta_poinc=50,
-        Nmaps=100,
+        ns_poinc=100,
+        ntheta_poinc=1,
+        Nmaps=75,
         comm=comm,
         tmax=1e-2,
         solver_options={"axis": 0},
@@ -470,15 +474,21 @@ if verbose:
                 resonance_peta = np.asarray(crossing_line[1])
                 resonance_pitch = np.asarray(crossing_line[0])
 
-                if len(resonance_peta) < 3:
-                    continue  # skip if not enough points to plot resonance line:
+                if len(crossing_line[1]) < 2:
+                    continue  # skip if not enough points to fit a curve:
+
+                # smooth resonance lines with a polynomial fit
+                coeffs = np.polyfit(resonance_pitch, resonance_peta, 2)
+                poly = np.poly1d(coeffs)
+                pa_fit = np.linspace(min(resonance_pitch), max(resonance_pitch), 100)
+                s_fit = poly(pa_fit)
 
                 color = harmonic_cmap(norm(h))
 
                 # fit a curve to the resonance points to plot on the heatmap
-                trapped_passing_fit = heat_map.trapped_boundary_fit(resonance_pitch)
+                trapped_passing_fit = heat_map.trapped_boundary_fit(pa_fit)
 
-                diff = trapped_passing_fit - resonance_peta
+                diff = trapped_passing_fit - s_fit
                 sign_changes = np.where(np.sign(diff[:-1]) != np.sign(diff[1:]))[0]
 
                 # don't repeat label if resonance line crosses multiple times
@@ -487,26 +497,26 @@ if verbose:
                 else:
                     label = None
 
-                if len(sign_changes) == 0:
-                    stop_index = len(resonance_pitch)
-                else:
-                    stop_index = sign_changes[0]
+                stop_index = len(pa_fit) if len(sign_changes) == 0 else sign_changes[0]
 
                 if stop_index == 0:
                     continue  # skip if resonance line is entirely in trapped region
                 (line,) = ax_right.plot(
-                    resonance_pitch[:stop_index],
-                    resonance_peta[:stop_index],
+                    pa_fit[:stop_index],
+                    s_fit[:stop_index],
                     linewidth=5,
                     linestyle=possible_linestyles[ell + max_ell],
                     label=label,
                     color=color,
                 )
-                labels_lines.append(possible_linestyles[ell + max_ell])
-                labels_text.append(label)  # for legend
 
                 if crossing_line_index == 0:
                     lines.append(line)
+                if crossing_line_index == 0:
+                    label = rf"m,n={Phim_h},{Phin_h} $\ell$={ell}"
+                    labels_lines.append(line)
+                    labels_text.append(label)
+    ax_dummy.remove()
     # legend_handles, legend_labels = ax_right.get_legend_handles_labels()
     ax_right.legend(
         labels_lines,
@@ -515,9 +525,9 @@ if verbose:
         bbox_to_anchor=(1.2, 1.0),
         borderaxespad=0.0,
     )
-    ax_dummy.remove()
     fig.savefig(filepath + f"{filepath[:-1]}.png", dpi=400)
 
     plt.clf()
+
 if comm is not None:
     comm.Barrier()

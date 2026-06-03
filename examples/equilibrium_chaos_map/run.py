@@ -88,4 +88,4 @@ heat_map = MapEquilibrium(
 )
 
 if verbose:
-    heat_map.plot_surfaces(plot_at_loss=False)
+    heat_map.plot_heatmap(plot_at_loss=False)

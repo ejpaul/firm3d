@@ -428,11 +428,7 @@ class PassingPoincare:
         DA_all = []
         DA_times = []
         t_all = []
-        if (Ntrj == 1) and self.comm is None:
-            first = 0
-            last = 1
-        else:
-            first, last = parallel_loop_bounds(self.comm, Ntrj)
+        first, last = parallel_loop_bounds(self.comm, Ntrj)
         for itrj in range(first, last):
             tr = [self.s_init[itrj], self.thetas_init[itrj], self.vpars_init[itrj]]
             s_traj = [tr[0]]
@@ -620,9 +616,10 @@ class PassingPoincare:
             filename : Name of the file to save the plot
                        (default: 'passing_poincare.pdf').
             colorbar : If True, include a colorbar indicating the digit accuracy of the
-                          Weighted Birkhoff Average if chaos_detection=True (default: True).
-                          Will not error if WBA is not computed.
-            DA_max : Maximum digit accuracy to display on the colorbar if colorbar=True (default: 7).
+                          Weighted Birkhoff Average if chaos_detection=True
+                          (default: True). Will not error if WBA is not computed.
+            DA_max : Maximum digit accuracy to display on the colorbar if colorbar=True
+             (default: 7).
             title : Title for the plot (default: "").
         Returns:
             ax : The Matplotlib axis containing the plot.
@@ -646,9 +643,9 @@ class PassingPoincare:
 
         if not y_axis_flux and not self.peta_profile:
             raise ValueError(
-                "To plot with p_\eta as y axis, the Poincare map " \
-                "must be initialized with helicity_M and helicity_N " \
-                "to compute p_\eta along the trajectory."
+                "To plot with p_eta as y axis, the Poincare map "
+                "must be initialized with helicity_M and helicity_N "
+                "to compute p_eta along the trajectory."
             )
 
         def normalize(numbers):
@@ -678,7 +675,8 @@ class PassingPoincare:
         else:
             ax.set_ylabel(r"$p_\eta$")
         ax.set_xlim([0, 2 * np.pi])
-        ax.set_ylim([0, 1])
+        if y_axis_flux:
+            ax.set_ylim([0, 1])
 
         if self.DA_poinc:
             final_DAs = []
@@ -718,13 +716,13 @@ class PassingPoincare:
                     np.mod(self.thetas_all[i], 2 * np.pi),
                     self.s_all[i] if y_axis_flux else self.peta_all[i],
                     marker="o",
-                    s=2,
+                    s=0.5,
                     edgecolors="none",
                 )
         if title != "":
             ax.set_title(title)
         fig.tight_layout()
-        plt.savefig(filename)
+        plt.savefig(filename, dpi=300)
 
         if self.DA_poinc and self.nconvergence_points > 1:
             fig_convergence, ax2 = plt.subplots(1, 1)
@@ -735,7 +733,9 @@ class PassingPoincare:
                 ax2.plot(
                     self.DA_times[itrj],
                     self.DA_all[itrj],
-                    color=cmap_radial((radial_itrj_map[itrj] - min_radial) / (max_radial - min_radial)),
+                    color=cmap_radial(
+                        (radial_itrj_map[itrj] - min_radial) / (max_radial - min_radial)
+                    ),
                     alpha=0.75,
                     label=f"{radial_itrj_map[itrj]}",
                 )
@@ -744,7 +744,7 @@ class PassingPoincare:
                 ScalarMappable(norm=norm, cmap=cmap_radial),
                 ax=ax2,
                 orientation="vertical",
-                label="$s$" if y_axis_flux else "$p_\eta$",
+                label=r"$s$" if y_axis_flux else r"$p_\eta$",
             )
 
             fig_convergence.tight_layout()
@@ -1629,14 +1629,12 @@ def return_DA(array):
     diff = np.abs(t_wavg - T_wavg)
     denom = 0.5 * (np.abs(t_wavg) + np.abs(T_wavg))
 
-    normalizing_DA_factor = - np.log10(np.nanmax(np.abs(T_mom)))
-
     if diff == 0.0:
         return T, 16
 
     ratio = diff / denom
     da_absolute = -np.log10(ratio)
-    da_relative = -np.log10(diff) - normalizing_DA_factor 
+    da_relative = -np.log10(diff / (np.nanmax(np.abs(T_mom))))
 
     return T, max(da_relative, da_absolute)
 
@@ -1959,52 +1957,6 @@ class PassingPerturbedPoincare:
         Compute vpar given (s,chi) such that Eprime = Eprime0
         """
 
-        def vpar_func_perturbed(s, chi):
-            # Choose initial conditions on the eta = 0 plane
-            theta, zeta = self.chi_eta_to_theta_zeta(chi, 0)
-            point = np.zeros((1, 4))  # initialize with t = 0
-            point[0, 0] = s
-            point[0, 1] = theta
-            point[0, 2] = zeta
-            self.saw.set_points(point)
-            modB = self.B0.modB()[0, 0]
-            G = self.B0.G()[0, 0]
-            I = self.B0.I()[0, 0]
-            psi = self.B0.psi0 * s
-            psip = self.B0.psip()[0, 0]
-            Phi = self.saw.Phi()[0, 0]
-            alpha = self.saw.alpha()[0, 0]
-            denom = (
-                self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
-            )  # - 1 in QA
-            d_peta_d_vpar = (
-                -((self.helicity_M * G + self.helicity_N * I) * (self.mass / modB))
-                / denom
-            )  # G m/ modB in QA
-            d_E_d_vpar2 = 0.5 * self.mass
-            a = self.nprime * d_E_d_vpar2  # Coefficient of vpar^2
-            b = -self.omega * d_peta_d_vpar  # Coefficient of vpar
-            # Constant term
-            c = (
-                self.nprime * (self.mass * self.mu * modB + self.charge * Phi)
-                + self.omega
-                * (
-                    (self.helicity_M * G + self.helicity_N * I) * self.charge * alpha
-                    + self.charge * (self.helicity_N * psi - self.helicity_M * psip)
-                )
-                / denom
-                - self.Eprime
-            )
-            if (b**2 - 4 * a * c) < 0:
-                raise RuntimeError(
-                    "No solution for vpar found! Check the parameters and "
-                    "initial conditions."
-                )
-            elif a != 0:
-                return (-b + self.sign_vpar * np.sqrt(b**2 - 4 * a * c)) / (2 * a)
-            else:
-                return (-c / b) * self.sign_vpar
-
         # Create mesh grid if not provided directly
         if not hasattr(self, "s_init") or not hasattr(self, "chis_init"):
             s = np.linspace(0, 1, self.ns_poinc + 1, endpoint=False)[1::]
@@ -2023,7 +1975,7 @@ class PassingPerturbedPoincare:
         vpars_init = []
         for i in range(first, last):
             try:
-                vpar = vpar_func_perturbed(s[i], chis[i])
+                vpar = self.vpar_func_perturbed(s[i], chis[i])
                 s_init.append(s[i])
                 chis_init.append(chis[i])
                 vpars_init.append(vpar)
@@ -2135,7 +2087,7 @@ class PassingPerturbedPoincare:
             axis=0,
             stopping_criteria=[
                 MinToroidalFluxStoppingCriterion(0.01),
-                MaxToroidalFluxStoppingCriterion(0.999),
+                MaxToroidalFluxStoppingCriterion(0.99),
             ],
             forget_exact_path=not self.chaos_detection,
             vpars_stop=True,
@@ -2257,6 +2209,78 @@ class PassingPerturbedPoincare:
             DA_times = [i for o in self.comm.allgather(DA_times) for i in o]
 
         return s_all, chis_all, etas_all, vpars_all, t_all, DA_all, DA_times
+
+    def convergence_plot(
+        self,
+        ax=None,
+        convergence_test_indicies=None,
+        DA_max=7,
+        filename="DA_convergence.pdf",
+    ):
+        r"""
+        Plot the convergence of the Weighted Birkhoff Average for the trajectories
+        specified by `convergence_test_indicies` and save to a file. It is recommended
+        to only call this function on MPI rank 0.
+        Args:
+            convergence_test_indicies : Indices of initial conditions to show in DA
+                convergence plot.
+            DA_max : Maximum value of Digit Accuracy to show on colorbar
+            filename : Name of the file to save the plot (default: 'DA_convergence.pdf
+        Returns:
+            fig, ax : The Matplotlib figure and axis containing the plot.
+        """
+        if not self.chaos_detection or self.nconvergence_points <= 1:
+            raise ValueError(
+                "Convergence plot is only meaningful if chaos_detection is True and "
+                "nconvergence_points is greater than 1."
+            )
+        import matplotlib as mpl
+        import matplotlib.pyplot as plt
+        from matplotlib.cm import ScalarMappable
+
+        mpl.use("Agg")  # Don't use interactive backend
+
+        if convergence_test_indicies is None:
+            convergence_test_indicies = list(range(len(self.s_all)))
+
+        if ax is None:
+            fig, ax = plt.subplots()
+        else:
+            fig = ax.get_figure()
+
+        if self.chaos_detection and self.nconvergence_points > 1:
+            s_itrj_map = {}
+            for itrj in convergence_test_indicies:
+                s_itrj_map[itrj] = self.s_all[itrj][0]
+
+            min_s = min(list(s_itrj_map.values()))
+            max_s = max(list(s_itrj_map.values()))
+            s_lst_true = list(s_itrj_map.values())
+            cmap_s = mpl.colormaps["copper"].resampled(len(s_lst_true) ** 2)
+
+        ax.set_ylabel(r"Digit Accuracy")
+        ax.set_xlabel(r"Toroidal Periods")
+
+        for itrj in s_itrj_map:
+            ax.plot(
+                self.DA_times[itrj],
+                self.DA_all[itrj],
+                color=cmap_s((s_itrj_map[itrj] - min_s) / (max_s - min_s)),
+                alpha=0.75,
+                label=f"{s_itrj_map[itrj]}",
+            )
+        norm = plt.Normalize(min(s_lst_true), max(s_lst_true))
+        fig.colorbar(
+            ScalarMappable(norm=norm, cmap=cmap_s),
+            ax=ax,
+            orientation="vertical",
+            label="$s$",
+        )
+
+        fig.tight_layout()
+        plt.savefig(filename[:-4] + "_convergence.pdf")
+
+        return ax
 
     def plot_poincare(
         self,
@@ -2422,23 +2446,30 @@ class PassingPerturbedPoincare:
                 if "color" not in line_plotting_kwargs[i]:
                     line_plotting_kwargs[i]["color"] = cmap(i / max(n_lines - 1, 1))
                 lines_2.append((arr, line_plotting_kwargs[i]["color"]))
-                vp = self.vpar_func_perturbed(arr, self.chi(np.pi / 2, 0))
-                bg_field.set_points(np.array([[arr, np.pi / 2, 0]]).T)
+                theta = np.pi / 2
+
+                vp = self.vpar_func_perturbed(arr, self.chi(theta, 0))
+                point = np.zeros((1, 3))
+                point[:, 0] = arr
+                point[:, 1] = theta
+                point[:, 2] = 0
+                bg_field.set_points(point)
+                lam = (self.v0**2 - vp**2) / (self.v0**2 * bg_field.modB()[0, 0])
                 unperturbed_path_map = PassingPoincare(
                     field=bg_field,
-                    lam=(self.v0**2 - vp**2) / (self.v0**2 * bg_field.modB()[0, 0]),
+                    lam=lam,
                     sign_vpar=self.sign_vpar,
                     mass=self.mass,
                     charge=self.charge,
                     Ekin=self.Ekin,
                     s_init=[arr],
                     comm=None,
-                    Nmaps=250,
+                    Nmaps=100,
                     helicity_N=self.helicity_N,
                     helicity_M=self.helicity_M,
                     helicity_Mp=self.helicity_Mp,
                     helicity_Np=self.helicity_Np,
-                    thetas_init=[np.pi / 2],
+                    thetas_init=[theta],
                     solver_options={"axis": 0},
                 )
 
@@ -2465,36 +2496,10 @@ class PassingPerturbedPoincare:
 
         # convergence plot - change in DA with number of transit evaluations
         # histogram of final DA values
-        if self.chaos_detection and self.nconvergence_points > 1:
-            fig, ax2 = plt.subplots(1, 1)
-            ax2.set_ylabel(r"Digit Accuracy")
-            ax2.set_xlabel(r"Toroidal Periods")
-
-            for itrj in s_itrj_map:
-                ax2.plot(
-                    self.DA_times[itrj],
-                    self.DA_all[itrj],
-                    color=cmap_s((s_itrj_map[itrj] - min_s) / (max_s - min_s)),
-                    alpha=0.75,
-                    label=f"{s_itrj_map[itrj]}",
-                )
-            norm = plt.Normalize(min(s_lst_true), max(s_lst_true))
-            fig.colorbar(
-                ScalarMappable(norm=norm, cmap=cmap_s),
-                ax=ax2,
-                orientation="vertical",
-                label="$s$",
+        if star_ICs:
+            self.convergence_plot(
+                convergence_test_indicies=convergence_test_indicies, DA_max=DA_max
             )
-
-            fig.tight_layout()
-            plt.savefig(filename[:-4] + "_convergence.pdf")
-            plt.clf()
-            final_DAs = [x for x in final_DAs if not np.isnan(x)]
-            plt.hist(final_DAs)
-            plt.xlabel("Digit Accuracy")
-            plt.title("Distribution of Digit Accuracy")
-            plt.tight_layout()
-            plt.savefig(filename[:-4] + "_DA_histogram.pdf")
         return ax, lines_2
 
     def get_poincare_data(self):
@@ -2795,7 +2800,7 @@ class MapEquilibrium:
                 mass=self.mass,
                 charge=self.charge,
                 Ekin=self.Ekin,
-                stopping_criteria=[MaxToroidalFluxStoppingCriterion(0.999)],
+                stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
                 forget_exact_path=False,
                 dt_save=self.min_timestep,
                 abstol=self.tol,
@@ -2842,31 +2847,9 @@ class MapEquilibrium:
                 self.helicity_Np,
             )
 
-            v_par_signs = np.sign(vpar_path)
-
-            mask = v_par_signs != 0
-            v = v_par_signs[mask]
-            orig_idx = np.where(mask)[0]
-
-            bounce_local = np.where(v[1:] * v[:-1] < 0)[0]
-            bounce_indices = orig_idx[bounce_local + 1]
-
-            bounces = len(bounce_indices) if len(v) > 1 else 0
-
-            zeta_path = np.mod(points_trajectory[:, 2], 2 * np.pi)
-            dzeta = np.diff(zeta_path)
-            dzeta_idx = np.where(dzeta < -np.pi)[0]
-
-            true_passes = []
-
-            for passing_index in range(len(dzeta_idx) - 1):
-                pass1 = dzeta_idx[passing_index]
-                pass2 = dzeta_idx[passing_index + 1]
-                if not np.any((bounce_indices > pass1) & (bounce_indices < pass2)):
-                    true_passes.append(dzeta_idx[passing_index])
-
-            true_passes = np.array(true_passes)
-            passes = len(true_passes) if len(dzeta) > 0 else 0
+            bounce_indices, passing_indicies = return_bounces_and_passes(
+                vpar_path, zeta_path
+            )
 
             # start_state = [s, theta, zeta, vpar, p_eta_0, mu]
             start_state = [
@@ -2893,8 +2876,8 @@ class MapEquilibrium:
                 points_trajectory[-1, 2],
                 vpar_path[-1],
                 Peta_values[-1],
-                bounces,
-                passes,
+                len(bounce_indices),
+                len(passing_indicies),
                 final_DA,
             ]
 
@@ -2905,13 +2888,13 @@ class MapEquilibrium:
             convergence_DAs = []
 
             for _conv_index, timing_index in enumerate(self.WBA_transit_indicies):
-                if timing_index > len(time_momentum):
+                if timing_index >= len(time_momentum):
                     break
                 convergence_times.append(time_momentum[timing_index])
                 convergence_petas.append(Peta_values[timing_index])
 
                 bounce_enum = np.searchsorted(bounce_indices, timing_index, side="left")
-                pass_enum = np.searchsorted(true_passes, timing_index, side="left")
+                pass_enum = np.searchsorted(passing_indicies, timing_index, side="left")
 
                 convergence_bounces.append(bounce_enum)
                 convergence_passes.append(pass_enum)
@@ -3055,11 +3038,7 @@ class MapEquilibrium:
 
     def vpar_func(self, s, theta, zeta, mu, sgn):
         r"""
-        Solve for the parallel velocity at (s, theta, zeta) from the
-        shifted-energy invariant Eprime = n' * E - omega * p_eta.
-
-        The constraint is quadratic in vpar; the root matching sgn is selected.
-        Returns NaN where the discriminant is negative.
+        Solve for the parallel velocity at (s, theta, zeta).
 
         Args:
             s : Flux-surface label (scalar or array-like).
@@ -3084,12 +3063,12 @@ class MapEquilibrium:
         # returns x (vpar) if energy > 0, else nan
         return np.where(energy > 0, vpar, np.nan)
 
-    def plot_surfaces(
+    def plot_heatmap(
         self,
-        nx=30,
-        ny=30,
+        nx=25,
+        ny=25,
         savepath="heatmap_digit_accuracy.pdf",
-        plot_at_loss=True,
+        DA_at_loss=True,
         ax=None,
         DA_max=None,
         statistic="mean",
@@ -3105,7 +3084,7 @@ class MapEquilibrium:
             ny          : Number of bins along the radial axis (default: 30).
             savepath    : File path for the output heatmap image
                         (default: 'heatmap_digit_accuracy.pdf').
-            plot_at_loss : If True, use the digit accuracy value at the time of
+            DA_at_loss : If True, use the digit accuracy value at the time of
                         loss; otherwise use the value at the end of the full
                         integration (default: True).
             ax          : Matplotlib axis to plot on. If None, a new figure and
@@ -3123,10 +3102,7 @@ class MapEquilibrium:
         import matplotlib.pyplot as plt
         from scipy.stats import binned_statistic_2d
 
-        if plot_at_loss:
-            fDA = np.array(self.DAs_at_loss)
-        else:
-            fDA = np.array(self.DA_at_tfinal)
+        fDA = np.array(self.DAs_at_loss) if DA_at_loss else np.array(self.DA_at_tfinal)
 
         if DA_max is None:
             DA_max = np.nanmax(fDA)
@@ -3286,11 +3262,23 @@ class MapEquilibrium:
         poly = np.poly1d(coeffs)
         pa_fit = np.linspace(min(pa_tp), max(pa_tp), 100)
         s_fit = poly(pa_fit)
+        min_idx = np.argmin(s_fit)
+        if self.sign == 1:
+            s_fit = s_fit[: min_idx + 1]
+            pa_fit = pa_fit[: min_idx + 1]
+        else:
+            s_fit = s_fit[min_idx:]
+            pa_fit = pa_fit[min_idx:]
 
         ax.plot(
-            pa_fit, s_fit, color="grey", linewidth=5, label="Trapped-passing boundary"
+            pa_fit,
+            s_fit,
+            color="grey",
+            linewidth=5,
+            label="Trapped-passing boundary",
+            zorder=20,
         )
-        if plot_losses: 
+        if plot_losses:
             lost_frac, x_edges, y_edges, _ = binned_statistic_2d(
                 normalized_pitch,
                 radial_coordinate_start,
@@ -3303,17 +3291,15 @@ class MapEquilibrium:
             Xc, Yc = np.meshgrid(x_centers, y_centers)
             xf = Xc.ravel()
             yf = Yc.ravel()
-            lost_frac = np.nan_to_num(lost_frac, nan=0.0).astype(int)
+            lost_frac = np.nan_to_num(lost_frac, nan=0.0)
             af = lost_frac.T.ravel()
             ax.scatter(
                 xf,
                 yf,
                 marker="s",
-                s=500,
-                c="darkorange",
-                edgecolors="k",
+                s=15,
+                c="darkred",
                 alpha=af,
-                linewidths=1,
                 zorder=10,
             )
 
@@ -3409,7 +3395,7 @@ class MapPhaseSpace:
         plot_s=False,
         min_timestep=1e-6,
         ns_points=35,
-        particles_per_surface=15,
+        particles_per_surface=20,
         nlambda_points=35,
         randomize_particles=False,
         number_of_particles=10000,
@@ -3626,10 +3612,10 @@ class MapPhaseSpace:
             )
 
         # set parameters for convergence plot
-        expected_length = int(self.tmax / self.min_timestep)
+        expected_length = int(self.tmax / self.min_timestep) - 1
         expected_step = int(expected_length / self.convergence_points)
         self.WBA_transit_indicies = np.linspace(
-            expected_step, expected_length - 1, num=self.convergence_points, dtype=int
+            expected_step, expected_length, num=self.convergence_points, dtype=int
         ).tolist()
         self.convergence_plot = self.convergence_points > 1
 
@@ -3661,7 +3647,7 @@ class MapPhaseSpace:
                 self.B0,
                 self.particles_per_surface,
                 surfaces_flat[particle_index],
-                comm=self.comm,
+                comm=None,
             )
 
             self.B0.set_points(points_temp)
@@ -3843,11 +3829,13 @@ class MapPhaseSpace:
             **self.solver_options,
         )
 
+        assert len(gc_tys) == len(points)
         # check if any particles were lost to the wall
         lost_total = []
         for i in range(len(gc_zeta_hits)):
             if isinstance(gc_zeta_hits[i], np.ndarray):  # noqa: SIM102
                 if gc_zeta_hits[i].size > 0:  # noqa: SIM102
+                    print(f"gc_zeta_hits[i][0]: {gc_zeta_hits[i][0]}")
                     if int(gc_zeta_hits[i][0][1]) == -1:  # noqa: SIM102
                         lost_total.append(i)
 
@@ -4015,7 +4003,7 @@ class MapPhaseSpace:
             convergence_DAs = []
 
             for _conv_index, timing_index in enumerate(self.WBA_transit_indicies):
-                if timing_index > len(time_momentum):
+                if timing_index >= len(time_momentum):
                     break
                 convergence_times.append(time_momentum[timing_index])
                 convergence_petas.append(Peta_values[timing_index])
@@ -4371,16 +4359,15 @@ class MapPhaseSpace:
 
     def plot_heatmap(
         self,
-        nx=20,
-        ny=20,
+        nx=30,
+        ny=30,
         savepath="heatmap_digit_accuracy.pdf",
         ax=None,
         DA_max=7,
         statistic="mean",
-        DA_at_loss=False,
+        DA_at_loss=True,
         plot_losses=False,
         negate_peta=False,
-        smoothing=3,
     ):
         r"""
         Plot a 2D heatmap of digit accuracy in the (pitch, radial-like) plane and
@@ -4399,7 +4386,6 @@ class MapPhaseSpace:
             plot_losses : If True, overlay loss-fraction markers per bin.
             negate_peta : If True, flip the sign of the y axis (useful when
                 plotting against -p_eta).
-            smoothing : Currently unused; retained for API compatibility.
 
         Returns:
             ax : The Matplotlib axis containing the plot.
@@ -4467,7 +4453,7 @@ class MapPhaseSpace:
             Xc, Yc = np.meshgrid(x_centers, y_centers)
             xf = Xc.ravel()
             yf = Yc.ravel()
-            lost_frac = np.nan_to_num(lost_frac, nan=0.0).astype(int)
+            lost_frac = np.nan_to_num(lost_frac, nan=0.0)
             af = lost_frac.T.ravel()
             if negate_peta:
                 yf = yf * -1
@@ -4475,11 +4461,9 @@ class MapPhaseSpace:
                 xf,
                 yf,
                 marker="^",
-                s=500,
-                c="darkorange",
-                edgecolors="k",
+                s=10,
+                c="red",
                 alpha=af,
-                linewidths=1,
                 zorder=10,
             )
         ax.set_xlabel(r"$\lambda = \frac{\mu}{E} \text{sign}(v_{\|})$")
@@ -5059,7 +5043,7 @@ class WBAPerturbedParticles:
         if self.verbose:
             print("Done Building Lists", flush=True)
         return
-        
+
     def return_chaotic_boolean_array(self, cutoff=3):
         r"""
         Return a boolean array classifying particles as chaotic or regular based
@@ -5110,7 +5094,9 @@ class WBAPerturbedParticles:
         chaotic_s0s = self.s0[chaotic_indices]
         chaotic_theta0s = self.theta0[chaotic_indices]
         chaotic_zeta0s = self.zeta0[chaotic_indices]
-        chaotic_points = np.stack((chaotic_s0s, chaotic_theta0s, chaotic_zeta0s), axis=-1)
+        chaotic_points = np.stack(
+            (chaotic_s0s, chaotic_theta0s, chaotic_zeta0s), axis=-1
+        )
         chaotic_vpars = self.vpar0[chaotic_indices]
         chaotic_mus = self.mus[chaotic_indices]
         return chaotic_points, chaotic_vpars, chaotic_mus
@@ -5557,14 +5543,14 @@ class WBAParticles:
         if self.verbose:
             print("Done Building Lists", flush=True)
         return
-    
+
     def return_chaotic_boolean_array(self, cutoff=3):
         r"""
         Return a boolean array classifying particles as chaotic or regular based
         on their final WBA digit accuracy.
 
         Args:
-            cutoff : Digit accuracy threshold for classifying chaos. 
+            cutoff : Digit accuracy threshold for classifying chaos.
 
         Returns:
             chaotic_indices : Boolean array of shape (N,) where True indicates
@@ -5578,7 +5564,7 @@ class WBAParticles:
         final WBA digit accuracy.
 
         Args:
-            cutoff : Digit accuracy threshold for classifying chaos. 
+            cutoff : Digit accuracy threshold for classifying chaos.
 
         Returns:
             chaotic_percentage : Percentage of particles classified as chaotic.
@@ -5604,7 +5590,9 @@ class WBAParticles:
         chaotic_s0s = self.s0[chaotic_indices]
         chaotic_theta0s = self.theta0[chaotic_indices]
         chaotic_zeta0s = self.zeta0[chaotic_indices]
-        chaotic_points = np.stack((chaotic_s0s, chaotic_theta0s, chaotic_zeta0s), axis=-1)
+        chaotic_points = np.stack(
+            (chaotic_s0s, chaotic_theta0s, chaotic_zeta0s), axis=-1
+        )
         chaotic_vpars = self.vpar0[chaotic_indices]
         chaotic_mus = self.mus[chaotic_indices]
         return chaotic_points, chaotic_vpars, chaotic_mus
