@@ -2394,7 +2394,10 @@ class PassingPerturbedPoincare:
         ax.set_ylim([ylims[0], ylims[1]])
 
         for i in range(len(self.chis_all)):
-            # if len(self.chis_all[i]) < Nmaps
+            # if particle completeled less than 10%
+            # than their perscribed transits, skip
+            if len(self.chis_all[i]) < int(self.Nmaps * 0.1):
+                continue
             if self.chaos_detection:
                 ax.scatter(
                     np.mod(self.chis_all[i], 2 * np.pi),
@@ -2981,7 +2984,10 @@ class MapEquilibrium:
                 radial_coordinate_start.append(start_state[4])
             final_time = end_state[0]
             final_times.append(final_time)
-            DAs_at_loss.append(end_state[8])
+            if final_time < 1e-3:
+                DAs_at_loss.append(np.nan)
+            else:
+                DAs_at_loss.append(end_state[8])
             trapped.append(end_state[6])
 
             s0.append(start_state[0])
@@ -3180,7 +3186,7 @@ class MapEquilibrium:
             pitch_c = 0.5 * (pitch_edges[:-1] + pitch_edges[1:])
             radlike_c = 0.5 * (radlike_edges[:-1] + radlike_edges[1:])
 
-            T = np.nan_to_num(trapped_vals, nan=0.0).astype(int)
+            T = np.nan_to_num(trapped_vals, nan=0.0)
             # x, y -> (pitch, peta) dimensions
 
             boundary_pitch, boundary_radlike = [], []
@@ -3599,7 +3605,17 @@ class MapPhaseSpace:
                 self.nParticles = ns_points * particles_per_surface * nlambda_points
 
             self.particles_per_surface = particles_per_surface
-            s, thetas, zetas, vpar, mu_per_mass = self.initialize_particles()
+
+            s, thetas, zetas, vpar, mu_per_mass = None, None, None, None, None
+            if self.verbose: 
+                s, thetas, zetas, vpar, mu_per_mass = self.initialize_particles()
+            if comm is not None:
+                s, thetas, zetas, vpar, mu_per_mass = comm.bcast(
+                    (s, thetas, zetas, vpar, mu_per_mass), root=0
+                )
+            else:
+                if s is None:
+                    s, thetas, zetas, vpar, mu_per_mass = self.initialize_particles()
 
             initial_points = np.zeros((len(s), 3))  # initialize with t = 0
             initial_points[:, 0] = s
@@ -3828,16 +3844,16 @@ class MapPhaseSpace:
             mode="gc_noK",
             **self.solver_options,
         )
-
+        
+        lost_tolerance = 5 * self.min_timestep
+        #assert len(gc_tys) == len(points)
         assert len(gc_tys) == len(points)
+
         # check if any particles were lost to the wall
         lost_total = []
-        for i in range(len(gc_zeta_hits)):
-            if isinstance(gc_zeta_hits[i], np.ndarray):  # noqa: SIM102
-                if gc_zeta_hits[i].size > 0:  # noqa: SIM102
-                    print(f"gc_zeta_hits[i][0]: {gc_zeta_hits[i][0]}")
-                    if int(gc_zeta_hits[i][0][1]) == -1:  # noqa: SIM102
-                        lost_total.append(i)
+        for i in range(len(gc_tys)):
+            if gc_tys[i][-1, 0] < (2e-3 - lost_tolerance):  # noqa: SIM102
+                lost_total.append(i)
 
         # remove wall lost particles from the list of evaluated particles
         points = np.delete(points, lost_total, axis=0)
@@ -4192,7 +4208,7 @@ class MapPhaseSpace:
             print("Done Building Lists", flush=True)
         return
 
-    def surface_trapped_func_Eprime(self, mu, surface):
+    def surface_trapped_func_Eprime(self, mu, surface, perfect_field=None):
         r"""
         `    Determine whether a particle with the given pitch angle is trapped on a
             specified flux surface.
@@ -4263,7 +4279,7 @@ class MapPhaseSpace:
 
             return output, peta.tolist()
 
-    def return_peta_trapped_contoured_boundary(self):
+    def return_peta_trapped_contoured_boundary(self, perfect_field=None):
         r"""
         Estimate the trapped-passing boundary in the (pitch, p_eta) plane by
         sampling many points on flux surfaces, binning the trapped/passing
@@ -4290,7 +4306,7 @@ class MapPhaseSpace:
 
         for s_val in s_vals:
             for mu_val in mu_vals:
-                trapped, radial_like = self.surface_trapped_func_Eprime(mu_val, s_val)
+                trapped, radial_like = self.surface_trapped_func_Eprime(mu_val, s_val, perfect_field=perfect_field)
 
                 pitch_val = (mu_val / self.Ekin) * self.min_volmodB
                 pitch_val *= self.sign
@@ -4321,7 +4337,7 @@ class MapPhaseSpace:
         pitch_c = 0.5 * (pitch_edges[:-1] + pitch_edges[1:])
         radlike_c = 0.5 * (radlike_edges[:-1] + radlike_edges[1:])
 
-        T = np.nan_to_num(trapped_vals, nan=0.0).astype(int)
+        T = np.nan_to_num(trapped_vals, nan=0.0)
         # x, y -> (pitch, peta) dimensions
 
         boundary_pitch, boundary_radlike = [], []
@@ -4430,6 +4446,9 @@ class MapPhaseSpace:
 
         poly, pa_fit, rad_fit = self.return_peta_trapped_contoured_boundary()
         self.trapped_boundary_fit = poly
+        self.trapped_boundary_fit_pitch = pa_fit
+        self.trapped_boundary_fit_radial = rad_fit
+
         ax.plot(
             pa_fit,
             rad_fit,
@@ -4460,8 +4479,8 @@ class MapPhaseSpace:
             ax.scatter(
                 xf,
                 yf,
-                marker="^",
-                s=10,
+                marker="s",
+                s=20,
                 c="red",
                 alpha=af,
                 zorder=10,

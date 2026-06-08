@@ -487,6 +487,13 @@ if verbose:
 
                 # fit a curve to the resonance points to plot on the heatmap
                 trapped_passing_fit = heat_map.trapped_boundary_fit(pa_fit)
+                trapped_passing_line_rad = heat_map.trapped_boundary_fit_radial
+                trapped_passing_line_pitch = heat_map.trapped_boundary_fit_pitch
+
+                # ignore resonance lines which start near the trapped-passing boundary 
+                # in the region where the fit is inaccurate due to numerical noise
+                if trapped_passing_line_pitch[0] < resonance_pitch[0]: continue
+
 
                 diff = trapped_passing_fit - s_fit
                 sign_changes = np.where(np.sign(diff[:-1]) != np.sign(diff[1:]))[0]
