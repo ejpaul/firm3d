@@ -10,6 +10,7 @@ from ..field.boozermagneticfield import (
     ShearAlfvenHarmonic,
     ShearAlfvenWave,
     ShearAlfvenWavesSuperposition,
+    InterpolatedShearAlfvenWave
 )
 from ..field.tracing import (
     MaxToroidalFluxStoppingCriterion,
@@ -1460,7 +1461,7 @@ def compute_peta(
         "vpar must have the same number of points as points"
     )
 
-    if isinstance(field_or_saw, ShearAlfvenWave):
+    if isinstance(field_or_saw, (ShearAlfvenWave, ShearAlfvenWavesSuperposition,InterpolatedShearAlfvenWave)):
         field = field_or_saw.B0
         field_or_saw.set_points(points)
         alpha = field_or_saw.alpha()[:, 0]
@@ -3478,20 +3479,7 @@ class MapPhaseSpace:
                                 trajectory used to assess convergence
                                 (default: 1).
         """
-        if not isinstance(saw, ShearAlfvenHarmonic) and not isinstance(
-            saw, ShearAlfvenWavesSuperposition
-        ):
-            raise TypeError(
-                "Expected saw to be an instance of ShearAlfvenHarmonic "
-                "or ShearAlfvenWavesSuperposition"
-            )
-
-        if not isinstance(saw, ShearAlfvenHarmonic):
-            raise Warning(
-                "Expected saw to be an instance of ShearAlfvenHarmonic - "
-                "Perturbed Energy Invariant may not be valid."
-            )
-
+        
         # set field parameters
         self.saw = saw
         self.B0 = saw.B0
