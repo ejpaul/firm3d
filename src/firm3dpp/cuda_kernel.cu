@@ -609,7 +609,7 @@ __device__ void map_to_grid_boozer(T* interp_pt, T* x_temp, bool* symmetry_explo
     T z = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x]; // zeta
 
     // we want to exploit periodicity in the B-field, but leave sine(theta) unchanged
-    T t = fmod(theta, 2*M_PI);
+    T t = fmod(theta, T(2*M_PI));
     t += 2*M_PI*(t < 0);
 
     // we can modify z because it's only used to access the B-field location
@@ -1248,14 +1248,8 @@ vector<double> boozer_saw_nok_gpu_tracing(py::array_t<double> quad_pts, py::arra
  * This function accounts for exploiting stellarator symmetry
  * It is only used in the interpolant test.
  */ 
-
-template<CoordSys coord>
-__device__ void account_for_symmetry(double* interpolants, bool* symmetry_exploited){
-    printf("default account_for_symmetry not implemented\n");
-};
-
-template<>
-__device__ void account_for_symmetry<CoordSys::Cartesian>(double* interpolants, bool* symmetry_exploited){
+template<typename T>
+__device__ void account_for_symmetry_cartesian(T* interpolants, bool* symmetry_exploited){
     if(symmetry_exploited[threadIdx.x]){
         interpolants[0] *= -1.0;
         interpolants[4] *= -1.0;
@@ -1263,18 +1257,30 @@ __device__ void account_for_symmetry<CoordSys::Cartesian>(double* interpolants, 
     }
 }
 
-template<>
-__device__ void account_for_symmetry<CoordSys::Boozer>(double* interpolants, bool* symmetry_exploited){
+template<typename T>
+__device__ void account_for_symmetry_boozer(T* interpolants, bool* symmetry_exploited){
     // modB, dmodBds, dmodBdtheta, dmodBdzeta, G, iota
     if(symmetry_exploited[threadIdx.x]){
         interpolants[2] *= -1.0;
         interpolants[3] *= -1.0;
     }
 }
+template<typename T, CoordSys coord>
+__device__ void account_for_symmetry(T* interpolants, bool* symmetry_exploited){
+    if constexpr(coord == CoordSys::Cartesian ){
+        account_for_symmetry_cartesian(interpolants, symmetry_exploited);
+    } else if constexpr(coord == CoordSys::Boozer){
+        account_for_symmetry_boozer(interpolants, symmetry_exploited);
+    } else{
+        printf("default account_for_symmetry not implemented\n");
+    }
+};
+
+
 
 // RHS-aware symmetry correction used by the interpolation test helper
-template<RHS id, int n>
-__device__ void account_for_symmetry_rhs(double* interpolants, bool* symmetry_exploited){
+template<typename T, RHS id, int n>
+__device__ void account_for_symmetry_rhs(T* interpolants, bool* symmetry_exploited){
     if(!symmetry_exploited[threadIdx.x]) return;
     if constexpr (id == RHS::GC_CartesianVacuum){
         interpolants[0] *= -1.0;
@@ -1295,24 +1301,24 @@ __device__ void account_for_symmetry_rhs(double* interpolants, bool* symmetry_ex
 }
 
 
-template <RHS id, int n>
-__global__ void test_gpu_interpolation_kernel(double* quad_pts, double* loc, double* out, int n_points){
+template <typename T, RHS id, int n>
+__global__ void test_gpu_interpolation_kernel(T* quad_pts, T* loc, T* out, int n_points){
     int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
 
-    __shared__ double x_temp[5 * PARTICLES_PER_BLOCK];
+    __shared__ T x_temp[5 * PARTICLES_PER_BLOCK];
     __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
     __shared__ int cell_index_start[3*PARTICLES_PER_BLOCK];
-    __shared__ double shape_fun_vals[12*PARTICLES_PER_BLOCK];
-    __shared__ double state[4 * PARTICLES_PER_BLOCK];
-    __shared__ double derivs[42 * PARTICLES_PER_BLOCK];
-    __shared__ double dt[PARTICLES_PER_BLOCK];
-    __shared__ double t[PARTICLES_PER_BLOCK];
+    __shared__ T shape_fun_vals[12*PARTICLES_PER_BLOCK];
+    __shared__ T state[4 * PARTICLES_PER_BLOCK];
+    __shared__ T derivs[42 * PARTICLES_PER_BLOCK];
+    __shared__ T dt[PARTICLES_PER_BLOCK];
+    __shared__ T t[PARTICLES_PER_BLOCK];
 
-    __shared__ double block_interpolants[n*PARTICLES_PER_BLOCK];
+    __shared__ T block_interpolants[n*PARTICLES_PER_BLOCK];
 
 
-    double* loc_arr = loc + 3*idx;
-    double* out_arr  =  out + idx*n;
+    T* loc_arr = loc + 3*idx;
+    T* out_arr  =  out + idx*n;
 
     bool is_valid = idx < n_points && threadIdx.x < PARTICLES_PER_BLOCK;
     int nparticles_blk = __syncthreads_count(is_valid);
@@ -1331,10 +1337,10 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* loc, dou
         }
     } 
 
-    build_state<double, id, 0>(x_temp, symmetry_exploited, cell_index_start, shape_fun_vals, state, derivs, t, dt, nparticles_blk);
+    build_state<T, id, 0>(x_temp, symmetry_exploited, cell_index_start, shape_fun_vals, state, derivs, t, dt, nparticles_blk);
 
     __syncthreads();
-    interpolate<double, n>(block_interpolants, quad_pts, cell_index_start, shape_fun_vals, nparticles_blk);
+    interpolate<T, n>(block_interpolants, quad_pts, cell_index_start, shape_fun_vals, nparticles_blk);
     __syncthreads();
     
     if(is_valid){
@@ -1343,26 +1349,26 @@ __global__ void test_gpu_interpolation_kernel(double* quad_pts, double* loc, dou
 
         }
         // Apply symmetry fixes with RHS/layout awareness
-        account_for_symmetry_rhs<id, n>(out_arr, symmetry_exploited);
+        account_for_symmetry_rhs<T, id, n>(out_arr, symmetry_exploited);
     }
 }
 
 
-
-py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<double> loc, std::string rhs, int n_points){
+template<typename T>
+py::array_t<T> test_gpu_interpolation(py::array_t<T> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<T> loc, std::string rhs, int n_points){
     // read data in from python
-    double* quadpts_arr = create_array(quad_pts);
+    T* quadpts_arr = create_array<T>(quad_pts);
     double* x1_range_arr = create_array(x1_range);
     double* x2_range_arr = create_array(x2_range);
     double* x3_range_arr = create_array(x3_range);
-    double* loc_arr = create_array(loc);
+    T* loc_arr = create_array<T>(loc);
     
     // map input data
     // Cartesian Coordinates
     if(rhs == "cartesian_vacuum"){
         for(int i=0; i<n_points; ++i){
-            double x = loc_arr[3*i] * cos(loc_arr[3*i + 1]);
-            double y = loc_arr[3*i] * sin(loc_arr[3*i + 1]);
+            T x = loc_arr[3*i] * cos(loc_arr[3*i + 1]);
+            T y = loc_arr[3*i] * sin(loc_arr[3*i + 1]);
             
             loc_arr[3*i] = x;
             loc_arr[3*i+1] = y;
@@ -1372,8 +1378,8 @@ py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_pts, py::arr
     // Boozer Coordinates
     if((rhs == "boozer_vacuum") || (rhs == "boozer_saw_vacuum") || (rhs == "boozer")) {
         for(int i=0; i<n_points; ++i){
-            double x1 = loc_arr[3*i] * cos(loc_arr[3*i + 1]);
-            double x2 = loc_arr[3*i] * sin(loc_arr[3*i + 1]);
+            T x1 = loc_arr[3*i] * cos(loc_arr[3*i + 1]);
+            T x2 = loc_arr[3*i] * sin(loc_arr[3*i + 1]);
             
             loc_arr[3*i] = x1;
             loc_arr[3*i+1] = x2;
@@ -1422,33 +1428,33 @@ py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_pts, py::arr
     gpuErrchk(cudaMemcpyToSymbol(n_x3_d, &n_x3, sizeof(int)) );
     gpuErrchk(cudaMemcpyToSymbol(n_x23_d, &n_x23, sizeof(int)) );
 
-    double* quadpts_d;
-    cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double));
-    cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice);
+    T* quadpts_d;
+    cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(T));
+    cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(T), cudaMemcpyHostToDevice);
 
-    double* loc_d;
-    cudaMalloc((void**)&loc_d, loc.size() * sizeof(double));
-    cudaMemcpy(loc_d, loc_arr, loc.size() * sizeof(double), cudaMemcpyHostToDevice);
+    T* loc_d;
+    cudaMalloc((void**)&loc_d, loc.size() * sizeof(T));
+    cudaMemcpy(loc_d, loc_arr, loc.size() * sizeof(T), cudaMemcpyHostToDevice);
 
-    double* out_d;
-    cudaMalloc((void**)&out_d, n*n_points * sizeof(double));
+    T* out_d;
+    cudaMalloc((void**)&out_d, n*n_points * sizeof(T));
 
     int nthreads = THREADS_PER_BLOCK;
     int nblks = n_points / PARTICLES_PER_BLOCK + 1;
 
     if(rhs == "cartesian_vacuum"){
-        test_gpu_interpolation_kernel<RHS::GC_CartesianVacuum, 7><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
+        test_gpu_interpolation_kernel<T, RHS::GC_CartesianVacuum, 7><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
     } else if(rhs == "boozer_vacuum") {
-        test_gpu_interpolation_kernel<RHS::GC_BoozerVacuum, 6><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
+        test_gpu_interpolation_kernel<T, RHS::GC_BoozerVacuum, 6><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
     } else if(rhs == "boozer_saw_vacuum") {
-        test_gpu_interpolation_kernel<RHS::GC_BoozerVacuumSAW, 10><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
+        test_gpu_interpolation_kernel<T, RHS::GC_BoozerVacuumSAW, 10><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
     } else if(rhs == "boozer") {
-        test_gpu_interpolation_kernel<RHS::GC_Boozer, 12><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
+        test_gpu_interpolation_kernel<T, RHS::GC_Boozer, 12><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
     }
-    double out[n*n_points];
-    gpuErrchk( cudaMemcpy(&out, out_d, n*n_points * sizeof(double), cudaMemcpyDeviceToHost) );
+    T out[n*n_points];
+    gpuErrchk( cudaMemcpy(&out, out_d, n*n_points * sizeof(T), cudaMemcpyDeviceToHost) );
 
-    auto result = py::array_t<double>(n*n_points, out);
+    auto result = py::array_t<T>(n*n_points, out);
 
     gpuErrchk( cudaFree(quadpts_d) );
     gpuErrchk( cudaFree(loc_d) );
@@ -1458,6 +1464,9 @@ py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_pts, py::arr
 
 }
 
+// compile for desired types
+template py::array_t<double> test_gpu_interpolation<double>(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<double> loc, std::string rhs, int n_points);
+template py::array_t<float> test_gpu_interpolation<float>(py::array_t<float> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<float> loc, std::string rhs, int n_points);
 
 template<RHS id, typename... Args>
 __global__ void test_gpu_derivs_kernel(double* quad_pts, double* loc, double* vpar, double* time, double* out, int n_points, Args... args){

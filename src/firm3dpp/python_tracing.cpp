@@ -166,12 +166,22 @@ void init_tracing(py::module_ &m){
         py::arg("nparticles")
         );
 
-    m.def("test_gpu_interpolation", &test_gpu_interpolation,
-        py::arg("quad_pts"),
+    m.def("test_gpu_interpolation", &test_gpu_interpolation<double>,
+        py::arg("quad_pts").noconvert(),
         py::arg("srange"),
         py::arg("trange"),
         py::arg("zrange"),
-        py::arg("loc"),
+        py::arg("loc").noconvert(),
+        py::arg("coordinates"),
+        py::arg("n_points")
+        );
+
+    m.def("test_gpu_interpolation", &test_gpu_interpolation<float>,
+        py::arg("quad_pts").noconvert(),
+        py::arg("srange"),
+        py::arg("trange"),
+        py::arg("zrange"),
+        py::arg("loc").noconvert(),
         py::arg("coordinates"),
         py::arg("n_points")
         );

@@ -51,6 +51,7 @@ from firm3d.util.constants import (
 )
 
 HAS_CUDA = hasattr(firm3dpp, "test_gpu_interpolation")
+n_test_pts = 100000
 
 
 def get_field(boozmn_filename, n_metagrid_pts, vacuum):
@@ -137,7 +138,8 @@ def test_interpolant(
 
         # Compare interpolation of B and GradAbsB
         cpu_interpolation = np.hstack((B, GradAbsB))
-        gpu_interpolation = firm3dpp.test_gpu_interpolation(
+
+        gpu_interpolation_dbl = firm3dpp.test_gpu_interpolation(
             quad_info,
             rrange,
             phirange,
@@ -146,9 +148,21 @@ def test_interpolant(
             "cartesian_vacuum",
             stz.shape[0],
         )
+        gpu_interpolation_dbl = np.reshape(gpu_interpolation_dbl, (stz.shape[0], -1))
+        gpu_interpolation_dbl = gpu_interpolation_dbl[:, 0:6]
 
-        gpu_interpolation = np.reshape(gpu_interpolation, (stz.shape[0], -1))
-        gpu_interpolation = gpu_interpolation[:, 0:6]
+        gpu_interpolation_flt = firm3dpp.test_gpu_interpolation(
+            quad_info.astype(np.float32),
+            rrange,
+            phirange,
+            zrange,
+            stz.copy().astype(np.float32),
+            "cartesian_vacuum",
+            stz.shape[0],
+        )
+        gpu_interpolation_flt = np.reshape(gpu_interpolation_flt, (stz.shape[0], -1))
+        gpu_interpolation_flt = gpu_interpolation_flt[:, 0:6]
+
 
     else:  # Boozer coordinates
         srange, trange, zrange, quad_info, maxJ = construct_interpolant(
@@ -173,12 +187,22 @@ def test_interpolant(
 
             ## evaluate GPU interpolant
             stz = np.ascontiguousarray(stz)
-            gpu_interpolation = firm3dpp.test_gpu_interpolation(
+            gpu_interpolation_dbl = firm3dpp.test_gpu_interpolation(
                 quad_info,
                 srange,
                 trange,
                 zrange,
                 stz.copy(),
+                "boozer_saw_vacuum",
+                stz.shape[0],
+            )
+
+            gpu_interpolation_flt = firm3dpp.test_gpu_interpolation(
+                quad_info.astype(np.float32),
+                srange,
+                trange,
+                zrange,
+                stz.copy().astype(np.float32),
                 "boozer_saw_vacuum",
                 stz.shape[0],
             )
@@ -194,12 +218,22 @@ def test_interpolant(
 
                 ## evaluate GPU interpolant
                 stz = np.ascontiguousarray(stz)
-                gpu_interpolation = firm3dpp.test_gpu_interpolation(
+                gpu_interpolation_dbl = firm3dpp.test_gpu_interpolation(
                     quad_info,
                     srange,
                     trange,
                     zrange,
                     stz.copy(),
+                    "boozer_vacuum",
+                    stz.shape[0],
+                )
+
+                gpu_interpolation_flt = firm3dpp.test_gpu_interpolation(
+                    quad_info.astype(np.float32),
+                    srange,
+                    trange,
+                    zrange,
+                    stz.copy().astype(np.float32),
                     "boozer_vacuum",
                     stz.shape[0],
                 )
@@ -221,7 +255,7 @@ def test_interpolant(
 
                 # evaluate GPU interpolant
                 stz = np.ascontiguousarray(stz)
-                gpu_interpolation = firm3dpp.test_gpu_interpolation(
+                gpu_interpolation_dbl = firm3dpp.test_gpu_interpolation(
                     quad_info,
                     srange,
                     trange,
@@ -231,13 +265,24 @@ def test_interpolant(
                     stz.shape[0],
                 )
 
-        gpu_interpolation = np.reshape(gpu_interpolation, (stz.shape[0], -1))
+                gpu_interpolation_flt = firm3dpp.test_gpu_interpolation(
+                    quad_info.astype(np.float32),
+                    srange,
+                    trange,
+                    zrange,
+                    stz.copy().astype(np.float32),
+                    "boozer",
+                    stz.shape[0],
+                )
 
-    # compute error
-    error_is_small = np.isclose(
-        gpu_interpolation, cpu_interpolation, rtol=tol, atol=tol
+        gpu_interpolation_dbl = np.reshape(gpu_interpolation_dbl, (stz.shape[0], -1))
+        gpu_interpolation_flt = np.reshape(gpu_interpolation_flt, (stz.shape[0], -1))
+
+    # compute error between cpu and gpu interpolants
+    device_error_is_small = np.isclose(
+        gpu_interpolation_dbl, cpu_interpolation, rtol=tol, atol=tol
     ).all()
-    error = np.abs(cpu_interpolation - gpu_interpolation) / (
+    error = np.abs(cpu_interpolation - gpu_interpolation_dbl) / (
         np.abs(cpu_interpolation) + 1
     )
     if error.max() > tol:
@@ -245,10 +290,32 @@ def test_interpolant(
         row_idx = np.unravel_index(np.argmax(error), error.shape)[0]
         print("stz:", stz[row_idx, :])
         print("cpu:", cpu_interpolation[row_idx, :])
-        print("gpu:", gpu_interpolation[row_idx, :])
+        print("gpu:", gpu_interpolation_dbl[row_idx, :])
         print("error:", error[row_idx, :])
 
-    return error_is_small
+
+    # compute error between single and double precision on gpu
+    input_diff = (quad_info - quad_info.astype(np.float32)) / (quad_info + 1e-16)
+    precision_error_is_small = np.isclose(
+        gpu_interpolation_dbl, gpu_interpolation_flt, rtol=1e3*np.max(input_diff), atol=1e3*np.max(input_diff)
+    ).all()
+    error = np.abs(gpu_interpolation_dbl - gpu_interpolation_flt) / (
+        np.abs(gpu_interpolation_dbl) + 1
+    )
+    if error.max() > 1e3*np.max(input_diff):
+        print("tolerance not satisfied in interpolant")
+        row_idx = np.unravel_index(np.argmax(error), error.shape)[0]
+        print("stz:", stz[row_idx, :])
+        print("flt:", gpu_interpolation_flt[row_idx, :])
+        print("dbl:", gpu_interpolation_dbl[row_idx, :])
+        print("error:", error[row_idx, :])
+
+        input_diff = (quad_info - quad_info.astype(np.float32)) / (quad_info + 1e-16)
+        print(np.max(input_diff))
+        pos_diff = (stz - stz.astype(np.float32)) / (stz + 1e-16)
+        print(np.max(pos_diff))
+
+    return device_error_is_small  and precision_error_is_small
 
 
 def test_derivatives(
@@ -707,7 +774,6 @@ class TestGPUTracing(unittest.TestCase):
         vacuum = True
         bri, field, nfp = get_field(boozmn_filename, n_metagrid_pts, vacuum)
 
-        n_test_pts = 10000
         stz = sample_test_points(n_test_pts)
 
         tol = 1e-8
@@ -736,7 +802,6 @@ class TestGPUTracing(unittest.TestCase):
         vacuum = False
         bri, field, nfp = get_field(boozmn_filename, n_metagrid_pts, vacuum)
 
-        n_test_pts = 10000
         stz = sample_test_points(n_test_pts)
 
         tol = 1e-8
@@ -776,7 +841,6 @@ class TestGPUTracing(unittest.TestCase):
             minor_radius_meters=1.7,
         )
 
-        n_test_pts = 10000
         stz = sample_test_points(n_test_pts)
         tol = 1e-8
 
@@ -835,7 +899,6 @@ class TestGPUTracing(unittest.TestCase):
             minor_radius_meters=1.7,
         )
 
-        n_test_pts = 10000
         stz = sample_test_points(n_test_pts)
         tol = 1e-8
 
@@ -911,9 +974,8 @@ class TestGPUTracing(unittest.TestCase):
         )
 
         # rejection sample points inside the surface uniformly
-        nparticles = 10000
-        rphiz = np.empty((nparticles, 3))
-        for i in range(nparticles):
+        rphiz = np.empty((n_test_pts, 3))
+        for i in range(n_test_pts):
             pt = np.random.uniform(low=0, high=1, size=(1, 3))
             pt[0, 0] = pt[0, 0] * (rrange[1] - rrange[0]) + rrange[0]
             pt[0, 1] *= 2 * np.pi
@@ -931,7 +993,7 @@ class TestGPUTracing(unittest.TestCase):
             else:
                 raise RuntimeError("Could not sample a valid point inside the surface")
             rphiz[i, :] = pt
-        xyz = np.empty((nparticles, 3))
+        xyz = np.empty((n_test_pts, 3))
         xyz[:, 0] = rphiz[:, 0] * np.cos(rphiz[:, 1])
         xyz[:, 1] = rphiz[:, 0] * np.sin(rphiz[:, 1])
         xyz[:, 2] = rphiz[:, 2]
@@ -944,7 +1006,7 @@ class TestGPUTracing(unittest.TestCase):
 
         # test rhs
         VELOCITY = np.sqrt(2 * ENERGY / MASS)
-        vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (nparticles,))
+        vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (n_test_pts,))
         is_small = test_derivatives(
             bsh,
             surf.nfp,
