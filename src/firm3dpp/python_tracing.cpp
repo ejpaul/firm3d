@@ -84,7 +84,7 @@ void init_tracing(py::module_ &m){
     );
 
 #ifdef USE_CUDA
-    m.def("cartesian_gpu_tracing", &cartesian_gpu_tracing,
+    m.def("cartesian_gpu_tracing", &cartesian_gpu_tracing<double>,
         py::arg("quad_pts"),
         py::arg("rrange"),
         py::arg("phirange"),
@@ -100,27 +100,44 @@ void init_tracing(py::module_ &m){
         py::arg("nparticles")
         );
 
-    
-    m.def("boozer_gpu_tracing", &boozer_gpu_tracing,
-        py::arg("quad_pts"),
+    m.def("boozer_gpu_tracing", &boozer_gpu_tracing<double>,
+        py::arg("quad_pts").noconvert(),
         py::arg("srange"),
         py::arg("trange"),
         py::arg("zrange"),
-        py::arg("stz_init"),
+        py::arg("stz_init").noconvert(),
         py::arg("m"),
         py::arg("q"),
         py::arg("vtotal"),
-        py::arg("vtang"),
+        py::arg("vtang").noconvert(),
         py::arg("tmax"),
         py::arg("tol"),
-        py::arg("dt_in"),
+        py::arg("dt_in").noconvert(),
+        py::arg("psi0"),
+        py::arg("nparticles"),
+        py::arg("vacuum") = false
+        );
+
+    m.def("boozer_gpu_tracing", &boozer_gpu_tracing<float>,
+        py::arg("quad_pts").noconvert(),
+        py::arg("srange"),
+        py::arg("trange"),
+        py::arg("zrange"),
+        py::arg("stz_init").noconvert(),
+        py::arg("m"),
+        py::arg("q"),
+        py::arg("vtotal"),
+        py::arg("vtang").noconvert(),
+        py::arg("tmax"),
+        py::arg("tol"),
+        py::arg("dt_in").noconvert(),
         py::arg("psi0"),
         py::arg("nparticles"),
         py::arg("vacuum") = false
         );
 
 
-    m.def("boozer_saw_gpu_tracing", &boozer_saw_gpu_tracing,
+    m.def("boozer_saw_gpu_tracing", &boozer_saw_gpu_tracing<double>,
         py::arg("quad_pts"),
         py::arg("srange"),
         py::arg("trange"),
@@ -143,7 +160,7 @@ void init_tracing(py::module_ &m){
         py::arg("nparticles")
         );
 
-        m.def("boozer_saw_nok_gpu_tracing", &boozer_saw_nok_gpu_tracing,
+        m.def("boozer_saw_nok_gpu_tracing", &boozer_saw_nok_gpu_tracing<double>,
         py::arg("quad_pts"),
         py::arg("srange"),
         py::arg("trange"),
@@ -187,18 +204,32 @@ void init_tracing(py::module_ &m){
         );
 
 
-    m.def("test_derivatives_cartesian", &test_derivatives_cartesian,
-        py::arg("quad_pts"),
+    m.def("test_derivatives_cartesian", &test_derivatives_cartesian<double>,
+        py::arg("quad_pts").noconvert(),
         py::arg("srange"),
         py::arg("trange"),
         py::arg("zrange"),
-        py::arg("loc"),
-        py::arg("vpar"),
+        py::arg("loc").noconvert(),
+        py::arg("vpar").noconvert(),
         py::arg("v_total"),
         py::arg("m"),
         py::arg("q"),
         py::arg("n_points")
         );
+
+    m.def("test_derivatives_cartesian", &test_derivatives_cartesian<float>,
+        py::arg("quad_pts").noconvert(),
+        py::arg("srange"),
+        py::arg("trange"),
+        py::arg("zrange"),
+        py::arg("loc").noconvert(),
+        py::arg("vpar").noconvert(),
+        py::arg("v_total"),
+        py::arg("m"),
+        py::arg("q"),
+        py::arg("n_points")
+        );
+
 
     m.def("test_derivatives_boozer", &test_derivatives_boozer,
         py::arg("quad_pts"),

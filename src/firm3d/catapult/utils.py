@@ -6,7 +6,7 @@ import numpy as np
 __all__ = ["boozer_interpolant", "cartesian_interpolant"]
 
 
-def boozer_interpolant(field, nfp, ns, ntheta, nzeta, vacuum=False):
+def boozer_interpolant(field, nfp, ns, ntheta, nzeta, vacuum=False, dtype=np.float64):
     r"""
     Set up a Boozer vacuum interpolant for tracing.
 
@@ -54,6 +54,7 @@ def boozer_interpolant(field, nfp, ns, ntheta, nzeta, vacuum=False):
     if vacuum:
         # Vacuum approximation: G=const, I=0, K=0
         quad_info = np.hstack((modB, modB_derivs, G, iota))
+
     else:
         # Full guiding center equations: include I and K
         dGds = field.dGds()
@@ -92,10 +93,10 @@ def boozer_interpolant(field, nfp, ns, ntheta, nzeta, vacuum=False):
                                 :,
                             ]
     cell_quad_pts = np.ascontiguousarray(cell_quad_pts)
-    return srange, trange, zrange, cell_quad_pts, np.max(J)
+    return srange, trange, zrange, cell_quad_pts.astype(dtype), np.max(J)
 
 
-def boozer_saw_interpolant(field, nfp, ns, ntheta, nzeta):
+def boozer_saw_interpolant(field, nfp, ns, ntheta, nzeta, dtype=np.float64):
     r"""
     Set up a Boozer vacuum interpolant for tracing.
 
@@ -177,10 +178,10 @@ def boozer_saw_interpolant(field, nfp, ns, ntheta, nzeta):
                                 :,
                             ]
     cell_quad_pts = np.ascontiguousarray(cell_quad_pts)
-    return srange, trange, zrange, cell_quad_pts, np.max(J)
+    return srange, trange, zrange, cell_quad_pts.astype(dtype), np.max(J)
 
 
-def cartesian_interpolant(field, surface_classifier):
+def cartesian_interpolant(field, surface_classifier, dtype=np.float64):
     r"""
     Set up a Cartesian (cylindrical) interpolant for GPU tracing.
 
@@ -266,4 +267,4 @@ def cartesian_interpolant(field, surface_classifier):
 
     cell_quad_pts = np.ascontiguousarray(cell_quad_pts)
 
-    return r_range, phi_range, z_range, cell_quad_pts
+    return r_range, phi_range, z_range, cell_quad_pts.astype(dtype)

@@ -41,7 +41,7 @@ def trace_particles_boozer_gpu(
     if isinstance(field, ShearAlfvenWavesSuperposition):
         B0 = field.B0
         srange, trange, zrange, quad_info, maxJ = boozer_saw_interpolant(
-            B0, B0.nfp, ns, ntheta, nzeta
+            B0, B0.nfp, ns, ntheta, nzeta, dtype=stz_inits.dtype
         )
         saw_nharmonics = len(field)
         saw_omega = field.get_wave(0).omega
@@ -77,7 +77,7 @@ def trace_particles_boozer_gpu(
                 vtang=parallel_speeds,
                 tmax=tmax,
                 tol=tol,
-                dt_in=dt if dt is not None else -np.ones(nparticles),
+                dt_in=dt if dt is not None else -np.ones(nparticles).astype(stz_inits.dtype),
                 psi0=B0.psi0,
                 nparticles=nparticles,
             )
@@ -100,7 +100,7 @@ def trace_particles_boozer_gpu(
                 vtang=parallel_speeds,
                 tmax=tmax,
                 tol=tol,
-                dt_in=dt if dt is not None else -np.ones(nparticles),
+                dt_in=dt if dt is not None else -np.ones(nparticles).astype(stz_inits.dtype),
                 psi0=B0.psi0,
                 nparticles=nparticles,
             )
@@ -117,23 +117,33 @@ def trace_particles_boozer_gpu(
             field, field.nfp, ns, ntheta, nzeta, vacuum=vacuum
         )
         psi0 = field.psi0
+        import time
+        start = time.time()
+        print(stz_inits.dtype)
+        print(parallel_speeds.dtype)
+        print("quad_pts:", quad_info.astype(stz_inits.dtype).dtype, quad_info.astype(stz_inits.dtype).flags['C_CONTIGUOUS'])
+        print("stz_init:", stz_inits.dtype, stz_inits.flags['C_CONTIGUOUS'])
+        print("vtang:", parallel_speeds.dtype, parallel_speeds.flags['C_CONTIGUOUS'])
+        dt_arr = -np.ones(nparticles).astype(stz_inits.dtype)
+        print("dt_in:", dt_arr.dtype, dt_arr.flags['C_CONTIGUOUS'])
         last_time = firm3dpp.boozer_gpu_tracing(
-            quad_pts=quad_info,
+            quad_pts=quad_info.astype(stz_inits.dtype),
             srange=srange,
             trange=trange,
             zrange=zrange,
-            stz_init=stz_inits,
+            stz_init=stz_inits.copy(),
             m=mass,
             q=charge,
             vtotal=vtotal,
-            vtang=parallel_speeds,
+            vtang=parallel_speeds.copy(),
             tmax=tmax,
             tol=tol,
-            dt_in=-np.ones(nparticles),
+            dt_in=-np.ones(nparticles).astype(stz_inits.dtype),
             psi0=psi0,
             nparticles=nparticles,
             vacuum=vacuum,
         )
+        print(time.time() - start)
 
     last_time = np.reshape(last_time, (nparticles, 6))
     return last_time
@@ -166,7 +176,7 @@ def trace_particles_cartesian_gpu(
     """
     nparticles = xyz_inits.shape[0]
     r_range, phi_range, z_range, quad_info = cartesian_interpolant(
-        field, surface_classifier
+        field, surface_classifier, dtype=xyz_inits.dtype
     )
     last_time = firm3dpp.cartesian_gpu_tracing(
         quad_pts=quad_info,
@@ -180,7 +190,7 @@ def trace_particles_cartesian_gpu(
         vtang=parallel_speeds,
         tmax=tmax,
         tol=tol,
-        dt_in=dt if dt is not None else -np.ones(nparticles),
+        dt_in=dt if dt is not None else -np.ones(nparticles).astype(xyz_inits.dtype),
         nparticles=nparticles,
     )
     last_time = np.reshape(last_time, (nparticles, 6))
