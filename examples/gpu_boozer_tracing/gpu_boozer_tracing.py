@@ -22,8 +22,8 @@ from firm3d.util.functions import in_github_actions
 from firm3d.util.mpi import comm_world
 
 resolution = 5 if in_github_actions else 15  # Resolution for field interpolation
-nparticles = 100 if in_github_actions else 1000  # Number of particles to trace
-tol = 1e-4 if in_github_actions else 1e-8  # Tolerance for ODE solver
+nparticles = 100 if in_github_actions else 25000  # Number of particles to trace
+tol = 1e-4 if in_github_actions else 1e-7  # Tolerance for ODE solver
 
 ### CREATE A FIELD FOR TRACING
 boozmn_filename = "../inputs/boozmn_aten_rescaled.nc"
@@ -55,6 +55,7 @@ def sigmav(T):
         return 0
 
 
+np.random.seed(0)
 # Reactivity profile
 reactivity = lambda s: nD(s) * nT(s) * sigmav(T(s))
 stz_inits = initialize_position_profile(field, nparticles, reactivity, comm=comm_world)
@@ -67,11 +68,26 @@ vpar0 = np.sqrt(2 * Ekin / mass)
 vpar_inits = initialize_velocity_uniform(vpar0, nparticles)
 
 
-tmax = 1e-5
-last_time = trace_particles_boozer_gpu(
+tmax = 1e-4
+print(stz_inits)
+last_time_dbl = trace_particles_boozer_gpu(
     bri,
     stz_inits,
     vpar_inits,
+    tmax=tmax,
+    mass=mass,
+    charge=charge,
+    vtotal=vpar0,
+    tol=tol,
+    ns=resolution,
+    ntheta=resolution,
+    nzeta=resolution,
+)
+print(stz_inits)
+last_time_flt = trace_particles_boozer_gpu(
+    bri,
+    stz_inits.astype(np.float32),
+    vpar_inits.astype(np.float32),
     tmax=tmax,
     mass=mass,
     charge=charge,
@@ -87,18 +103,24 @@ particle_data = pd.DataFrame(
         "t_start": stz_inits[:, 1],
         "z_start": stz_inits[:, 2],
         "vpar_start": vpar_inits,
-        "s_end": last_time[:, 1],
-        "t_end": last_time[:, 2],
-        "z_end": last_time[:, 3],
-        "vpar_end": last_time[:, 4],
-        "last_time": last_time[:, 0],
-        "dt_end": last_time[:, 5],
+        "s_end_dbl": last_time_dbl[:, 1],
+        "t_end_dbl": last_time_dbl[:, 2],
+        "z_end_dbl": last_time_dbl[:, 3],
+        "vpar_end_dbl": last_time_dbl[:, 4],
+        "last_time_dbl": last_time_dbl[:, 0],
+        "dt_end_dbl": last_time_dbl[:, 5],
+        "s_end_flt": last_time_flt[:, 1],
+        "t_end_flt": last_time_flt[:, 2],
+        "z_end_flt": last_time_flt[:, 3],
+        "vpar_end_flt": last_time_flt[:, 4],
+        "last_time_flt": last_time_flt[:, 0],
+        "dt_end_flt": last_time_flt[:, 5]
     }
 )
 particle_data.to_csv("./particle_data.csv")
 
 
-did_leave = [t < tmax for t in particle_data["last_time"]]
-loss_frac = sum(did_leave) / len(did_leave)
-print(f"Number of particles= {nparticles}")
-print(f"Loss fraction: {loss_frac:.3f}")
+# did_leave = [t < tmax for t in particle_data["last_time"]]
+# loss_frac = sum(did_leave) / len(did_leave)
+# print(f"Number of particles= {nparticles}")
+# print(f"Loss fraction: {loss_frac:.3f}")

@@ -202,7 +202,6 @@ __device__ void rhs_GC_BoozerVacuum(T* derivs, T* x_temp, T* block_interpolants,
     T x2 = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
 
     T inv_s = rsqrt(x1*x1 + x2*x2);
-    T zeta = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x];
     T v_par = x_temp[4*PARTICLES_PER_BLOCK + threadIdx.x];
 
     T modB = block_interpolants[0*PARTICLES_PER_BLOCK + threadIdx.x];
@@ -221,12 +220,12 @@ __device__ void rhs_GC_BoozerVacuum(T* derivs, T* x_temp, T* block_interpolants,
 
 
     T fak1 = mass_d*v_par*v_par/modB + mass_d*mu_val;
-    T sdot = -dmodBdtheta*fak1 * inv_psi0_charge_d;
-    T tdot = dmodBds*fak1 * inv_psi0_charge_d + iota*v_par*modB_inv_G;
+    T sdot = -dmodBdtheta*(fak1 * inv_psi0_charge_d);
+    T tdot = dmodBds*(fak1 * inv_psi0_charge_d) + iota*(v_par*modB_inv_G);
 
     derivs[(6*deriv_id + 0)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*x1*inv_s - x2*tdot;
     derivs[(6*deriv_id + 1)*PARTICLES_PER_BLOCK + threadIdx.x] = sdot*x2*inv_s + x1*tdot;
-    derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x] = v_par*modB_inv_G;
+    derivs[(6*deriv_id + 2)*PARTICLES_PER_BLOCK + threadIdx.x] = (v_par*modB_inv_G);
     derivs[(6*deriv_id + 3)*PARTICLES_PER_BLOCK + threadIdx.x] = -(iota*dmodBdtheta + dmodBdzeta)*mu_val*modB_inv_G;
     derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = modB; // modB for setting mu
     derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = G;
@@ -773,9 +772,9 @@ template<typename T, RHS id, typename... Args>
 __device__ void setup_particle(T* mu, T* t, T* dt, T* dtmax, T* x_temp, bool* symmetry_exploited, int* cell_index_start,
                             const T* __restrict__ quad_pts, T* shape_fun_vals, T* state, T* derivs,
                             int nparticles_blk, Args... args){
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("particle_trace_kernel running with sizeof(T) = %llu\n", (unsigned long long)sizeof(T));
-    }
+    // if (threadIdx.x == 0 && blockIdx.x == 0) {
+    //     printf("particle_trace_kernel running with sizeof(T) = %llu\n", (unsigned long long)sizeof(T));
+    // }
     
     if(threadIdx.x < nparticles_blk){
         t[threadIdx.x] = 0.0;
