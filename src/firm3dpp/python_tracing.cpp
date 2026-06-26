@@ -12,8 +12,22 @@ using std::vector;
 
 #ifdef USE_CUDA
 extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> rrange,
-        py::array_t<double> phirange, py::array_t<double> zrange, py::array_t<double> xyz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+        py::array_t<double> phirange, py::array_t<double> zrange, py::array_t<double> xyz_init, double m, double q, double vtotal, py::array_t<double> vtang,
         double tmax, double tol, py::array_t<double> dt_in, int nparticles);
+
+extern "C" vector<double> cartesian_gpu_tracing_drag_forward(py::array_t<double> quad_pts,
+        py::array_t<double> rrange, py::array_t<double> phirange, py::array_t<double> zrange,
+        py::array_t<double> xyz_init, double m, double q, double vtotal,
+        py::array_t<double> vtang, py::array_t<double> H_init,
+        double tmax, double tol, py::array_t<double> dt_in, int nparticles,
+        double H_stop, bool use_energy_stop);
+
+extern "C" vector<double> cartesian_gpu_tracing_drag_backward(py::array_t<double> quad_pts,
+        py::array_t<double> rrange, py::array_t<double> phirange, py::array_t<double> zrange,
+        py::array_t<double> xyz_init, double m, double q, double vtotal,
+        py::array_t<double> vtang, py::array_t<double> H_init,
+        double tmax, double tol, py::array_t<double> dt_in, int nparticles,
+        double H_stop, bool use_energy_stop);
 
 extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
     py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
@@ -58,16 +72,16 @@ extern "C" vector<double> test_timestep_saw_nok(py::array_t<double> quad_pts, py
 #endif
 
 void init_tracing(py::module_ &m){
-    py::class_<StoppingCriterion, shared_ptr<StoppingCriterion>>(m, "StoppingCriterion");
-    py::class_<IterationStoppingCriterion, shared_ptr<IterationStoppingCriterion>, StoppingCriterion>(m, "IterationStoppingCriterion")
+    py::class_<StoppingCriterion, shared_ptr<StoppingCriterion>>(m, "StoppingCriterion", py::module_local());
+    py::class_<IterationStoppingCriterion, shared_ptr<IterationStoppingCriterion>, StoppingCriterion>(m, "IterationStoppingCriterion", py::module_local())
         .def(py::init<int>());
-    py::class_<MaxToroidalFluxStoppingCriterion, shared_ptr<MaxToroidalFluxStoppingCriterion>, StoppingCriterion>(m, "MaxToroidalFluxStoppingCriterion")
+    py::class_<MaxToroidalFluxStoppingCriterion, shared_ptr<MaxToroidalFluxStoppingCriterion>, StoppingCriterion>(m, "MaxToroidalFluxStoppingCriterion", py::module_local())
         .def(py::init<double>());
-    py::class_<MinToroidalFluxStoppingCriterion, shared_ptr<MinToroidalFluxStoppingCriterion>, StoppingCriterion>(m, "MinToroidalFluxStoppingCriterion")
+    py::class_<MinToroidalFluxStoppingCriterion, shared_ptr<MinToroidalFluxStoppingCriterion>, StoppingCriterion>(m, "MinToroidalFluxStoppingCriterion", py::module_local())
         .def(py::init<double>());
-    py::class_<ToroidalTransitStoppingCriterion, shared_ptr<ToroidalTransitStoppingCriterion>, StoppingCriterion>(m, "ToroidalTransitStoppingCriterion")
+    py::class_<ToroidalTransitStoppingCriterion, shared_ptr<ToroidalTransitStoppingCriterion>, StoppingCriterion>(m, "ToroidalTransitStoppingCriterion", py::module_local())
         .def(py::init<int>());
-    py::class_<StepSizeStoppingCriterion, shared_ptr<StepSizeStoppingCriterion>, StoppingCriterion>(m, "StepSizeStoppingCriterion")
+    py::class_<StepSizeStoppingCriterion, shared_ptr<StepSizeStoppingCriterion>, StoppingCriterion>(m, "StepSizeStoppingCriterion", py::module_local())
         .def(py::init<double>());
 
     m.def("particle_guiding_center_boozer_tracing", &particle_guiding_center_boozer_tracing,
@@ -145,7 +159,20 @@ void init_tracing(py::module_ &m){
         py::arg("nparticles")
         );
 
-    
+    m.def("cartesian_gpu_tracing_drag_forward", &cartesian_gpu_tracing_drag_forward,
+        py::arg("quad_pts"), py::arg("rrange"), py::arg("phirange"), py::arg("zrange"),
+        py::arg("xyz_init"), py::arg("m"), py::arg("q"), py::arg("vtotal"),
+        py::arg("vtang"), py::arg("H_init"),
+        py::arg("tmax"), py::arg("tol"), py::arg("dt_in"), py::arg("nparticles"),
+        py::arg("H_stop")=0.0, py::arg("use_energy_stop")=false);
+
+    m.def("cartesian_gpu_tracing_drag_backward", &cartesian_gpu_tracing_drag_backward,
+        py::arg("quad_pts"), py::arg("rrange"), py::arg("phirange"), py::arg("zrange"),
+        py::arg("xyz_init"), py::arg("m"), py::arg("q"), py::arg("vtotal"),
+        py::arg("vtang"), py::arg("H_init"),
+        py::arg("tmax"), py::arg("tol"), py::arg("dt_in"), py::arg("nparticles"),
+        py::arg("H_stop")=0.0, py::arg("use_energy_stop")=false);
+
     m.def("boozer_gpu_tracing", &boozer_gpu_tracing,
         py::arg("quad_pts"),
         py::arg("srange"),

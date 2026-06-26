@@ -3,7 +3,7 @@ __all__ = []
 
 import numpy as np
 
-__all__ = ["boozer_interpolant", "cartesian_interpolant"]
+__all__ = ["boozer_interpolant", "cartesian_interpolant", "cartesian_interpolant_drag"]
 
 
 def boozer_interpolant(field, nfp, ns, ntheta, nzeta, vacuum=False):
@@ -266,4 +266,68 @@ def cartesian_interpolant(field, surface_classifier):
 
     cell_quad_pts = np.ascontiguousarray(cell_quad_pts)
 
+    return r_range, phi_range, z_range, cell_quad_pts
+
+
+def cartesian_interpolant_drag(field, surface_classifier, nu_s_fun):
+    r"""
+    Set up a Cartesian drag interpolant for GPU tracing.
+
+    Extends cartesian_interpolant with a pre-computed slowing-down frequency
+    nu_s as an 8th column.  nu_s is computed in Python (from ne/Te profiles via
+    the caller) rather than on device, keeping the GPU kernel simple.
+
+    Args:
+        field:              InterpolatedField (simsopt) in cylindrical coords
+        surface_classifier: SurfaceClassifier for the LCFS
+        nu_s_fun:           callable(rphiz (N,3)) -> nu_s [1/s]
+                            Use ``lambda p: np.zeros(p.shape[0])`` for zero drag.
+
+    Returns:
+        r_range, phi_range, z_range  — (start, end, n_pts) tuples (same as
+                                       cartesian_interpolant)
+        cell_quad_pts                — packed (n_cells*64, 8) array for the GPU
+    """
+    r_range   = (field.r_range[0],   field.r_range[1],   3 * field.r_range[2]   + 1)
+    phi_range = (field.phi_range[0], field.phi_range[1], 3 * field.phi_range[2] + 1)
+    z_range   = (field.z_range[0],   field.z_range[1],   3 * field.z_range[2]   + 1)
+
+    r_grid   = np.linspace(r_range[0],   r_range[1],   r_range[2])
+    phi_grid = np.linspace(phi_range[0], phi_range[1], phi_range[2])
+    z_grid   = np.linspace(z_range[0],   z_range[1],   z_range[2])
+
+    nr, nphi, nz = r_range[2], phi_range[2], z_range[2]
+    quad_pts = np.empty((nr * nphi * nz, 3))
+    for i in range(nr):
+        for j in range(nphi):
+            for k in range(nz):
+                quad_pts[nphi * nz * i + nz * j + k] = [r_grid[i], phi_grid[j], z_grid[k]]
+
+    field.set_points_cyl(quad_pts)
+    B        = field.B_cyl()
+    GradAbsB = field.GradAbsB_cyl()
+    sd_vals  = np.asarray(surface_classifier.evaluate_rphiz(quad_pts), dtype=np.float64).reshape(-1, 1)
+    nu_s_vals = np.asarray(nu_s_fun(quad_pts), dtype=np.float64).reshape(-1, 1)
+
+    quad_info = np.hstack((B, GradAbsB, sd_vals, nu_s_vals))  # 8 columns
+
+    nr_c, nphi_c, nz_c = field.r_range[2], field.phi_range[2], field.z_range[2]
+    cell_quad_pts = np.empty((nr_c * nphi_c * nz_c * 64, quad_info.shape[1]))
+
+    for cell_r in range(nr_c):
+        for cell_phi in range(nphi_c):
+            for cell_z in range(nz_c):
+                row_start = 64 * (cell_r * nphi_c * nz_c + cell_phi * nz_c + cell_z)
+                for i in range(4):
+                    for j in range(4):
+                        for k in range(4):
+                            row_idx = row_start + 16 * i + 4 * j + k
+                            cell_quad_pts[row_idx, :] = quad_info[
+                                nphi * nz * (3 * cell_r + i)
+                                + nz  * (3 * cell_phi + j)
+                                + 3 * cell_z + k,
+                                :,
+                            ]
+
+    cell_quad_pts = np.ascontiguousarray(cell_quad_pts)
     return r_range, phi_range, z_range, cell_quad_pts
