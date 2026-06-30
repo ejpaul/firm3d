@@ -71,27 +71,36 @@ def boozer_interpolant(field, nfp, ns, ntheta, nzeta, vacuum=False, dtype=np.flo
     s_ncells = int((srange[2] - 1) / 3)
     t_ncells = int((trange[2] - 1) / 3)
     z_ncells = int((zrange[2] - 1) / 3)
-    cell_quad_pts = np.empty((s_ncells * t_ncells * z_ncells * 64, quad_info.shape[1]))
+
+    n_windows = s_ncells * t_ncells * z_ncells
+
+    cell_quad_pts = np.empty((n_windows, quad_info.shape[1],64))
 
     for cell_s in range(s_ncells):
         for cell_t in range(t_ncells):
             for cell_z in range(z_ncells):
-                row_start = 64 * (
+                window_id = (
                     cell_s * t_ncells * z_ncells + cell_t * z_ncells + cell_z
                 )
 
                 # iterate over spline locations for this cell
+                window = np.empty((64, quad_info.shape[1]))
                 for i in range(4):
                     for j in range(4):
                         for k in range(4):
-                            row_idx = row_start + 16 * i + 4 * j + k
-                            cell_quad_pts[row_idx, :] = quad_info[
+                            row_idx = 16 * i + 4 * j + k
+                            window[row_idx, :] = quad_info[
                                 trange[2] * zrange[2] * (3 * cell_s + i)
                                 + zrange[2] * (3 * cell_t + j)
                                 + 3 * cell_z
                                 + k,
                                 :,
                             ]
+    
+                # tranpose each window independently
+                cell_quad_pts[window_id, :, :] = window.T
+
+
     cell_quad_pts = np.ascontiguousarray(cell_quad_pts)
     return srange, trange, zrange, cell_quad_pts.astype(dtype), np.max(J)
 
@@ -156,27 +165,35 @@ def boozer_saw_interpolant(field, nfp, ns, ntheta, nzeta, dtype=np.float64):
     s_ncells = int((srange[2] - 1) / 3)
     t_ncells = int((trange[2] - 1) / 3)
     z_ncells = int((zrange[2] - 1) / 3)
-    cell_quad_pts = np.empty((s_ncells * t_ncells * z_ncells * 64, quad_info.shape[1]))
+    n_windows = s_ncells * t_ncells * z_ncells
+
+    cell_quad_pts = np.empty((n_windows, quad_info.shape[1],64))
 
     for cell_s in range(s_ncells):
         for cell_t in range(t_ncells):
             for cell_z in range(z_ncells):
-                row_start = 64 * (
+                window_id = (
                     cell_s * t_ncells * z_ncells + cell_t * z_ncells + cell_z
                 )
 
                 # iterate over spline locations for this cell
+                window = np.empty((64, quad_info.shape[1]))
                 for i in range(4):
                     for j in range(4):
                         for k in range(4):
-                            row_idx = row_start + 16 * i + 4 * j + k
-                            cell_quad_pts[row_idx, :] = quad_info[
+                            row_idx = 16 * i + 4 * j + k
+                            window[row_idx, :] = quad_info[
                                 trange[2] * zrange[2] * (3 * cell_s + i)
                                 + zrange[2] * (3 * cell_t + j)
                                 + 3 * cell_z
                                 + k,
                                 :,
                             ]
+    
+                # tranpose each window independently
+                cell_quad_pts[window_id, :, :] = window.T
+
+
     cell_quad_pts = np.ascontiguousarray(cell_quad_pts)
     return srange, trange, zrange, cell_quad_pts.astype(dtype), np.max(J)
 
@@ -265,6 +282,6 @@ def cartesian_interpolant(field, surface_classifier, dtype=np.float64):
                                 :,
                             ]
 
-    cell_quad_pts = np.ascontiguousarray(cell_quad_pts)
+    cell_quad_pts = np.ascontiguousarray(cell_quad_pts.T)
 
     return r_range, phi_range, z_range, cell_quad_pts.astype(dtype)

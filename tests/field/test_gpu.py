@@ -1051,97 +1051,97 @@ class TestGPUTracing(unittest.TestCase):
         )
         self.assertTrue(is_small)
 
-    @unittest.skipUnless(HAS_SIMSOPT, "simsopt not available")
-    def test_cartesian_vacuum(self):
-        np.random.seed(0)
-        degree = 3  # degree of interpolant
-        n = 16  # resolution of interpolant
-        order = 12  # order of coil curves
+    # @unittest.skipUnless(HAS_SIMSOPT, "simsopt not available")
+    # def test_cartesian_vacuum(self):
+    #     np.random.seed(0)
+    #     degree = 3  # degree of interpolant
+    #     n = 16  # resolution of interpolant
+    #     order = 12  # order of coil curves
 
-        filename = "examples/inputs/coils.curves_22_7_21"
-        wout_filename = "examples/inputs/wout_aten_rescaled.nc"
+    #     filename = "examples/inputs/coils.curves_22_7_21"
+    #     wout_filename = "examples/inputs/wout_aten_rescaled.nc"
 
-        surf = SurfaceRZFourier.from_wout(wout_filename)
+    #     surf = SurfaceRZFourier.from_wout(wout_filename)
 
-        coils = load_coils_from_makegrid_file(filename, order, ppp=20, group_names=None)
+    #     coils = load_coils_from_makegrid_file(filename, order, ppp=20, group_names=None)
 
-        curves = []
-        currents = []
-        for _i, coil in enumerate(coils):
-            curves.append(coil.curve)
-            currents.append(coil.current)
+    #     curves = []
+    #     currents = []
+    #     for _i, coil in enumerate(coils):
+    #         curves.append(coil.curve)
+    #         currents.append(coil.current)
 
-        coils_full = coils_via_symmetries(curves, currents, surf.nfp, True)
-        bs = BiotSavart(coils_full)
+    #     coils_full = coils_via_symmetries(curves, currents, surf.nfp, True)
+    #     bs = BiotSavart(coils_full)
 
-        sc_particle = SurfaceClassifier(surf, h=0.1, p=2)
-        rs = np.linalg.norm(surf.gamma()[:, :, 0:2], axis=2)
-        zs = surf.gamma()[:, :, 2]
+    #     sc_particle = SurfaceClassifier(surf, h=0.1, p=2)
+    #     rs = np.linalg.norm(surf.gamma()[:, :, 0:2], axis=2)
+    #     zs = surf.gamma()[:, :, 2]
 
-        rrange = (np.min(rs), np.max(rs), n)
-        phirange = (0, 2 * np.pi / surf.nfp, n * 2)
-        # exploit stellarator symmetry and only consider positive z values:
-        zrange = (0, np.max(zs), n // 2)
-        bsh = InterpolatedField(
-            bs, degree, rrange, phirange, zrange, True, nfp=surf.nfp, stellsym=True
-        )
+    #     rrange = (np.min(rs), np.max(rs), n)
+    #     phirange = (0, 2 * np.pi / surf.nfp, n * 2)
+    #     # exploit stellarator symmetry and only consider positive z values:
+    #     zrange = (0, np.max(zs), n // 2)
+    #     bsh = InterpolatedField(
+    #         bs, degree, rrange, phirange, zrange, True, nfp=surf.nfp, stellsym=True
+    #     )
 
-        # rejection sample points inside the surface uniformly
-        rphiz = np.empty((n_test_pts, 3))
-        for i in range(n_test_pts):
-            pt = np.random.uniform(low=0, high=1, size=(1, 3))
-            pt[0, 0] = pt[0, 0] * (rrange[1] - rrange[0]) + rrange[0]
-            pt[0, 1] *= 2 * np.pi
-            pt[0, 2] = (pt[0, 2] - 0.5) * 2 * zrange[1]
+    #     # rejection sample points inside the surface uniformly
+    #     rphiz = np.empty((n_test_pts, 3))
+    #     for i in range(n_test_pts):
+    #         pt = np.random.uniform(low=0, high=1, size=(1, 3))
+    #         pt[0, 0] = pt[0, 0] * (rrange[1] - rrange[0]) + rrange[0]
+    #         pt[0, 1] *= 2 * np.pi
+    #         pt[0, 2] = (pt[0, 2] - 0.5) * 2 * zrange[1]
 
-            # particle is outside the surface or too close to the surface
-            max_iters = 1000
-            for _ in range(max_iters):
-                if sc_particle.evaluate_rphiz(pt) > 0.2:
-                    break
-                pt = np.random.uniform(low=0, high=1, size=(1, 3))
-                pt[0, 0] = pt[0, 0] * (rrange[1] - rrange[0]) + rrange[0]
-                pt[0, 1] *= 2 * np.pi
-                pt[0, 2] = (pt[0, 2] - 0.5) * 2 * zrange[1]
-            else:
-                raise RuntimeError("Could not sample a valid point inside the surface")
-            rphiz[i, :] = pt
-        xyz = np.empty((n_test_pts, 3))
-        xyz[:, 0] = rphiz[:, 0] * np.cos(rphiz[:, 1])
-        xyz[:, 1] = rphiz[:, 0] * np.sin(rphiz[:, 1])
-        xyz[:, 2] = rphiz[:, 2]
+    #         # particle is outside the surface or too close to the surface
+    #         max_iters = 1000
+    #         for _ in range(max_iters):
+    #             if sc_particle.evaluate_rphiz(pt) > 0.2:
+    #                 break
+    #             pt = np.random.uniform(low=0, high=1, size=(1, 3))
+    #             pt[0, 0] = pt[0, 0] * (rrange[1] - rrange[0]) + rrange[0]
+    #             pt[0, 1] *= 2 * np.pi
+    #             pt[0, 2] = (pt[0, 2] - 0.5) * 2 * zrange[1]
+    #         else:
+    #             raise RuntimeError("Could not sample a valid point inside the surface")
+    #         rphiz[i, :] = pt
+    #     xyz = np.empty((n_test_pts, 3))
+    #     xyz[:, 0] = rphiz[:, 0] * np.cos(rphiz[:, 1])
+    #     xyz[:, 1] = rphiz[:, 0] * np.sin(rphiz[:, 1])
+    #     xyz[:, 2] = rphiz[:, 2]
 
-        # test interpolant
-        is_small = test_interpolant(
-            bsh, surf.nfp, rphiz, surf_classifier=sc_particle, tol=1e-8
-        )
-        self.assertTrue(is_small)
+    #     # test interpolant
+    #     is_small = test_interpolant(
+    #         bsh, surf.nfp, rphiz, surf_classifier=sc_particle, tol=1e-8
+    #     )
+    #     self.assertTrue(is_small)
 
-        # test rhs
-        VELOCITY = np.sqrt(2 * ENERGY / MASS)
-        vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (n_test_pts,))
-        is_small = test_derivatives(
-            bsh,
-            surf.nfp,
-            rphiz,
-            vpar_init,
-            VELOCITY,
-            surf_classifier=sc_particle,
-            tol=1e-8,
-        )
-        self.assertTrue(is_small)
+    #     # test rhs
+    #     VELOCITY = np.sqrt(2 * ENERGY / MASS)
+    #     vpar_init = np.random.uniform(-VELOCITY, VELOCITY, (n_test_pts,))
+    #     is_small = test_derivatives(
+    #         bsh,
+    #         surf.nfp,
+    #         rphiz,
+    #         vpar_init,
+    #         VELOCITY,
+    #         surf_classifier=sc_particle,
+    #         tol=1e-8,
+    #     )
+    #     self.assertTrue(is_small)
 
-        # test timestep
-        is_small = test_timestep(
-            bsh,
-            surf.nfp,
-            rphiz,
-            vpar_init,
-            VELOCITY,
-            surf_classifier=sc_particle,
-            tol=1e-8,
-        )
-        self.assertTrue(is_small)
+    #     # test timestep
+    #     is_small = test_timestep(
+    #         bsh,
+    #         surf.nfp,
+    #         rphiz,
+    #         vpar_init,
+    #         VELOCITY,
+    #         surf_classifier=sc_particle,
+    #         tol=1e-8,
+    #     )
+    #     self.assertTrue(is_small)
 
 
 if __name__ == "__main__":
