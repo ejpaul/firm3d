@@ -25,9 +25,6 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
    }
 }
 
-// Improvement notes:
-// - Rewrite build state to be a loop i=0,1,2 with _constant__ xrange as one array
-
 // enum used for templating
 // https://stackoverflow.com/questions/9116267/how-can-i-use-an-enumeration-as-a-template-parameter
 enum class RHS {GC_CartesianVacuum, GC_BoozerVacuum, GC_Boozer, GC_BoozerVacuumSAW, GC_BoozerNoKSAW};
@@ -103,6 +100,9 @@ __constant__ double saw_srange_d[4]; // used for SAW RHS only
 __constant__ bool rescale_abstol_var_d = true;
 __constant__ bool is_test_d = false;
 
+// global counter for workstealing
+__device__ int next_particle_d;
+
 
 // interpolate performs tricubic interpolation in the r, phi, z coordinates
 // which we assume is on a regular grid
@@ -117,12 +117,9 @@ __constant__ bool is_test_d = false;
 // cell_index_start stores the grid index for interpolation in the r, phi, z coordinates
 // r_shape, phi_shape, z_shape store shape function elements
 // nphi and nz indicate how many grid pts there are in phi and z directions
-// nparticles_blk store the number of *actual* particles in the current block
 //
-// note that nparticles_blk isn't always equal to PARTICLES_PER_BLOCK
 template <typename T, int n> __device__ void interpolate(T*  out, const T* __restrict__ data, const int* __restrict__ cell_index_start,
-    const T* __restrict__ shape_fun_vals, int nparticles_blk){
-
+    const T* __restrict__ shape_fun_vals, bool* is_valid){
 
     for(int p=threadIdx.x / 8; p<PARTICLES_PER_BLOCK; p+= THREADS_PER_BLOCK/8){
         int i = cell_index_start[3*p];
@@ -136,32 +133,30 @@ template <typename T, int n> __device__ void interpolate(T*  out, const T* __res
         T shape_jk1 = shape_fun_vals[(8 + kk)*PARTICLES_PER_BLOCK + p] * shape_fun_vals[(4 + jj)*PARTICLES_PER_BLOCK + p];
         T shape_jk2 = shape_fun_vals[(8 + kk)*PARTICLES_PER_BLOCK + p] * shape_fun_vals[(4 + jj + 2)*PARTICLES_PER_BLOCK + p];
 
-
         for(int zz=0; zz<n; ++zz){
             T local_val = 0.0;
+            
+            if(is_valid[p]){
+                    for(int ii=0; ii<4; ++ii){
+                    int base = window_base + 16*ii + 4*jj + kk;
 
-            for(int ii=0; ii<4; ++ii){
-                int base = window_base + 16*ii + 4*jj + kk;
+                    T shape_i = shape_fun_vals[ii*PARTICLES_PER_BLOCK + p]; //shape_fun_vals[(8 + kk)*PARTICLES_PER_BLOCK + p];
 
-                T shape_i = shape_fun_vals[ii*PARTICLES_PER_BLOCK + p]; //shape_fun_vals[(8 + kk)*PARTICLES_PER_BLOCK + p];
-
-                local_val += shape_jk1 * shape_i * data[base + 64*zz];
-                local_val += shape_jk2 * shape_i * data[base + 8 + 64*zz];
+                    local_val += shape_jk1 * shape_i * data[base + 64*zz];
+                    local_val += shape_jk2 * shape_i * data[base + 8 + 64*zz];
+                }
             }
+
             // warp reduction
             for (int offset = 4; offset > 0; offset /= 2) {
                 local_val += __shfl_down_sync(FULL_MASK, local_val, offset);
             }
 
-            if(threadIdx.x % 8 == 0){
+            if(threadIdx.x % 8 == 0 && is_valid[p]){
                 out[PARTICLES_PER_BLOCK*zz + p] = local_val;
             }
-
-
         }
-
     }
-
 }
 
 
@@ -532,12 +527,11 @@ __device__ void rhs_GC_BoozerNoKSAW(T* derivs, T* x_temp, T* block_interpolants,
 // calc_derivs computes the derivatives at points for which the corresponding
 // i,j,k indices and shape functions have been precomputed
 // the results are stored in the appropriate region of derivs
-// nparticles_blk stores the number of actual particles in the block
 //
 // this function is templated across rhs options
 template<typename T, RHS id, int deriv_id, typename... Args>  
 __device__ void calc_derivs(T* derivs, const T* __restrict__ quadpts_arr, T* x_temp, bool* symmetry_exploited, 
-                                    int* cell_index_start, T* shape_fun_vals, T* mu, int nparticles_blk, 
+                                    int* cell_index_start, T* shape_fun_vals, T* mu, bool* is_valid, 
                                 // optional parameters for SAW cases
                                 T saw_omega = 0, int* saw_m = nullptr, int* saw_n = nullptr, 
                                 T* saw_phihats = nullptr, int saw_nharmonics = 0){
@@ -545,10 +539,10 @@ __device__ void calc_derivs(T* derivs, const T* __restrict__ quadpts_arr, T* x_t
     
     constexpr int n = map_rhs_to_n_interpolants<id>();
     __shared__ T block_interpolants[n*PARTICLES_PER_BLOCK];
-    interpolate<T, n>(block_interpolants, quadpts_arr, cell_index_start, shape_fun_vals, nparticles_blk);
+    interpolate<T, n>(block_interpolants, quadpts_arr, cell_index_start, shape_fun_vals, is_valid);
     __syncthreads();
 
-    if(threadIdx.x < nparticles_blk){
+    if(threadIdx.x < PARTICLES_PER_BLOCK && is_valid[threadIdx.x]){
         if constexpr (id == RHS::GC_CartesianVacuum){
             rhs_GC_CartesianVacuum<T, deriv_id>(derivs, x_temp, block_interpolants + threadIdx.x, symmetry_exploited, mu);
         } else if constexpr(id == RHS::GC_BoozerVacuum){
@@ -658,11 +652,11 @@ __device__ void map_to_grid(T* interp_pt, T* xyz, bool* symmetry_exploited){
 // build_state is part of the DP5 implementation
 template <typename T, RHS id, int deriv_id>
 __device__ void build_state(T* x_temp, bool* symmetry_exploited, int* cell_index_start,
-                            T* shape_fun_vals, T* state, T* derivs, T* t, T* dt, int nparticles_blk){
+                            T* shape_fun_vals, T* state, T* derivs, T* t, T* dt, bool* is_valid){
 
     
     // store time
-    if(threadIdx.x < nparticles_blk){
+    if(threadIdx.x < PARTICLES_PER_BLOCK && is_valid[threadIdx.x]){
         x_temp[threadIdx.x] = t[threadIdx.x] + dp5_t_wgts[deriv_id]*dt[threadIdx.x];
     }
 
@@ -688,15 +682,15 @@ __device__ void build_state(T* x_temp, bool* symmetry_exploited, int* cell_index
 
     __shared__ T interp_pt[3*PARTICLES_PER_BLOCK];
 
-    if(threadIdx.x < nparticles_blk){
+    if(threadIdx.x < PARTICLES_PER_BLOCK && is_valid[threadIdx.x]){
         constexpr CoordSys coord = map_rhs_to_coord<id>();
         map_to_grid<T, coord>(interp_pt, x_temp, symmetry_exploited);
     }
     __syncthreads();
 
     // threads map each coordinate for each particle and compute its shape functions.
-    if(threadIdx.x < 3*PARTICLES_PER_BLOCK){ // assumes 64 threads per block, 8 particles per block (3*8 = 24 < 64)
-        int particle_id = threadIdx.x % PARTICLES_PER_BLOCK;
+    int particle_id = threadIdx.x % PARTICLES_PER_BLOCK;
+    if(threadIdx.x < 3*PARTICLES_PER_BLOCK && is_valid[particle_id]){ // assumes 32 threads per block, 8 particles per block (3*8 = 24 < 32)
         int coord_id = threadIdx.x / PARTICLES_PER_BLOCK;
 
         T value = interp_pt[threadIdx.x];
@@ -784,29 +778,28 @@ __device__ void calc_max_timestep_size(T* dtmax, T* loc, T* derivs){
 // set up particles for tracing
 // use the derivatives function to calculate mu, max step size
 // store these values for the remainder of tracing
-
 template<typename T, RHS id, typename... Args>
 __device__ void setup_particle(T* mu, T* t, T* dt, T* dtmax, T* x_temp, bool* symmetry_exploited, int* cell_index_start,
                             const T* __restrict__ quad_pts, T* shape_fun_vals, T* state, T* derivs,
-                            int nparticles_blk, Args... args){
+                            bool* is_valid, Args... args){
     // if (threadIdx.x == 0 && blockIdx.x == 0) {
     //     printf("particle_trace_kernel running with sizeof(T) = %llu\n", (unsigned long long)sizeof(T));
     // }
-    
-    if(threadIdx.x < nparticles_blk){
-        t[threadIdx.x] = 0.0;
+
+    if(threadIdx.x < PARTICLES_PER_BLOCK && is_valid[threadIdx.x]){
+        // t[threadIdx.x] = 0.0;
         symmetry_exploited[threadIdx.x] = false;
         // dummy call to get norm B
         mu[threadIdx.x] = -1.0; // initialize mu
     }
     build_state<T, id, 0>(x_temp, symmetry_exploited, cell_index_start,
-                        shape_fun_vals, state, derivs, t, dt, nparticles_blk);
+                        shape_fun_vals, state, derivs, t, dt, is_valid);
     __syncthreads();
     calc_derivs<T, id, 0>(derivs + threadIdx.x, quad_pts, x_temp + threadIdx.x, symmetry_exploited + threadIdx.x, cell_index_start,
-                     shape_fun_vals, mu + threadIdx.x, nparticles_blk, args...);
+                     shape_fun_vals, mu + threadIdx.x, is_valid, args...);
     __syncthreads();
 
-    if(threadIdx.x < nparticles_blk){
+    if(threadIdx.x < PARTICLES_PER_BLOCK && is_valid[threadIdx.x]){
         T v_par = state[3*PARTICLES_PER_BLOCK + threadIdx.x];
         T v_perp2 = v_total_d*v_total_d - v_par*v_par;
         
@@ -821,6 +814,42 @@ __device__ void setup_particle(T* mu, T* t, T* dt, T* dtmax, T* x_temp, bool* sy
             dt[threadIdx.x] = 1e-3*dtmax[threadIdx.x];
         }
     }
+}
+
+// a kernel to calculate dt, dtmax, t, mu in global memory
+template<typename T, RHS id, typename... Args>
+__global__ void setup_kernel(T* init_pos, const T* __restrict__ quadpts_arr, T* mu, T* dt, T* dtmax,
+                                T* t, T* derivs, int nparticles, Args... args){
+
+    int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
+    __shared__ T x_temp[5*PARTICLES_PER_BLOCK];
+    T* block_derivs = derivs + 42*blockIdx.x*PARTICLES_PER_BLOCK;
+    __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
+    __shared__ int cell_index_start[3*PARTICLES_PER_BLOCK];
+    __shared__ T shape_fun_vals[12*PARTICLES_PER_BLOCK];
+    __shared__ T state[4*PARTICLES_PER_BLOCK];
+
+    T* block_dt = dt + blockIdx.x*PARTICLES_PER_BLOCK;
+    T* block_t = t + blockIdx.x*PARTICLES_PER_BLOCK;
+    T* block_mu = mu + blockIdx.x*PARTICLES_PER_BLOCK;
+    T* block_dtmax = dtmax + blockIdx.x*PARTICLES_PER_BLOCK;
+
+    bool is_valid = idx < nparticles && threadIdx.x < PARTICLES_PER_BLOCK;
+    __shared__ bool is_valid_arr[PARTICLES_PER_BLOCK];
+    if(threadIdx.x < PARTICLES_PER_BLOCK){
+        is_valid_arr[threadIdx.x] = is_valid;
+    }
+    if(is_valid){
+        for(int i=0; i<4; ++i){
+            state[i*PARTICLES_PER_BLOCK + threadIdx.x] = init_pos[4*idx + i];
+        }
+    }
+    __syncthreads();
+
+    setup_particle<T, id>(block_mu, block_t, block_dt, block_dtmax, x_temp, symmetry_exploited, cell_index_start,
+                            quadpts_arr, shape_fun_vals, state, block_derivs, is_valid_arr, args...);
+
+    
 }
 
 template<typename T>
@@ -925,13 +954,13 @@ __device__ void adjust_time(T* t, T* dt, T* state, T* derivs, T* x_temp, bool* h
 template<typename T, RHS id, int deriv_id, typename... Args>
 __device__ void dp5_one_step(T* x_temp, T* derivs, const T* __restrict__ quadpts_arr, int* cell_index_start,
                             T* shape_fun_vals, T* t, T* dt,
-                            bool* symmetry_exploited, T* state, T* mu, int nparticles_blk, Args... args){
+                            bool* symmetry_exploited, T* state, T* mu, bool* is_valid, Args... args){
     // if the thread is responsible for a particle, compute the point at which the derivative will be computed
-    build_state<T, id, deriv_id>(x_temp, symmetry_exploited, cell_index_start, shape_fun_vals, state, derivs, t, dt, nparticles_blk);
+    build_state<T, id, deriv_id>(x_temp, symmetry_exploited, cell_index_start, shape_fun_vals, state, derivs, t, dt, is_valid);
     // ensure that all threads have updated x_temp before calculating derivatives, where a data race would occur
     __syncthreads();
     calc_derivs<T, id, deriv_id>(derivs + threadIdx.x, quadpts_arr, x_temp + threadIdx.x, symmetry_exploited + threadIdx.x, cell_index_start,
-         shape_fun_vals, mu + threadIdx.x, nparticles_blk, args...);
+         shape_fun_vals, mu + threadIdx.x, is_valid, args...);
 
     // ensure all particles have derivative calculations before accepting/rejecting timestep
     __syncthreads();
@@ -944,75 +973,101 @@ __device__ void dp5_one_step(T* x_temp, T* derivs, const T* __restrict__ quadpts
  * Everything lives in shared memory except the data for the interpolant
  */
 template<typename T, RHS id, typename... Args>
-__global__ void  particle_trace_kernel(T* out, T* init_pos, const T* __restrict__ quadpts_arr, T* dt_in, T* derivs, Args... args){
+__global__ void  particle_trace_kernel(T* out, T* init_pos, const T* __restrict__ quadpts_arr, T* derivs, T* mu, 
+                                            T* t, T* dt, T* dtmax, Args... args){
     int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
 
     __shared__ T x_temp[5 * PARTICLES_PER_BLOCK];
     // __shared__ T derivs[42 * PARTICLES_PER_BLOCK];
     T* block_derivs = derivs + blockIdx.x*PARTICLES_PER_BLOCK*42; 
-    __shared__ T dt[PARTICLES_PER_BLOCK];
+    __shared__ T block_dt[PARTICLES_PER_BLOCK];
     __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
     __shared__ int cell_index_start[3*PARTICLES_PER_BLOCK];
     __shared__ T shape_fun_vals[12*PARTICLES_PER_BLOCK]; // 4 shape function values for each of the 3 coordinates
-    __shared__ T mu[PARTICLES_PER_BLOCK];
-    __shared__ T t[PARTICLES_PER_BLOCK];
-    __shared__ T dtmax[PARTICLES_PER_BLOCK];
+    __shared__ T block_mu[PARTICLES_PER_BLOCK];
+    __shared__ T block_t[PARTICLES_PER_BLOCK];
+    __shared__ T block_dtmax[PARTICLES_PER_BLOCK];
     __shared__ T state[4 * PARTICLES_PER_BLOCK];
     __shared__ bool has_left[PARTICLES_PER_BLOCK];
 
 
     bool is_valid = idx < nparticles_d && threadIdx.x < PARTICLES_PER_BLOCK;
-    int nparticles_blk = __syncthreads_count(is_valid);
-
+    __shared__ bool is_valid_arr[PARTICLES_PER_BLOCK];
+    if(threadIdx.x < PARTICLES_PER_BLOCK){
+        is_valid_arr[threadIdx.x] = is_valid;
+    }
     // if thread is responsible for a valid particle id, load that particle's data
     if(is_valid){
         has_left[threadIdx.x] = true;
-        t[threadIdx.x] = 0.0;
+        // block_t[threadIdx.x] = 0.0;
         has_left[threadIdx.x] = false;
         for(int i=0; i<4; ++i){
             state[i*PARTICLES_PER_BLOCK + threadIdx.x] = init_pos[4*idx + i];
         }
-        dt[threadIdx.x] = dt_in[threadIdx.x]; // copy input dt
+        block_dt[threadIdx.x] = dt[idx]; // copy input dt
+        block_mu[threadIdx.x] = mu[idx]; // copy input mu
+        block_t[threadIdx.x] = t[idx]; // copy input t
+        block_dtmax[threadIdx.x] = dtmax[idx]; // copy input dtmax
     }
     __syncthreads();
 
-    // calculate the particle's magnetic moment mu, dt, dtmax
-    setup_particle<T, id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, cell_index_start,
-                        quadpts_arr, shape_fun_vals, state, block_derivs, nparticles_blk, args...);
-    __syncthreads();
+    // // calculate the particle's magnetic moment mu, dt, dtmax
+    // setup_particle<T, id>(block_mu, block_t, block_dt, block_dtmax, x_temp, symmetry_exploited, cell_index_start,
+    //                     quadpts_arr, shape_fun_vals, state, block_derivs, , args...);
+    // __syncthreads();
 
     // if there exists a particle which is real and hasn't not reached tmax or left, keep tracing
-    while(__syncthreads_count(is_valid && !(t[threadIdx.x] >= tmax_d || has_left[threadIdx.x])) > 0){
+    while(__syncthreads_count(is_valid_arr[threadIdx.x % PARTICLES_PER_BLOCK] && !(block_t[threadIdx.x % PARTICLES_PER_BLOCK] >= tmax_d || has_left[threadIdx.x % PARTICLES_PER_BLOCK])) > 0){
         // if (threadIdx.x == 0){
         //     printf("particle time: %.15e, dt: %.15e, position: %f, %f, %f, %f\n", t[0], dt[threadIdx.x], state[threadIdx.x],
         //     state[1*PARTICLES_PER_BLOCK + threadIdx.x], state[2*PARTICLES_PER_BLOCK + threadIdx.x], state[3*PARTICLES_PER_BLOCK + threadIdx.x]);
         // }
-        dp5_one_step<T, id, 0>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<T, id, 1>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<T, id, 2>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<T, id, 3>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<T, id, 4>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<T, id,  5>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<T, id, 6>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, args...);
-        if(is_valid){
-            adjust_time<T, id>(t, dt, state, block_derivs, x_temp, has_left, dtmax);
+        dp5_one_step<T, id, 0>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, block_t, block_dt,
+                            symmetry_exploited, state, block_mu, is_valid_arr, args...);
+        dp5_one_step<T, id, 1>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, block_t, block_dt,
+                            symmetry_exploited, state, block_mu, is_valid_arr, args...);
+        dp5_one_step<T, id, 2>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, block_t, block_dt,
+                            symmetry_exploited, state, block_mu, is_valid_arr, args...);
+        dp5_one_step<T, id, 3>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, block_t, block_dt,
+                            symmetry_exploited, state, block_mu, is_valid_arr, args...);
+        dp5_one_step<T, id, 4>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, block_t, block_dt,
+                            symmetry_exploited, state, block_mu, is_valid_arr, args...);
+        dp5_one_step<T, id,  5>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, block_t, block_dt,
+                            symmetry_exploited, state, block_mu, is_valid_arr, args...);
+        dp5_one_step<T, id, 6>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, block_t, block_dt,
+                            symmetry_exploited, state, block_mu, is_valid_arr, args...);
+        if(threadIdx.x < PARTICLES_PER_BLOCK && is_valid_arr[threadIdx.x]){
+            adjust_time<T, id>(block_t, block_dt, state, block_derivs, x_temp, has_left, block_dtmax);
+        }
+
+        // if the particle has left, go get another one
+        if(threadIdx.x < PARTICLES_PER_BLOCK && is_valid_arr[threadIdx.x] && \
+            (block_t[threadIdx.x] >= tmax_d || has_left[threadIdx.x])){
+            // write output for current particle
+            out[6*idx] = block_t[threadIdx.x];
+            for(int i=0; i<4; ++i){
+                out[6*idx + i + 1] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
+            }
+            out[6*idx + 5] = block_dt[threadIdx.x];
+
+            // load the next particle
+            idx = atomicAdd(&next_particle_d, 1);
+            if(idx < nparticles_d){
+                T* loc_arr = init_pos + 4*idx;
+                for(int i=0; i<4; ++i){
+                    state[i*PARTICLES_PER_BLOCK + threadIdx.x] = init_pos[4*idx + i];
+                }
+                block_dt[threadIdx.x] = dt[idx];
+                block_mu[threadIdx.x] = mu[idx];
+                block_t[threadIdx.x] = t[idx];
+                block_dtmax[threadIdx.x] = dtmax[idx];
+                has_left[threadIdx.x] = false;
+                symmetry_exploited[threadIdx.x] = false;
+            } else {
+                is_valid_arr[threadIdx.x] = false;
+            }
         }
         __syncthreads();
-    }
-    __syncthreads();
-    if(is_valid){
-        out[6*idx] = t[threadIdx.x];
-        for(int i=0; i<4; ++i){
-            out[6*idx + i + 1] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
-        }
-        out[6*idx + 5] = dt[threadIdx.x];
     }
     return;
 }
@@ -1096,29 +1151,49 @@ vector<T> gpu_tracing(py::array_t<T> quad_pts, py::array_t<double> x1_range, py:
     gpuErrchk(cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(T)) ); 
     gpuErrchk(cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(T), cudaMemcpyHostToDevice) );
 
-    T* dt_in_d;
-    gpuErrchk(cudaMalloc((void**)&dt_in_d, dt_in.size() * sizeof(T)) ); 
-    gpuErrchk(cudaMemcpy(dt_in_d, dt_in_arr, dt_in.size() * sizeof(T), cudaMemcpyHostToDevice) );
+    T* dt_d;
+    gpuErrchk(cudaMalloc((void**)&dt_d, dt_in.size() * sizeof(T)) ); 
+    gpuErrchk(cudaMemcpy(dt_d, dt_in_arr, dt_in.size() * sizeof(T), cudaMemcpyHostToDevice) );
 
-    T* derivs_d; // a workspace for derivatives
-    gpuErrchk(cudaMalloc((void**)&derivs_d, 42*nparticles * sizeof(T)) ); 
+    // scratch spaces
+    T* mu_d;
+    gpuErrchk(cudaMalloc((void**)&mu_d, nparticles * sizeof(T)) ); 
 
+    T* t_d;
+    cudaMalloc((void**)&t_d, nparticles*sizeof(T));
+    cudaMemset(t_d, 0, nparticles*sizeof(T));  
+
+    T* dtmax_d;
+    gpuErrchk(cudaMalloc((void**)&dtmax_d, nparticles * sizeof(T)) ); 
 
     T* out_d;
     gpuErrchk(cudaMalloc((void**)&out_d, 6 * nparticles * sizeof(T)) ); 
 
-
+    // launch params
     int nthreads = THREADS_PER_BLOCK;
+    int setup_nblks = nparticles / PARTICLES_PER_BLOCK + 1;
 
-    int nblks = nparticles  / PARTICLES_PER_BLOCK + 1;
-    // std::cout << "starting particle tracing kernel\n";
+    // compute maximum number of blocks for a single wave for persistent threads
+    int numSMs;
+    cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, 0);
+    int blocks_per_sm;
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks_per_sm,
+        particle_trace_kernel<T, id>, THREADS_PER_BLOCK, 0);
+    int nblks = blocks_per_sm * numSMs;
 
-       
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    cudaEventRecord(start);
-    particle_trace_kernel<T, id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, dt_in_d, derivs_d, args...);
+    int scratch_nblks = max(setup_nblks, nblks);
+    T* derivs_d;
+    cudaMalloc((void**)&derivs_d, 42*scratch_nblks*PARTICLES_PER_BLOCK*sizeof(T));
+
+
+    setup_kernel<T, id><<<setup_nblks, nthreads>>>(init_pos_d, quadpts_d, mu_d, dt_d, dtmax_d,
+                                            t_d, derivs_d, nparticles, args...);
+
+
+    // initialize global counter
+    int n_total_threads = nblks*PARTICLES_PER_BLOCK;
+    gpuErrchk(cudaMemcpyToSymbol(next_particle_d, &n_total_threads, sizeof(int)) );
+    particle_trace_kernel<T, id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, derivs_d, mu_d, t_d, dt_d, dtmax_d, args...);
 
     T out[6*nparticles];
     gpuErrchk(cudaMemcpy(out, out_d, 6 * nparticles * sizeof(T), cudaMemcpyDeviceToHost) );
@@ -1126,8 +1201,11 @@ vector<T> gpu_tracing(py::array_t<T> quad_pts, py::array_t<double> x1_range, py:
     gpuErrchk( cudaFree(quadpts_d) );
     gpuErrchk( cudaFree(init_pos_d) );
     gpuErrchk( cudaFree(out_d) );
-    gpuErrchk( cudaFree(dt_in_d));
     gpuErrchk(cudaFree(derivs_d));
+    gpuErrchk(cudaFree(dt_d));
+    gpuErrchk(cudaFree(t_d));
+    gpuErrchk(cudaFree(dtmax_d));
+    gpuErrchk(cudaFree(mu_d));
     vector<T> particle_output(6*nparticles);
     for(int i=0; i<6*nparticles; ++i){
         particle_output[i] = out[i];
@@ -1386,7 +1464,7 @@ __device__ void account_for_symmetry_rhs(T* interpolants, bool* symmetry_exploit
 
 
 template <typename T, RHS id, int n>
-__global__ void test_gpu_interpolation_kernel(T* quad_pts, T* loc, T* out, T* derivs, int n_points){
+__global__ void test_gpu_interpolation_kernel(T* quad_pts, T* loc, T* out, T* derivs, T* dt, T* t, int n_points){
     int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
 
     __shared__ T x_temp[5 * PARTICLES_PER_BLOCK];
@@ -1396,25 +1474,28 @@ __global__ void test_gpu_interpolation_kernel(T* quad_pts, T* loc, T* out, T* de
     __shared__ T state[4 * PARTICLES_PER_BLOCK];
     // __shared__ T derivs[42 * PARTICLES_PER_BLOCK];
     T* block_derivs = derivs + 42*blockIdx.x*PARTICLES_PER_BLOCK;
-    __shared__ T dt[PARTICLES_PER_BLOCK];
-    __shared__ T t[PARTICLES_PER_BLOCK];
+    T* block_dt = dt + blockIdx.x*PARTICLES_PER_BLOCK;
+    T* block_t = t + blockIdx.x*PARTICLES_PER_BLOCK;
 
     __shared__ T block_interpolants[n*PARTICLES_PER_BLOCK];
-
 
     T* loc_arr = loc + 3*idx;
     T* out_arr  =  out + idx*n;
 
     bool is_valid = idx < n_points && threadIdx.x < PARTICLES_PER_BLOCK;
-    int nparticles_blk = __syncthreads_count(is_valid);
+    
+    __shared__ bool is_valid_arr[PARTICLES_PER_BLOCK];
+    if(threadIdx.x < PARTICLES_PER_BLOCK){
+        is_valid_arr[threadIdx.x] = is_valid;
+    }
     if(is_valid){
-        dt[threadIdx.x] = 1e-3; // needed for build_state
+        block_dt[threadIdx.x] = 1e-3; // needed for build_state
         symmetry_exploited[threadIdx.x] = false;
         for(int i=0; i<3; ++i){
             state[i*PARTICLES_PER_BLOCK + threadIdx.x] = loc_arr[i];
         }
         state[3*PARTICLES_PER_BLOCK + threadIdx.x] = 0.0; // dummy vpar value
-        t[threadIdx.x] = 0.0; // dummy time value
+        block_t[threadIdx.x] = 0.0; // dummy time value
 
 
         for(int i=0; i<n; ++i){
@@ -1422,10 +1503,10 @@ __global__ void test_gpu_interpolation_kernel(T* quad_pts, T* loc, T* out, T* de
         }
     } 
 
-    build_state<T, id, 0>(x_temp, symmetry_exploited, cell_index_start, shape_fun_vals, state, block_derivs, t, dt, nparticles_blk);
+    build_state<T, id, 0>(x_temp, symmetry_exploited, cell_index_start, shape_fun_vals, state, block_derivs, block_t, block_dt, is_valid_arr);
 
     __syncthreads();
-    interpolate<T, n>(block_interpolants, quad_pts, cell_index_start, shape_fun_vals, nparticles_blk);
+    interpolate<T, n>(block_interpolants, quad_pts, cell_index_start, shape_fun_vals, is_valid_arr);
     __syncthreads();
     
     if(is_valid){
@@ -1525,6 +1606,12 @@ py::array_t<T> test_gpu_interpolation(py::array_t<T> quad_pts, py::array_t<doubl
     T* derivs_d;
     cudaMalloc((void**)&derivs_d, 42*n_points * sizeof(T));
 
+    T* dt_d;
+    cudaMalloc((void**)&dt_d, n_points * sizeof(T));
+
+    T* t_d;
+    cudaMalloc((void**)&t_d, n_points * sizeof(T));
+
     T* out_d;
     cudaMalloc((void**)&out_d, n*n_points * sizeof(T));
 
@@ -1532,13 +1619,13 @@ py::array_t<T> test_gpu_interpolation(py::array_t<T> quad_pts, py::array_t<doubl
     int nblks = n_points / PARTICLES_PER_BLOCK + 1;
 
     if(rhs == "cartesian_vacuum"){
-        test_gpu_interpolation_kernel<T, RHS::GC_CartesianVacuum, 7><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, derivs_d, n_points);
+        test_gpu_interpolation_kernel<T, RHS::GC_CartesianVacuum, 7><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, derivs_d, dt_d, t_d, n_points);
     } else if(rhs == "boozer_vacuum") {
-        test_gpu_interpolation_kernel<T, RHS::GC_BoozerVacuum, 6><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, derivs_d, n_points);
+        test_gpu_interpolation_kernel<T, RHS::GC_BoozerVacuum, 6><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, derivs_d, dt_d, t_d, n_points);
     } else if(rhs == "boozer_saw_vacuum") {
-        test_gpu_interpolation_kernel<T, RHS::GC_BoozerVacuumSAW, 10><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, derivs_d, n_points);
+        test_gpu_interpolation_kernel<T, RHS::GC_BoozerVacuumSAW, 10><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, derivs_d, dt_d, t_d, n_points);
     } else if(rhs == "boozer") {
-        test_gpu_interpolation_kernel<T, RHS::GC_Boozer, 12><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, derivs_d, n_points);
+        test_gpu_interpolation_kernel<T, RHS::GC_Boozer, 12><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, derivs_d, dt_d, t_d, n_points);
     }
     T out[n*n_points];
     gpuErrchk( cudaMemcpy(&out, out_d, n*n_points * sizeof(T), cudaMemcpyDeviceToHost) );
@@ -1558,55 +1645,49 @@ template py::array_t<double> test_gpu_interpolation<double>(py::array_t<double> 
 template py::array_t<float> test_gpu_interpolation<float>(py::array_t<float> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<float> loc, std::string rhs, int n_points);
 
 template<typename T, RHS id, typename... Args>
-__global__ void test_gpu_derivs_kernel(T* quad_pts, T* loc, T* vpar, T* time, T* out, T* derivs, int n_points, Args... args){
+__global__ void test_gpu_derivs_kernel(T* quad_pts, T* init_pos, T* time, T* out, T* derivs, T* mu, T* dt, T* dtmax, int n_points, Args... args){
     int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;    
-    T* loc_arr = loc + 3*idx;
+    T* loc_arr = init_pos + 4*idx;
     T* out_arr  =  out + 4*idx;
 
     __shared__ T x_temp[5 * PARTICLES_PER_BLOCK];
     // __shared__ T derivs[42 * PARTICLES_PER_BLOCK];
     T* block_derivs = derivs + 42*blockIdx.x*PARTICLES_PER_BLOCK;
-    __shared__ T dt[PARTICLES_PER_BLOCK];
     __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
     __shared__ int cell_index_start[3*PARTICLES_PER_BLOCK];
     __shared__ T shape_fun_vals[12*PARTICLES_PER_BLOCK];
-    __shared__ T mu[PARTICLES_PER_BLOCK];
-    __shared__ T t[PARTICLES_PER_BLOCK];
-    __shared__ T dtmax[PARTICLES_PER_BLOCK];
+    T* block_mu = mu + blockIdx.x*PARTICLES_PER_BLOCK;
+    T* block_dt = dt + blockIdx.x*PARTICLES_PER_BLOCK;
+    T* block_t = time + blockIdx.x*PARTICLES_PER_BLOCK;
+    T* block_dtmax = dtmax + blockIdx.x*PARTICLES_PER_BLOCK;
     __shared__ T state[4 * PARTICLES_PER_BLOCK];
 
     bool is_valid = idx < n_points && threadIdx.x < PARTICLES_PER_BLOCK;
-    int nparticles_blk = __syncthreads_count(is_valid);
-
+    __shared__ bool is_valid_arr[PARTICLES_PER_BLOCK];
+    if(threadIdx.x < PARTICLES_PER_BLOCK){
+        is_valid_arr[threadIdx.x] = is_valid;
+    }
     if(is_valid){
-        T vpar_val = vpar[idx];
-        T r = loc_arr[0];
-        T phi = loc_arr[1];
-        T z = loc_arr[2];
-
-        state[threadIdx.x] = r*cos(phi);
-        state[PARTICLES_PER_BLOCK + threadIdx.x] = r*sin(phi);
-        state[2*PARTICLES_PER_BLOCK + threadIdx.x] = z;
-        state[3*PARTICLES_PER_BLOCK + threadIdx.x] = vpar_val;
-
-        t[threadIdx.x] = time[idx];
+        for(int i=0; i<4; ++i){
+            state[i*PARTICLES_PER_BLOCK + threadIdx.x] = loc_arr[i];
+        }
     }
     __syncthreads();
 
-    setup_particle<T, id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, cell_index_start,
-                        quad_pts, shape_fun_vals, state, block_derivs, nparticles_blk, args...);
+    // setup_particle<T, id>(block_mu, block_t, block_dt, block_dtmax, x_temp, symmetry_exploited, cell_index_start,
+    //                     quad_pts, shape_fun_vals, state, block_derivs, , args...);
 
-    __syncthreads();
+    // __syncthreads();
 
     // set non-zero time
-    if(is_valid){
-        t[threadIdx.x] = time[idx];
-    }
+    // if(is_valid){
+    //     t[threadIdx.x] = time[idx];
+    // }
     build_state<T, id, 0>(x_temp, symmetry_exploited, cell_index_start,
-            shape_fun_vals, state, block_derivs, t, dt, nparticles_blk);
+            shape_fun_vals, state, block_derivs, block_t, block_dt, is_valid_arr);
     __syncthreads();
     calc_derivs<T, id, 0>(block_derivs + threadIdx.x, quad_pts, x_temp + threadIdx.x, symmetry_exploited + threadIdx.x,
-         cell_index_start, shape_fun_vals, mu + threadIdx.x, nparticles_blk, args...);
+         cell_index_start, shape_fun_vals, block_mu + threadIdx.x, is_valid_arr, args...);
     __syncthreads();
 
     if(is_valid){
@@ -1629,26 +1710,46 @@ py::array_t<T> test_gpu_derivatives(py::array_t<T> quad_pts, py::array_t<double>
     T* loc_arr = create_array<T>(loc);
     T* vpar_arr = create_array<T>(vpar);
     T* time_arr = create_array<T>(time);
+
+
+    
+    T init_pos[4*n_points];
+    // load initial conditions
+    for(int i=0; i<n_points; ++i){
+        T x1 = loc_arr[3*i + 0] * cos(loc_arr[3*i + 1]);
+        T x2 = loc_arr[3*i + 0] * sin(loc_arr[3*i + 1]);
+        init_pos[4*i + 0] = x1;
+        init_pos[4*i + 1] = x2;
+        init_pos[4*i + 2] = loc_arr[3*i + 2];
+        init_pos[4*i + 3] = vpar_arr[i];
+    }
     
     T* quadpts_d;
     cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(T));
     cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(T), cudaMemcpyHostToDevice);
 
-    T* loc_d;
-    cudaMalloc((void**)&loc_d, loc.size() * sizeof(T));
-    cudaMemcpy(loc_d, loc_arr, loc.size() * sizeof(T), cudaMemcpyHostToDevice);
-
-    T* vpar_d;
-    cudaMalloc((void**)&vpar_d, vpar.size() * sizeof(T));
-    cudaMemcpy(vpar_d, vpar_arr, vpar.size() * sizeof(T), cudaMemcpyHostToDevice);
+    T* init_pos_d;
+    cudaMalloc((void**)&init_pos_d, 4*n_points * sizeof(T));
+    cudaMemcpy(init_pos_d, init_pos, 4*n_points * sizeof(T), cudaMemcpyHostToDevice);
 
     T* time_d;
     cudaMalloc((void**)&time_d, n_points*sizeof(T));
     cudaMemcpy(time_d, time_arr, n_points * sizeof(T), cudaMemcpyHostToDevice);
 
+    // scratch spaces
     T* derivs_d;
     cudaMalloc((void**)&derivs_d, 42*n_points*sizeof(T));
+    
+    std::vector<T> dt_init(n_points, T(-1.0));
+    T* dt_d;
+    cudaMalloc((void**)&dt_d, n_points*sizeof(T));
+    cudaMemcpy(dt_d, dt_init.data(), n_points*sizeof(T), cudaMemcpyHostToDevice);
 
+    T* dtmax_d;
+    cudaMalloc((void**)&dtmax_d, n_points*sizeof(T));
+
+    T* mu_d;
+    cudaMalloc((void**)&mu_d, n_points*sizeof(T));
 
     T* out_d;
     cudaMalloc((void**)&out_d, 4*n_points * sizeof(T));
@@ -1696,16 +1797,22 @@ py::array_t<T> test_gpu_derivatives(py::array_t<T> quad_pts, py::array_t<double>
     int nthreads = THREADS_PER_BLOCK;
     int nblks = n_points / PARTICLES_PER_BLOCK + 1;
 
-    test_gpu_derivs_kernel<T, id><<<nblks, nthreads>>>(quadpts_d, loc_d, vpar_d, time_d, out_d, derivs_d, n_points, args...);
+    setup_kernel<T, id><<<nblks, nthreads>>>(init_pos_d, quadpts_d, mu_d, dt_d, dtmax_d,
+                                                time_d, derivs_d, n_points, args...);
+    test_gpu_derivs_kernel<T, id><<<nblks, nthreads>>>(quadpts_d, init_pos_d, time_d, out_d, derivs_d, mu_d,
+                                                             dt_d, dtmax_d, n_points, args...);
     
     T out[4*n_points];
     gpuErrchk( cudaMemcpy(&out, out_d, 4*n_points * sizeof(T), cudaMemcpyDeviceToHost) );
     auto result = py::array_t<T>(4*n_points, out);
     
     gpuErrchk( cudaFree(quadpts_d) );
-    gpuErrchk( cudaFree(loc_d) );
-    gpuErrchk( cudaFree(vpar_d) );
+    gpuErrchk( cudaFree(init_pos_d) );
     gpuErrchk( cudaFree(time_d) );
+    gpuErrchk( cudaFree(derivs_d) );
+    gpuErrchk( cudaFree(mu_d) );
+    gpuErrchk( cudaFree(dt_d) );
+    gpuErrchk( cudaFree(dtmax_d) );
     gpuErrchk( cudaFree(out_d) );
 
     return result;
@@ -1715,6 +1822,7 @@ py::array_t<T> test_gpu_derivatives(py::array_t<T> quad_pts, py::array_t<double>
 template<typename T>
 py::array_t<T> test_derivatives_cartesian(py::array_t<T> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, py::array_t<T> loc, py::array_t<T> vpar, double v_total, double m, double q, int n_points){        
     py::array_t<T> time = py::array_t<T>(n_points); // dummy time
+    std::fill(time.mutable_data(), time.mutable_data() + n_points, 0.0);
     return test_gpu_derivatives<T, RHS::GC_CartesianVacuum>(quad_pts, x1_range, x2_range, x3_range, loc, vpar, time, v_total, m, q, n_points);
 }
 
@@ -1726,7 +1834,10 @@ py::array_t<double> test_derivatives_boozer(py::array_t<double> quad_pts, py::ar
     gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
     double inv_psi0_charge = 1.0 / (psi0*q);
     gpuErrchk(cudaMemcpyToSymbol(inv_psi0_charge_d, &inv_psi0_charge, sizeof(double)));
+
     py::array_t<double> time = py::array_t<double>(n_points); // dummy time
+    std::fill(time.mutable_data(), time.mutable_data() + n_points, 0.0);
+
     if (vacuum) {
         return test_gpu_derivatives<double, RHS::GC_BoozerVacuum>(quad_pts, x1_range, x2_range, x3_range, loc, vpar, time, v_total, m, q, n_points);
     } else {
@@ -1816,69 +1927,96 @@ py::array_t<double> test_derivatives_saw_nok(py::array_t<double> quad_pts, py::a
 }
 
 template<RHS id, typename... Args>
-__global__ void test_gpu_timestep_kernel(double* out, double* init_pos, double* quadpts_arr, double* derivs, int nparticles, Args... args){
+__global__ void test_gpu_timestep_kernel(double* out, double* init_pos, double* quadpts_arr, double* derivs, double* mu, 
+                                            double* t, double* dt, double* dtmax, int nparticles, Args... args){
     int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
+    double* loc_arr = init_pos + 4*idx;
 
     __shared__ double x_temp[5 * PARTICLES_PER_BLOCK];
-    __shared__ double dt[PARTICLES_PER_BLOCK];
+    __shared__ double block_dt[PARTICLES_PER_BLOCK];
     __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
     double* block_derivs = derivs + 42*blockIdx.x*PARTICLES_PER_BLOCK;
     __shared__ int cell_index_start[3 * PARTICLES_PER_BLOCK];
     __shared__ double shape_fun_vals[12 * PARTICLES_PER_BLOCK];
-    __shared__ double mu[PARTICLES_PER_BLOCK];
-    __shared__ double t[PARTICLES_PER_BLOCK];
-    __shared__ double dtmax[PARTICLES_PER_BLOCK];
+    __shared__ double block_mu[PARTICLES_PER_BLOCK];
+    __shared__ double block_t[PARTICLES_PER_BLOCK];
+    __shared__ double block_dtmax[PARTICLES_PER_BLOCK];
     __shared__ double state[4 * PARTICLES_PER_BLOCK];
     __shared__ bool has_left[PARTICLES_PER_BLOCK];
 
     bool is_valid = idx < nparticles && threadIdx.x < PARTICLES_PER_BLOCK;
-    int nparticles_blk = __syncthreads_count(is_valid);
-
+    __shared__ bool is_valid_arr[PARTICLES_PER_BLOCK];
+    if(threadIdx.x < PARTICLES_PER_BLOCK){
+        is_valid_arr[threadIdx.x] = is_valid;
+    }
     // if thread is responsible for a valid particle id, load that particle's data
     if(is_valid){
-        has_left[threadIdx.x] = true;
-        t[threadIdx.x] = 0.0;
-        dt[threadIdx.x] = -1.0; //there is no dt input for time step test
         has_left[threadIdx.x] = false;
         for(int i=0; i<4; ++i){
-            state[i*PARTICLES_PER_BLOCK + threadIdx.x] = init_pos[4*idx+i];
+            state[i*PARTICLES_PER_BLOCK + threadIdx.x] = loc_arr[i];
         }
+
+        // load shared dt, t, mu, dtmax
+        block_dt[threadIdx.x] = dt[idx];
+        block_mu[threadIdx.x] = mu[idx];
+        block_t[threadIdx.x] = t[idx];
+        block_dtmax[threadIdx.x] = dtmax[idx];
+
     }
     __syncthreads();
 
-    // calculate the particle's magnetic moment mu, dt, dtmax
-    setup_particle<double, id>(mu, t, dt, dtmax, x_temp, symmetry_exploited, cell_index_start,
-                        quadpts_arr, shape_fun_vals, state, block_derivs, nparticles_blk, args...);
-    __syncthreads();
+    // // calculate the particle's magnetic moment mu, dt, dtmax
+    // setup_particle<double, id>(block_mu, block_t, block_dt, block_dtmax, x_temp, symmetry_exploited, cell_index_start,
+    //                     quadpts_arr, shape_fun_vals, state, block_derivs, , args...);
+    // __syncthreads();
 
     // if there exists a particle at t=0, which is a real particle, then keep tracing
-    while(__syncthreads_count(t[threadIdx.x] == 0.0  && is_valid) > 0){
+    while(__syncthreads_count(block_t[threadIdx.x % PARTICLES_PER_BLOCK] == 0.0  && is_valid_arr[threadIdx.x % PARTICLES_PER_BLOCK]) > 0){
         // calculate the 7 Dormand-Prince 5 derivatives
-        dp5_one_step<double, id, 0>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<double, id, 1>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<double, id, 2>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<double, id, 3>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<double, id, 4>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<double, id, 5>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, args...);
-        dp5_one_step<double, id, 6>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, t, dt,
-                            symmetry_exploited, state, mu, nparticles_blk, args...);
-        if(is_valid && t[threadIdx.x] == 0.0){
-            adjust_time<double, id>(t, dt, state, block_derivs, x_temp, has_left, dtmax);
+        dp5_one_step<double, id, 0>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, block_t, block_dt,
+                            symmetry_exploited, state, block_mu, is_valid_arr, args...);
+        dp5_one_step<double, id, 1>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, block_t, block_dt,
+                            symmetry_exploited, state, block_mu, is_valid_arr, args...);
+        dp5_one_step<double, id, 2>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, block_t, block_dt,
+                            symmetry_exploited, state, block_mu, is_valid_arr, args...);
+        dp5_one_step<double, id, 3>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, block_t, block_dt,
+                            symmetry_exploited, state, block_mu, is_valid_arr, args...);
+        dp5_one_step<double, id, 4>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, block_t, block_dt,
+                            symmetry_exploited, state, block_mu, is_valid_arr, args...);
+        dp5_one_step<double, id, 5>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, block_t, block_dt,
+                            symmetry_exploited, state, block_mu, is_valid_arr, args...);
+        dp5_one_step<double, id, 6>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, block_t, block_dt,
+                            symmetry_exploited, state, block_mu, is_valid_arr, args...);
+        if(threadIdx.x < PARTICLES_PER_BLOCK && is_valid_arr[threadIdx.x] && block_t[threadIdx.x] == 0.0){
+            adjust_time<double, id>(block_t, block_dt, state, block_derivs, x_temp, has_left, block_dtmax);
         }
+        // if the particle moved, write output and load the next particle that is needed
+        if(threadIdx.x < PARTICLES_PER_BLOCK && is_valid_arr[threadIdx.x] && block_t[threadIdx.x] != 0.0){
+            // write output for current particle
+            out[5*idx] = block_t[threadIdx.x];
+            for(int i=0; i<4; ++i){
+                out[5*idx + i + 1] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
+            }
+
+            // load the next particle
+            idx = atomicAdd(&next_particle_d, 1);
+            if(idx < nparticles){
+                loc_arr = init_pos + 4*idx;
+                for(int i=0; i<4; ++i){
+                    state[i*PARTICLES_PER_BLOCK + threadIdx.x] = loc_arr[i];
+                }
+                block_dt[threadIdx.x] = dt[idx];
+                block_mu[threadIdx.x] = mu[idx];
+                block_t[threadIdx.x] = t[idx];
+                block_dtmax[threadIdx.x] = dtmax[idx];
+                has_left[threadIdx.x] = false;
+                symmetry_exploited[threadIdx.x] = false;
+            } else {
+                is_valid_arr[threadIdx.x] = false;
+            }
+        }
+
         __syncthreads();
-    }
-    __syncthreads();
-    if(is_valid){
-        out[5*idx] = t[threadIdx.x];
-        for(int i=0; i<4; ++i){
-            out[5*idx + i + 1] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
-        }
     }
     return;
 }
@@ -1891,7 +2029,17 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
     //  read data in from python
     double* loc_init_arr = create_array(loc_init);
     double* vtang_arr = create_array(vtang);
-
+    double init_pos[4*nparticles];
+    // load initial conditions
+    for(int i=0; i<nparticles; ++i){
+        double s     = loc_init_arr[3*i];
+        double theta = loc_init_arr[3*i + 1];
+        init_pos[4*i + 0] = s * cos(theta);
+        init_pos[4*i + 1] = s * sin(theta);
+        init_pos[4*i + 2] = loc_init_arr[3*i + 2];
+        init_pos[4*i + 3] = vtang_arr[i];
+    }
+    
     double* quadpts_arr = create_array(quad_pts);
     double* x1_range_arr = create_array(x1_range);
     double* x2_range_arr = create_array(x2_range);
@@ -1936,20 +2084,6 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
     gpuErrchk(cudaMemcpyToSymbol(n_x3_d, &n_x3, sizeof(int)) );
     gpuErrchk(cudaMemcpyToSymbol(n_x23_d, &n_x23, sizeof(int)) );
 
-    double init_pos[4*nparticles];
-    // load initial conditions
-    for(int i=0; i<nparticles; ++i){
-        int start = 3*i;
-        double r = loc_init_arr[start];
-        double phi =  loc_init_arr[start + 1];
-        
-        init_pos[4*i] = r*cos(phi);
-        init_pos[4*i+1] = r*sin(phi);
-        init_pos[4*i+2] = loc_init_arr[start+2];
-        init_pos[4*i + 3] = vtang_arr[i];
-    }
-
-   
     double* init_pos_d;
     gpuErrchk(cudaMalloc((void**)&init_pos_d, 4 * nparticles * sizeof(double)) );
     gpuErrchk(cudaMemcpy(init_pos_d, init_pos, 4 * nparticles * sizeof(double), cudaMemcpyHostToDevice) );
@@ -1958,21 +2092,54 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
     gpuErrchk( cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double)) );
     gpuErrchk( cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice) );
 
-    double* derivs_d;
-    cudaMalloc((void**)&derivs_d, 42*nparticles*sizeof(double));
+
+
+    double* mu_d;
+    cudaMalloc((void**)&mu_d, nparticles*sizeof(double));
+
+    double* t_d;
+    cudaMalloc((void**)&t_d, nparticles*sizeof(double));
+    cudaMemset(t_d, 0, nparticles*sizeof(double)); 
+
+    // scratch workspaces
+
+    std::vector<double> dt_init(nparticles, double(-1.0));
+    double* dt_d;
+    cudaMalloc((void**)&dt_d, nparticles*sizeof(double));
+    cudaMemcpy(dt_d, dt_init.data(), nparticles*sizeof(double), cudaMemcpyHostToDevice);
+
+    double* dtmax_d;
+    cudaMalloc((void**)&dtmax_d, nparticles*sizeof(double));
 
     double* out_d;
     gpuErrchk( cudaMalloc((void**)&out_d, 5 * nparticles * sizeof(double)) );
 
-    int nthreads = THREADS_PER_BLOCK;
-    int nblks = nparticles / PARTICLES_PER_BLOCK + 1;
 
-    // std::cout << "starting particle tracing kernel\n";
-    // cudaEvent_t start, stop;
-    // cudaEventCreate(&start);
-    // cudaEventCreate(&stop);
-    // cudaEventRecord(start);
-    test_gpu_timestep_kernel<id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, derivs_d, nparticles, args...);
+    // launch params
+    int nthreads = THREADS_PER_BLOCK;
+    int setup_nblks = nparticles / PARTICLES_PER_BLOCK + 1;
+
+    // compute maximum number of blocks for a single wave for persistent threads
+    int numSMs;
+    cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, 0);
+    int blocks_per_sm;
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks_per_sm,
+        test_gpu_timestep_kernel<id>, THREADS_PER_BLOCK, 0);
+    int nblks = blocks_per_sm * numSMs;
+
+    int scratch_nblks = max(setup_nblks, nblks);
+    double* derivs_d;
+    cudaMalloc((void**)&derivs_d, 42*scratch_nblks*PARTICLES_PER_BLOCK*sizeof(double));
+
+
+    setup_kernel<double, id><<<setup_nblks, nthreads>>>(init_pos_d, quadpts_d, mu_d, dt_d, dtmax_d,
+                                            t_d, derivs_d, nparticles, args...);
+
+
+    // initialize global counter
+    int n_total_threads = nblks*PARTICLES_PER_BLOCK;
+    gpuErrchk(cudaMemcpyToSymbol(next_particle_d, &n_total_threads, sizeof(int)) );
+    test_gpu_timestep_kernel<id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, derivs_d, mu_d, t_d, dt_d, dtmax_d, nparticles, args...);
 
     gpuErrchk( cudaPeekAtLastError() );
     gpuErrchk( cudaDeviceSynchronize() );
@@ -1995,6 +2162,10 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
     gpuErrchk( cudaFree(quadpts_d) );
     gpuErrchk( cudaFree(out_d) );
     gpuErrchk( cudaFree(derivs_d));
+    gpuErrchk( cudaFree(mu_d));
+    gpuErrchk( cudaFree(dt_d));
+    gpuErrchk( cudaFree(t_d));
+    gpuErrchk( cudaFree(dtmax_d));
 
     return particle_output;
 }
