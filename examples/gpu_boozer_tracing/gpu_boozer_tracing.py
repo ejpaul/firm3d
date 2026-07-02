@@ -22,8 +22,8 @@ from firm3d.util.functions import in_github_actions
 from firm3d.util.mpi import comm_world
 
 resolution = 5 if in_github_actions else 15  # Resolution for field interpolation
-nparticles = 100 if in_github_actions else 25000  # Number of particles to trace
-tol = 1e-4 if in_github_actions else 1e-7  # Tolerance for ODE solver
+nparticles = 100 if in_github_actions else 100000  # Number of particles to trace
+tol = 1e-4 if in_github_actions else 1e-8  # Tolerance for ODE solver
 
 ### CREATE A FIELD FOR TRACING
 boozmn_filename = "../inputs/boozmn_aten_rescaled.nc"
@@ -58,14 +58,14 @@ def sigmav(T):
 np.random.seed(0)
 # Reactivity profile
 reactivity = lambda s: nD(s) * nT(s) * sigmav(T(s))
-stz_inits = initialize_position_profile(field, nparticles, reactivity, comm=comm_world)
+stz_inits = initialize_position_profile(field, nparticles, reactivity, seed=1)
 
 Ekin = FUSION_ALPHA_PARTICLE_ENERGY
 mass = ALPHA_PARTICLE_MASS
 charge = ALPHA_PARTICLE_CHARGE
 # Initialize uniformly distributed parallel velocities
 vpar0 = np.sqrt(2 * Ekin / mass)
-vpar_inits = initialize_velocity_uniform(vpar0, nparticles)
+vpar_inits = initialize_velocity_uniform(vpar0, nparticles, seed=1)
 
 
 tmax = 1e-4
@@ -120,7 +120,10 @@ particle_data = pd.DataFrame(
 particle_data.to_csv("./particle_data.csv")
 
 
-# did_leave = [t < tmax for t in particle_data["last_time"]]
-# loss_frac = sum(did_leave) / len(did_leave)
-# print(f"Number of particles= {nparticles}")
-# print(f"Loss fraction: {loss_frac:.3f}")
+print(f"Number of particles= {nparticles}")
+did_leave = [t < tmax for t in particle_data["last_time_flt"]]
+loss_frac = sum(did_leave) / len(did_leave)
+print(f"Flt. Loss fraction: {loss_frac:.3f}")
+did_leave = [t < tmax for t in particle_data["last_time_dbl"]]
+loss_frac = sum(did_leave) / len(did_leave)
+print(f"Dbl. Loss fraction: {loss_frac:.3f}")
