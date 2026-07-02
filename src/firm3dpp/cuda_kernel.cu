@@ -82,6 +82,12 @@ __constant__ double dp5_t_wgts[7] = {
     0.0, 1.0/5.0, 3.0/10.0, 4.0/5.0, 8.0/9.0, 1.0, 1.0
 };
 
+// error estimation weights for Dormand-Prince 5 timesteps
+__constant__ double bhat_wgts[7] = {
+    71.0/57600.0, 0.0, -71.0/16695.0, 71.0/1920.0,
+    -17253.0/339200.0, 22.0/525.0, -1.0/40.0
+};
+
 // each RHS has an associated 3 dimensional coordinates system (x1, x2, x3)
 // xi_range_d containts the beginning, end, number of grid points, and grid step size for an interpolant
 // __constant__ double x1_range_d[4], x2_range_d[4], x3_range_d[4]; // contains start, end, number of points, grid size
@@ -119,31 +125,34 @@ __device__ int next_particle_d;
 // nphi and nz indicate how many grid pts there are in phi and z directions
 //
 template <typename T, int n> __device__ void interpolate(T*  out, const T* __restrict__ data, const int* __restrict__ cell_index_start,
-    const T* __restrict__ shape_fun_vals, bool* is_valid){
+    const T* __restrict__ shape_fun_vals, const bool* __restrict__ is_valid){
 
     for(int p=threadIdx.x / 8; p<PARTICLES_PER_BLOCK; p+= THREADS_PER_BLOCK/8){
-        int i = cell_index_start[3*p];
-        int j = cell_index_start[3*p + 1];
-        int k = cell_index_start[3*p + 2];
+        const int i = cell_index_start[3*p];
+        const int j = cell_index_start[3*p + 1];
+        const int k = cell_index_start[3*p + 2];
 
-        int window_base = 64*n*(i*n_x2_d * n_x3_d + j*n_x3_d + k);
 
-        int kk = threadIdx.x % 4;
-        int jj = (threadIdx.x / 4) % 2; // 0 -> 2 and 1 -> 3
-        T shape_jk1 = shape_fun_vals[(8 + kk)*PARTICLES_PER_BLOCK + p] * shape_fun_vals[(4 + jj)*PARTICLES_PER_BLOCK + p];
-        T shape_jk2 = shape_fun_vals[(8 + kk)*PARTICLES_PER_BLOCK + p] * shape_fun_vals[(4 + jj + 2)*PARTICLES_PER_BLOCK + p];
+        const int kk = threadIdx.x % 4;
+        const int jj = (threadIdx.x / 4) % 2; // 0 -> 2 and 1 -> 3
 
+        const int base_offset = 64*n*(i*n_x2_d * n_x3_d + j*n_x3_d + k) + 4*jj + kk;
+
+        const T shape_jk1 = shape_fun_vals[(8 + kk)*PARTICLES_PER_BLOCK + p] * shape_fun_vals[(4 + jj)*PARTICLES_PER_BLOCK + p];
+        const T shape_jk2 = shape_fun_vals[(8 + kk)*PARTICLES_PER_BLOCK + p] * shape_fun_vals[(4 + jj + 2)*PARTICLES_PER_BLOCK + p];
+
+        const bool p_valid = is_valid[p];
         for(int zz=0; zz<n; ++zz){
             T local_val = 0.0;
             
-            if(is_valid[p]){
-                    for(int ii=0; ii<4; ++ii){
-                    int base = window_base + 16*ii + 4*jj + kk;
+            if(p_valid){
+                for(int ii=0; ii<4; ++ii){
+                    int base = base_offset + 16*ii ;
 
-                    T shape_i = shape_fun_vals[ii*PARTICLES_PER_BLOCK + p]; //shape_fun_vals[(8 + kk)*PARTICLES_PER_BLOCK + p];
+                    const T shape_i = shape_fun_vals[ii*PARTICLES_PER_BLOCK + p]; //shape_fun_vals[(8 + kk)*PARTICLES_PER_BLOCK + p];
 
-                    local_val += shape_jk1 * shape_i * data[base + 64*zz];
-                    local_val += shape_jk2 * shape_i * data[base + 8 + 64*zz];
+                    local_val += shape_i * (shape_jk1 * data[base + 64*zz] + 
+                                            shape_jk2 * data[base + 8 + 64*zz]);
                 }
             }
 
@@ -152,7 +161,7 @@ template <typename T, int n> __device__ void interpolate(T*  out, const T* __res
                 local_val += __shfl_down_sync(FULL_MASK, local_val, offset);
             }
 
-            if(threadIdx.x % 8 == 0 && is_valid[p]){
+            if(threadIdx.x % 8 == 0 && p_valid){
                 out[PARTICLES_PER_BLOCK*zz + p] = local_val;
             }
         }
@@ -162,7 +171,7 @@ template <typename T, int n> __device__ void interpolate(T*  out, const T* __res
 
 // calc_derivs implementation for guiding center cartesian vacuum tracing
 template <typename T, int deriv_id>
-__device__ void rhs_GC_CartesianVacuum(T* derivs, T* x_temp, T* block_interpolants, bool* symmetry_exploited, T* mu){
+__device__ void rhs_GC_CartesianVacuum(T* derivs, const T* __restrict__ x_temp, const T* __restrict__ block_interpolants, const bool* __restrict__ symmetry_exploited, const T* __restrict__ mu){
 
     T x = x_temp[1*PARTICLES_PER_BLOCK];
     T y = x_temp[2*PARTICLES_PER_BLOCK];
@@ -208,12 +217,12 @@ __device__ void rhs_GC_CartesianVacuum(T* derivs, T* x_temp, T* block_interpolan
 
 // calc_derivs implementation for guiding center boozer vacuum tracing
 template <typename T, int deriv_id> 
-__device__ void rhs_GC_BoozerVacuum(T* derivs, T* x_temp, T* block_interpolants, bool* symmetry_exploited, T* mu){
+__device__ void rhs_GC_BoozerVacuum(T* derivs, const T* __restrict__ x_temp, const T* __restrict__ block_interpolants, const bool* __restrict__ symmetry_exploited, const T* __restrict__ mu){
 
     T x1 = x_temp[1*PARTICLES_PER_BLOCK];
     T x2 = x_temp[2*PARTICLES_PER_BLOCK];
 
-    T inv_s = rsqrt(x1*x1 + x2*x2);
+    T inv_s = rhypot(x1, x2);
     T v_par = x_temp[4*PARTICLES_PER_BLOCK];
 
     T modB = block_interpolants[0*PARTICLES_PER_BLOCK];
@@ -250,7 +259,7 @@ __device__ void rhs_GC_BoozerVacuum(T* derivs, T* x_temp, T* block_interpolants,
 // The equations in this function match those for the CPU tracing at
 // tracing.cpp::GuidingCenterBoozerRHS
 template<typename T, int deriv_id>
-__device__ void rhs_GC_Boozer(T* derivs, T* x_temp, T* block_interpolants, bool* symmetry_exploited, T* mu){
+__device__ void rhs_GC_Boozer(T* derivs, const T* __restrict__ x_temp, const T* __restrict__ block_interpolants, const bool* __restrict__ symmetry_exploited, const T* __restrict__ mu){
 
     T x1 = x_temp[1*PARTICLES_PER_BLOCK];
     T x2 = x_temp[2*PARTICLES_PER_BLOCK];
@@ -314,7 +323,7 @@ __device__ void rhs_GC_Boozer(T* derivs, T* x_temp, T* block_interpolants, bool*
 
 // calc_derivs implementation for guiding center boozer vacuum tracing with Shear Alfven Waves
 template <typename T, int deriv_id>
-__device__ void rhs_GC_BoozerVacuumSAW(T* derivs, T* x_temp, T* block_interpolants, bool* symmetry_exploited, T* mu,
+__device__ void rhs_GC_BoozerVacuumSAW(T* derivs, const T* __restrict__ x_temp, const T* __restrict__ block_interpolants, const bool* __restrict__ symmetry_exploited, const T* __restrict__ mu,
                                          T saw_omega, int* saw_m, int* saw_n, T* saw_phihats, int saw_nharmonics){
 
     T time = x_temp[0];
@@ -414,7 +423,7 @@ __device__ void rhs_GC_BoozerVacuumSAW(T* derivs, T* x_temp, T* block_interpolan
 
 // calc_derivs implementation for guiding center boozer NoK tracing with Shear Alfven Waves
 template <typename T, int deriv_id> 
-__device__ void rhs_GC_BoozerNoKSAW(T* derivs, T* x_temp, T* block_interpolants, bool* symmetry_exploited, T* mu,
+__device__ void rhs_GC_BoozerNoKSAW(T* derivs, const T* __restrict__ x_temp, const T* __restrict__ block_interpolants, const bool* __restrict__ symmetry_exploited, const T* __restrict__ mu,
                                      T saw_omega, int* saw_m, int* saw_n, T* saw_phihats, int saw_nharmonics){
 
     T time = x_temp[0];
@@ -530,8 +539,8 @@ __device__ void rhs_GC_BoozerNoKSAW(T* derivs, T* x_temp, T* block_interpolants,
 //
 // this function is templated across rhs options
 template<typename T, RHS id, int deriv_id, typename... Args>  
-__device__ void calc_derivs(T* derivs, const T* __restrict__ quadpts_arr, T* x_temp, bool* symmetry_exploited, 
-                                    int* cell_index_start, T* shape_fun_vals, T* mu, bool* is_valid, 
+__device__ void calc_derivs(T* derivs, const T* __restrict__ quadpts_arr, const T* __restrict__ x_temp, const bool* __restrict__ symmetry_exploited, 
+                                const int* __restrict__ cell_index_start, const T* __restrict__ shape_fun_vals, const T* __restrict__ mu, const bool* __restrict__ is_valid, 
                                 // optional parameters for SAW cases
                                 T saw_omega = 0, int* saw_m = nullptr, int* saw_n = nullptr, 
                                 T* saw_phihats = nullptr, int saw_nharmonics = 0){
@@ -612,28 +621,31 @@ __device__ void map_to_grid_boozer(T* interp_pt, T* x_temp, bool* symmetry_explo
 
     T x1 = x_temp[1*PARTICLES_PER_BLOCK + threadIdx.x];
     T x2 = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
-    T s = sqrt(x1*x1 + x2*x2);
-    T theta = atan2(x2, x1);
+    T s = hypot(x1, x2);
+    interp_pt[threadIdx.x] = s;
+
+    symmetry_exploited[threadIdx.x] = x2 < 0;
+    // T theta = atan2(x2, x1);
+
+    // we want to exploit periodicity in the B-field, but leave sin(theta) unchanged
+    // compute the following without fmod atan2 in [-pi, pi]
+    // T t = fmod(theta, T(2*M_PI));
+    // t += 2*M_PI*(t < 0);
+    T t = atan2(fabs(x2), x1);
+    interp_pt[PARTICLES_PER_BLOCK + threadIdx.x] = t;
+
+
     T z = x_temp[3*PARTICLES_PER_BLOCK + threadIdx.x]; // zeta
-
-    // we want to exploit periodicity in the B-field, but leave sine(theta) unchanged
-    T t = fmod(theta, T(2*M_PI));
-    t += 2*M_PI*(t < 0);
-
     // we can modify z because it's only used to access the B-field location
     T period = grid_ranges_d[9];
     z = fmod(z, period);
     z += period*(z < 0);
 
     // exploit stellarator symmetry
-    symmetry_exploited[threadIdx.x] = t > M_PI;
     if(symmetry_exploited[threadIdx.x]){
         z = period - z;
-        t = 2*M_PI - t;
 
     }
-    interp_pt[threadIdx.x] = s;
-    interp_pt[PARTICLES_PER_BLOCK + threadIdx.x] = t;
     interp_pt[2*PARTICLES_PER_BLOCK + threadIdx.x] = z;
 }
 
@@ -652,7 +664,8 @@ __device__ void map_to_grid(T* interp_pt, T* xyz, bool* symmetry_exploited){
 // build_state is part of the DP5 implementation
 template <typename T, RHS id, int deriv_id>
 __device__ void build_state(T* x_temp, bool* symmetry_exploited, int* cell_index_start,
-                            T* shape_fun_vals, T* state, T* derivs, T* t, T* dt, bool* is_valid){
+                            T* shape_fun_vals, const T* __restrict__ state, const T* __restrict__ derivs, 
+                            const T* __restrict__ t, const T* __restrict__ dt, const bool* __restrict__ is_valid){
 
     
     // store time
@@ -694,10 +707,8 @@ __device__ void build_state(T* x_temp, bool* symmetry_exploited, int* cell_index
         int coord_id = threadIdx.x / PARTICLES_PER_BLOCK;
 
         T value = interp_pt[threadIdx.x];
-        T grid_size = grid_ranges_d[coord_id*4 + 3];
+        T inv_grid_size = grid_ranges_d[coord_id*4 + 3];
         T min_bound = grid_ranges_d[coord_id*4 + 0];
-
-        T inv_grid_size = (T)1.0 / grid_size;
 
         T raw_offset = (value - min_bound) * inv_grid_size;
         int index = 3*((int) raw_offset / 3);
@@ -853,12 +864,12 @@ __global__ void setup_kernel(T* init_pos, const T* __restrict__ quadpts_arr, T* 
 }
 
 template<typename T>
-__device__ void check_has_left_cartesian(bool* has_left, T* state, T* derivs){
+__device__ void check_has_left_cartesian(bool* has_left, const T* __restrict__ state, const T* __restrict__ derivs){
     has_left[threadIdx.x] = derivs[(6*6 + 5)*PARTICLES_PER_BLOCK + threadIdx.x] < 0; // boundary dist fn at new location
 }
 
 template<typename T>
-__device__ void check_has_left_boozer(bool* has_left, T* state, T* derivs){
+__device__ void check_has_left_boozer(bool* has_left, const T* __restrict__ state, const T* __restrict__ derivs){
     T x1 = state[0*PARTICLES_PER_BLOCK + threadIdx.x];
     T x2 = state[1*PARTICLES_PER_BLOCK + threadIdx.x];
     T s = hypot(x1, x2);
@@ -871,7 +882,7 @@ __device__ void check_has_left_boozer(bool* has_left, T* state, T* derivs){
 // in cartesian coordinates, we check the signed distance function
 // in boozer coordinates we check for s >= 1
 template<typename T, CoordSys coord>
-__device__ void check_has_left(bool* has_left, T* state, T* derivs){
+__device__ void check_has_left(bool* has_left, const T* __restrict__ state, const T* __restrict__ derivs){
     if constexpr (coord == CoordSys::Cartesian){
         check_has_left_cartesian(has_left, state, derivs);
     } else if constexpr (coord == CoordSys::Boozer){
@@ -885,76 +896,74 @@ __device__ void check_has_left(bool* has_left, T* state, T* derivs){
 // this function estimates error, accepts/rejects the proposed step
 // and adjust the step size
 template<typename T, RHS id>
-__device__ void adjust_time(T* t, T* dt, T* state, T* derivs, T* x_temp, bool* has_left, T* dtmax){
-    if(has_left[threadIdx.x] || t[threadIdx.x] >= tmax_d){
-        return;
-    }
-    const T bhat1 = 71.0 / 57600.0, bhat3 = -71.0 / 16695.0, bhat4 = 71.0 / 1920.0, bhat5 = -17253.0 / 339200.0, bhat6 = 22.0 / 525.0, bhat7 = -1.0 / 40.0;
+__device__ void adjust_time(T* t, T* dt, T* state, const T* __restrict__ derivs, const T* __restrict__ x_temp, 
+                            bool* has_left, const T* __restrict__ dtmax, const bool* __restrict__ is_valid){
+    // identify a particle and state index
+    const int p = threadIdx.x % PARTICLES_PER_BLOCK;   // particle
+    const int state_id = threadIdx.x / PARTICLES_PER_BLOCK; // state variable
+
+    const bool active = is_valid[p] && !(has_left[p] || t[p] >= tmax_d);
+    const T dt_p = dt[p];
+    // const T bhat1 = 71.0 / 57600.0, bhat3 = -71.0 / 16695.0, bhat4 = 71.0 / 1920.0, bhat5 = -17253.0 / 339200.0, bhat6 = 22.0 / 525.0, bhat7 = -1.0 / 40.0;
+    
     // Compute  error
     // https://live.boost.org/doc/libs/1_82_0/libs/numeric/odeint/doc/html/boost_numeric_odeint/odeint_in_detail/steppers.html
     // resolve typo in boost docs: https://numerical.recipes/book.html
-    T max_err = 0.0;
-    T err_elt;
-    for(int i = 0; i < 4; i++) {
-        T state_i = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
-        T deriv_i = derivs[(6*0 + i)*PARTICLES_PER_BLOCK + threadIdx.x];
-        err_elt = dt[threadIdx.x]*(bhat1 * deriv_i
-                                 + bhat3 * derivs[(6*2 + i)*PARTICLES_PER_BLOCK + threadIdx.x] 
-                                 + bhat4 * derivs[(6*3 + i)*PARTICLES_PER_BLOCK + threadIdx.x] 
-                                 + bhat5 * derivs[(6*4 + i)*PARTICLES_PER_BLOCK + threadIdx.x] 
-                                 + bhat6 * derivs[(6*5 + i)*PARTICLES_PER_BLOCK + threadIdx.x] 
-                                 + bhat7 * derivs[(6*6 + i)*PARTICLES_PER_BLOCK + threadIdx.x]);
-        T atol_i = (rescale_abstol_var_d) && (i == 3) ?  atol_d * v_total_d : atol_d;
-        err_elt = fabs(err_elt) / (atol_i + rtol_d*(fabs(state_i) + dt[threadIdx.x]*fabs(deriv_i)));
-        max_err = max(max_err, err_elt);
+    T error_elt = 0.0;
+    if(active){
+        const T state_i = state[state_id*PARTICLES_PER_BLOCK + p];
+        const T deriv_i = derivs[(6*0 + state_id)*PARTICLES_PER_BLOCK + p];
+        error_elt = bhat_wgts[0]*deriv_i;
+        for(int j=2; j<7; ++j){
+            error_elt += bhat_wgts[j]*derivs[(6*j + state_id)*PARTICLES_PER_BLOCK + p];
+        }
+        error_elt *= dt_p;
+        const T atol_i = (rescale_abstol_var_d) && (state_id == 3) ?  atol_d * v_total_d : atol_d;
+        error_elt = fabs(error_elt) / (atol_i + rtol_d*(fabs(state_i) + dt_p*fabs(deriv_i)));
     }
 
+    // reduction to find the maximum error across all state variables for this particle
+    error_elt = max(error_elt, __shfl_down_sync(FULL_MASK, error_elt, 16));
+    error_elt = max(error_elt, __shfl_down_sync(FULL_MASK, error_elt, 8));
 
-
-    // Compute new step size
-    T dt_new = dt[threadIdx.x]*0.9;
-    T exponent = 0.0;
-    if(max_err > 1.0){
-        exponent = -1.0/3.0;
-    } 
-    if(max_err < 0.5) {
-        exponent = -1.0/5.0;
+    // thread i holds max value for particle i
+    const T max_err = __shfl_sync(FULL_MASK, error_elt, p); // each thread reads from thread p
+    const bool accept = active && (max_err <= 1.0);
+    if(accept){
+        state[state_id*PARTICLES_PER_BLOCK + p] = x_temp[(state_id+1)*PARTICLES_PER_BLOCK + p];
     }
-    dt_new *= pow(max_err, exponent);
-    dt_new = max(dt_new, T(0.2) * dt[threadIdx.x]);
-    dt_new = min(dt_new, T(5.0) * dt[threadIdx.x]);   
-
-    // if (threadIdx.x ==0){
-    //     printf("max_err: %.15e, dt_new: %.15e\n", max_err, dt_new);
-    // }
-
-    if(max_err <= 1.0) {
-        // if the error is moderate, don't use a new step size
-        if (0.5 < max_err){
-            dt_new = dt[threadIdx.x];
+    if(active && state_id == 0){ // now one thread per particle
+        T dt_new = dt_p*0.9;
+        T exponent = 0.0;
+        if(max_err > 1.0){
+            exponent = -1.0/3.0;
         }
-        // Accept the step
-        t[threadIdx.x] += dt[threadIdx.x];
-
-        dt[threadIdx.x] = dt_new;
-
-        for(int i = 0; i < 4; i++) {
-            state[i*PARTICLES_PER_BLOCK + threadIdx.x] = x_temp[(i+1)*PARTICLES_PER_BLOCK + threadIdx.x];
+        if(max_err < 0.5) {
+            exponent = -1.0/5.0;
         }
-        // check if particle has left the device
-        constexpr CoordSys coord = map_rhs_to_coord<id>();
-        check_has_left<T, coord>(has_left, state, derivs);
-    } else {
-        // Reject the step and try again with smaller dt
-        dt[threadIdx.x] = dt_new;
+        dt_new *= pow(max_err, exponent);
+        dt_new = max(dt_new, T(0.2) * dt_p);
+        dt_new = min(dt_new, T(5.0) * dt_p);
+
+        if(accept){
+            if(0.5 < max_err){
+                dt_new = dt_p;
+            }
+            t[p] += dt_p;
+        }
+        dt[p] = dt_new;
+    }
+    __syncthreads();
+    if(accept && state_id == 0){
+        check_has_left<T, map_rhs_to_coord<id>()>(has_left, state, derivs);
     }
 }
 
 // helper function for a single DP5 evaluation
 template<typename T, RHS id, int deriv_id, typename... Args>
 __device__ void dp5_one_step(T* x_temp, T* derivs, const T* __restrict__ quadpts_arr, int* cell_index_start,
-                            T* shape_fun_vals, T* t, T* dt,
-                            bool* symmetry_exploited, T* state, T* mu, bool* is_valid, Args... args){
+                            T* shape_fun_vals, const T* __restrict__ t, const T* __restrict__ dt,
+                            bool* symmetry_exploited, const T* __restrict__ state, const T* __restrict__ mu, const bool* __restrict__ is_valid, Args... args){
     // if the thread is responsible for a particle, compute the point at which the derivative will be computed
     build_state<T, id, deriv_id>(x_temp, symmetry_exploited, cell_index_start, shape_fun_vals, state, derivs, t, dt, is_valid);
     // ensure that all threads have updated x_temp before calculating derivatives, where a data race would occur
@@ -1036,9 +1045,8 @@ __global__ void  particle_trace_kernel(T* out, T* init_pos, const T* __restrict_
                             symmetry_exploited, state, block_mu, is_valid_arr, args...);
         dp5_one_step<T, id, 6>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, block_t, block_dt,
                             symmetry_exploited, state, block_mu, is_valid_arr, args...);
-        if(threadIdx.x < PARTICLES_PER_BLOCK && is_valid_arr[threadIdx.x]){
-            adjust_time<T, id>(block_t, block_dt, state, block_derivs, x_temp, has_left, block_dtmax);
-        }
+        adjust_time<T, id>(block_t, block_dt, state, block_derivs, x_temp, has_left, block_dtmax, is_valid_arr);
+        
 
         // if the particle has left, go get another one
         if(threadIdx.x < PARTICLES_PER_BLOCK && is_valid_arr[threadIdx.x] && \
@@ -1096,9 +1104,10 @@ vector<T> gpu_tracing(py::array_t<T> quad_pts, py::array_t<double> x1_range, py:
         x2_range_ext[i] = x2_range_arr[i];
         x3_range_ext[i] = x3_range_arr[i];
     }
-    x1_range_ext[3] = (x1_range_ext[1] - x1_range_ext[0]) / (x1_range_ext[2] - 1);
-    x2_range_ext[3] = (x2_range_ext[1] - x2_range_ext[0]) / (x2_range_ext[2] - 1);
-    x3_range_ext[3] = (x3_range_ext[1] - x3_range_ext[0]) / (x3_range_ext[2] - 1);
+    // precompute inverse grid sizes
+    x1_range_ext[3] = (x1_range_ext[2] - 1) / (x1_range_ext[1] - x1_range_ext[0]) ;
+    x2_range_ext[3] = (x2_range_ext[2] - 1) /(x2_range_ext[1] - x2_range_ext[0]) ;
+    x3_range_ext[3] = (x3_range_ext[2] - 1)/ (x3_range_ext[1] - x3_range_ext[0]) ;
 
     int n_x1 = (x1_range_ext[2]-1)/3;
     int n_x2 = (x2_range_ext[2]-1)/3;
@@ -1573,9 +1582,10 @@ py::array_t<T> test_gpu_interpolation(py::array_t<T> quad_pts, py::array_t<doubl
         x2_range_ext[i] = x2_range_arr[i];
         x3_range_ext[i] = x3_range_arr[i];
     }
-    x1_range_ext[3] = (x1_range_ext[1] - x1_range_ext[0]) / (x1_range_ext[2] - 1);
-    x2_range_ext[3] = (x2_range_ext[1] - x2_range_ext[0]) / (x2_range_ext[2] - 1);
-    x3_range_ext[3] = (x3_range_ext[1] - x3_range_ext[0]) / (x3_range_ext[2] - 1);
+    // precompute inverse grid sizes
+    x1_range_ext[3] = (x1_range_ext[2] - 1) / (x1_range_ext[1] - x1_range_ext[0]) ;
+    x2_range_ext[3] = (x2_range_ext[2] - 1) /(x2_range_ext[1] - x2_range_ext[0]) ;
+    x3_range_ext[3] = (x3_range_ext[2] - 1)/ (x3_range_ext[1] - x3_range_ext[0]) ;
 
     int n_x1 = (x1_range_ext[2]-1)/3;
     int n_x2 = (x2_range_ext[2]-1)/3;
@@ -1764,9 +1774,10 @@ py::array_t<T> test_gpu_derivatives(py::array_t<T> quad_pts, py::array_t<double>
         x2_range_ext[i] = x2_range_arr[i];
         x3_range_ext[i] = x3_range_arr[i];
     }
-    x1_range_ext[3] = (x1_range_ext[1] - x1_range_ext[0]) / (x1_range_ext[2] - 1);
-    x2_range_ext[3] = (x2_range_ext[1] - x2_range_ext[0]) / (x2_range_ext[2] - 1);
-    x3_range_ext[3] = (x3_range_ext[1] - x3_range_ext[0]) / (x3_range_ext[2] - 1);
+    // precompute inverse grid sizes
+    x1_range_ext[3] = (x1_range_ext[2] - 1) / (x1_range_ext[1] - x1_range_ext[0]) ;
+    x2_range_ext[3] = (x2_range_ext[2] - 1) /(x2_range_ext[1] - x2_range_ext[0]) ;
+    x3_range_ext[3] = (x3_range_ext[2] - 1)/ (x3_range_ext[1] - x3_range_ext[0]) ;
 
     int n_x1 = (x1_range_ext[2]-1)/3;
     int n_x2 = (x2_range_ext[2]-1)/3;
@@ -1987,9 +1998,7 @@ __global__ void test_gpu_timestep_kernel(double* out, double* init_pos, double* 
                             symmetry_exploited, state, block_mu, is_valid_arr, args...);
         dp5_one_step<double, id, 6>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, block_t, block_dt,
                             symmetry_exploited, state, block_mu, is_valid_arr, args...);
-        if(threadIdx.x < PARTICLES_PER_BLOCK && is_valid_arr[threadIdx.x] && block_t[threadIdx.x] == 0.0){
-            adjust_time<double, id>(block_t, block_dt, state, block_derivs, x_temp, has_left, block_dtmax);
-        }
+        adjust_time<double, id>(block_t, block_dt, state, block_derivs, x_temp, has_left, block_dtmax, is_valid_arr);
         // if the particle moved, write output and load the next particle that is needed
         if(threadIdx.x < PARTICLES_PER_BLOCK && is_valid_arr[threadIdx.x] && block_t[threadIdx.x] != 0.0){
             // write output for current particle
@@ -2055,9 +2064,10 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
         x2_range_ext[i] = x2_range_arr[i];
         x3_range_ext[i] = x3_range_arr[i];
     }
-    x1_range_ext[3] = (x1_range_ext[1] - x1_range_ext[0]) / (x1_range_ext[2] - 1);
-    x2_range_ext[3] = (x2_range_ext[1] - x2_range_ext[0]) / (x2_range_ext[2] - 1);
-    x3_range_ext[3] = (x3_range_ext[1] - x3_range_ext[0]) / (x3_range_ext[2] - 1);
+    // precompute inverse grid sizes
+    x1_range_ext[3] = (x1_range_ext[2] - 1) / (x1_range_ext[1] - x1_range_ext[0]) ;
+    x2_range_ext[3] = (x2_range_ext[2] - 1) /(x2_range_ext[1] - x2_range_ext[0]) ;
+    x3_range_ext[3] = (x3_range_ext[2] - 1)/ (x3_range_ext[1] - x3_range_ext[0]) ;
 
     int n_x1 = (x1_range_ext[2]-1)/3;
     int n_x2 = (x2_range_ext[2]-1)/3;
