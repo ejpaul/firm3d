@@ -110,7 +110,7 @@ This paper & ASCOT5 \texttt{mccc\_coefs.h} & Hirvijoki et al.\ \cite{hirvijoki20
 \hline
 $D_{\parallel}$   & \texttt{Dpara}  & $D_k/2$ \\
 $\nu_D$           & \texttt{nu}~$= 2D_\perp/v^2$ & $2D_\perp/v^2$ \\
-$Q$               & \texttt{Q}      & (friction term in $K$) \\
+$Q$               & \texttt{Q}      & (Einstein-relation drag in $K$) \\
 $K$               & \texttt{K}~$= Q + D_\parallel' + 2D_\parallel/v$ & $K$ (drift in Eq.~32) \\
 \hline
 \end{tabular}
@@ -185,7 +185,7 @@ The Chandrasekhar function \cite{chandrasekhar1943} is
 \end{equation}
 Its derivative satisfies the recurrence
 \begin{equation}
-  G'(x) = \frac{2}{\sqrt{\pi}}\,e^{-x^2} - \frac{G(x)}{x}.
+  G'(x) = \frac{2}{\sqrt{\pi}}\,e^{-x^2} - \frac{2\,G(x)}{x}.
 \end{equation}
 Key limiting behaviours:
 \begin{align*}
@@ -232,28 +232,98 @@ The $v$-derivative is required by the Milstein correction term
 
 \subsection{Deterministic Drag in $v$}
 
-The friction (drag) coefficient \cite{trubnikov1965,helander2002}
-(ASCOT5: \texttt{Q}) is
+The drag coefficient (ASCOT5: \texttt{mccc\_coefs\_Q} \cite{ascot5code})
+is fixed by the Einstein relation:
 \begin{equation}
-  Q^{(b)} = -\!\left(1 + \frac{m_a}{m_b}\right)\frac{\Gamma_b\,G(x)}{v^2}.
+  Q^{(b)} = -\frac{m_a\,v}{T_b}\,D_{\parallel}^{(b)}
+          = -\Gamma_b\,\frac{m_a\,G(x)}{T_b}.
+  \label{eq:Q}
 \end{equation}
-The total deterministic drift in speed, including the It\^o correction
-arising from the transformation of the Fokker--Planck operator from
-Cartesian velocity space to the speed coordinate $v$
-\cite{hirvijoki2013}, is
+The total deterministic drift in speed is
 \begin{equation}
   K^{(b)}
   = Q^{(b)}
     + \frac{\partial D_{\parallel}^{(b)}}{\partial v}
-    + \frac{2\,D_{\parallel}^{(b)}}{v}.
+    + \frac{2\,D_{\parallel}^{(b)}}{v}
     \label{eq:K}
 \end{equation}
-This is ASCOT5's \texttt{mccc\_coefs\_K} \cite{ascot5code} and the drift
-coefficient $K$ in Eq.~(32) of Hirvijoki et al.\ \cite{hirvijoki2013}.
-Note that $Q$ alone is the physical friction; the remaining two terms are
-the It\^o correction $\tfrac{1}{2}\partial_v g_v^2 = \partial_v D_\parallel$
-plus the geometric term $2D_\parallel/v$ from the Jacobian $v^2$ of
-spherical velocity-space coordinates.
+(ASCOT5's \texttt{mccc\_coefs\_K} \cite{ascot5code}; the drift coefficient
+$K$ of Eq.~(32) in Hirvijoki et al.\ \cite{hirvijoki2013}).
+
+\subsubsection*{It\^o transformation leading to Eq.~\eqref{eq:K}}
+
+Equation~\eqref{eq:K} can be obtained two independent ways, which
+cross-check each other.
+
+\paragraph{(i) It\^o's formula on $v = |\bm{v}|$.}
+In three-dimensional velocity space the collisional motion of the test
+particle is
+\begin{equation}
+  \dd\bm{v} = F_{\mathrm{dyn}}\,\hat{\bm{v}}\,\dd t
+            + \bm{\sigma}\cdot\dd\bm{W},
+  \qquad
+  \bm{\sigma}\bm{\sigma}^{\!\top}
+  = 2D_{\parallel}\,\hat{\bm{v}}\hat{\bm{v}}
+  + 2D_{\perp}\,(\mathsf{I}-\hat{\bm{v}}\hat{\bm{v}}),
+\end{equation}
+where $F_{\mathrm{dyn}}$ is the dynamical friction
+\cite{chandrasekhar1943,trubnikov1965,helander2002}.  The speed
+$v = |\bm{v}|$ is a nonlinear function of $\bm{v}$, so It\^o's formula
+applies with $\nabla_{\!\bm v}\,v = \hat{\bm{v}}$ and Hessian
+$\nabla_{\!\bm v}\nabla_{\!\bm v}\,v = (\mathsf{I}-\hat{\bm{v}}\hat{\bm{v}})/v$:
+\begin{equation}
+  \dd v = \Bigl(F_{\mathrm{dyn}} + \frac{2D_{\perp}}{v}\Bigr)\dd t
+        + \sqrt{2D_{\parallel}}\,\dd W_v.
+  \label{eq:ito_traj}
+\end{equation}
+The $2D_{\perp}/v$ drift is the Bessel-process effect: kicks transverse to
+$\bm{v}$ do not change $v$ at first order, but they lengthen the vector at
+second order, $\Delta v = |\bm{v}+\Delta\bm{v}_\perp| - v
+\approx |\Delta\bm{v}_\perp|^2/2v > 0$.
+
+\paragraph{(ii) Fokker--Planck matching (detailed balance).}
+The It\^o SDE $\dd v = K\,\dd t + \sqrt{2D_{\parallel}}\,\dd W_v$ evolves
+the speed density $P(v) \propto v^2 f(v)$ according to
+$\partial_t P = -\partial_v(KP) + \partial_v^2(D_{\parallel}P)$.
+Zero flux on the equilibrium
+$P_{\mathrm{eq}} \propto v^2\,e^{-m_a v^2/2T_b}$ requires
+$K P_{\mathrm{eq}} = \partial_v(D_{\parallel} P_{\mathrm{eq}})$, i.e.
+\begin{equation}
+  K = -\frac{m_a v}{T_b}\,D_{\parallel}
+    + \frac{\partial D_{\parallel}}{\partial v}
+    + \frac{2\,D_{\parallel}}{v},
+\end{equation}
+which is Eq.~\eqref{eq:K} with $Q$ as in Eq.~\eqref{eq:Q}.  Here
+$\partial_v D_{\parallel}$ is the multiplicative-noise (It\^o) drift that
+appears when the diffusion term is commuted into advective form, and
+$2D_{\parallel}/v$ comes from the Jacobian $v^2$ of spherical
+velocity-space coordinates.
+
+\paragraph{Consistency of (i) and (ii).}
+For Maxwellian field particles the dynamical friction obeys the identity
+\begin{equation}
+  F_{\mathrm{dyn}}^{(b)}
+  = -\Bigl(1+\frac{m_a}{m_b}\Bigr)\frac{2x^2\,G(x)\,\Gamma_b}{v^2}
+  = Q^{(b)} + \frac{\partial D_{\parallel}^{(b)}}{\partial v}
+    + \frac{2\,\bigl(D_{\parallel}^{(b)}-D_{\perp}^{(b)}\bigr)}{v},
+  \label{eq:fdyn}
+\end{equation}
+so that $F_{\mathrm{dyn}} + 2D_{\perp}/v
+= Q + \partial_v D_{\parallel} + 2D_{\parallel}/v = K$ exactly.
+($F_{\mathrm{dyn}}$ is ASCOT5's \texttt{mccc\_coefs\_F}, which is not used
+in the guiding-centre scheme.)  In the fast-particle limit $x \gg 1$ this
+identity encodes the classic cancellation
+\begin{equation*}
+  F_{\mathrm{dyn}} + \frac{2D_{\perp}}{v}
+  \;\longrightarrow\;
+  -\Bigl(1+\frac{m_a}{m_b}\Bigr)\frac{\Gamma_b}{v^2}
+  + \frac{\Gamma_b}{v^2}
+  = -\frac{m_a}{m_b}\,\frac{\Gamma_b}{v^2}:
+\end{equation*}
+most of the dynamical friction is compensated by transverse diffusion, and
+the net slowing-down rate is set by the mass ratio.  Note in particular
+that $Q$ is \emph{not} the dynamical friction --- it is the
+Einstein-relation drag $-(m_a v/T_b)D_{\parallel}$.
 
 \subsection{Summation over Species}
 
