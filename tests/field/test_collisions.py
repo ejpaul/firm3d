@@ -135,33 +135,35 @@ def _coll_trace(
 
 def _chandrasekhar_G(x):
     """G(x) = [erf(x) - (2x/√π)exp(-x²)] / (2x²)."""
-    if x < 1e-4:
-        return x * (2.0 / (3.0 * np.sqrt(np.pi))) * (1.0 - 2.0 * x**2 / 5.0)
+    if x == 0.0:
+        return 0.0
     return (scipy.special.erf(x) - (2.0 * x / np.sqrt(np.pi)) * np.exp(-(x**2))) / (
         2.0 * x**2
     )
 
 
 def _chandrasekhar_G_deriv(x):
-    """G'(x) = (2/√π) exp(-x²) - G(x)/x."""
-    if x < 1e-4:
-        return (2.0 / (3.0 * np.sqrt(np.pi))) * (1.0 - 6.0 * x**2 / 5.0)
-    return (2.0 / np.sqrt(np.pi)) * np.exp(-(x**2)) - _chandrasekhar_G(x) / x
+    """G'(x) = (2/√π) exp(-x²) - 2 G(x)/x."""
+    if x == 0.0:
+        return 2.0 / (3.0 * np.sqrt(np.pi))
+    return (2.0 / np.sqrt(np.pi)) * np.exp(-(x**2)) - 2.0 * _chandrasekhar_G(x) / x
+
+
+_HBAR = 1.054571817e-34  # J·s (reduced Planck)
 
 
 def _coulomb_log(v, m_a, q_a, m_b, q_b, T_b, lambda_D):
     """
-    ln Λ = ln(4πε₀ λ_D m_r v_eff² / |q_a q_b|), floor 2.
-    Mirrors compute_collision_coefficients() in collisions.h.
-    v_eff² = v² + v_th_b²  (handles slow EP against electrons).
+    ln Λ = ln(λ_D / b_min), b_min = max(b_cl, b_qm).
+    Mirrors compute_collision_coefficients() in collisions.h (ASCOT5
+    convention, no floor).
     """
     v_th_b = np.sqrt(2.0 * T_b / m_b)
     m_r = m_a * m_b / (m_a + m_b)
     v_eff_sq = v**2 + v_th_b**2
-    lnL = np.log(
-        4.0 * np.pi * VACUUM_PERMITTIVITY * lambda_D * m_r * v_eff_sq / abs(q_a * q_b)
-    )
-    return max(lnL, 2.0)
+    b_cl = abs(q_a * q_b) / (4.0 * np.pi * VACUUM_PERMITTIVITY * m_r * v_eff_sq)
+    b_qm = _HBAR / (2.0 * m_r * np.sqrt(v_eff_sq))
+    return np.log(lambda_D / max(b_cl, b_qm))
 
 
 def _debye_length(s, backgrounds):
@@ -203,7 +205,8 @@ def _analytical_K(v, s, m_a, q_a, backgrounds):
         )
         D_par = Gamma * G / v
         dD_par_dv = Gamma * (Gp / v_th - G / v) / v
-        Q = -(1.0 + m_a / m_b) * Gamma * G / v**2
+        # Einstein-relation drag (matches ASCOT5 mccc_coefs_Q)
+        Q = -Gamma * G * m_a / T_b
         K += Q + dD_par_dv + 2.0 * D_par / v
     return K
 
@@ -631,10 +634,9 @@ class TestCollisionCoefficients(unittest.TestCase):
         For fusion alphas in a 10 keV plasma, electron drag dominates over
         deuteron drag.
 
-        Physical basis: alphas are slower than the electron thermal speed
-        (x_e ≈ 0.22, G large) but much faster than the ion thermal speed
-        (x_D ≈ 13, G ≈ 1/(2x²) ≈ 0.003).  Even though Γ_e ∝ 1/m_a² cancels,
-        the extra m_a/m_e factor in the friction term Q makes |K_e| ≫ |K_D|.
+        Physical basis: the alpha birth energy (3.5 MeV) is far above the
+        critical energy E_c ≈ 0.4 MeV where electron and ion drag are equal,
+        so electron drag dominates by roughly (E/E_c)^{3/2} ≈ 20-30.
         """
         electron_bg = ThermalBackground(
             n_profile=lambda s: 1e20,
@@ -644,12 +646,9 @@ class TestCollisionCoefficients(unittest.TestCase):
         )
         K_e = _analytical_K(self._v0, self._s, self._m, self._q, [electron_bg])
         K_D = _analytical_K(self._v0, self._s, self._m, self._q, [_hot_background()])
-        # Both K_e and K_D are negative; |K_e| >> |K_D| means K_e/K_D > 100
-        self.assertGreater(
-            abs(K_e) / abs(K_D),
-            100,
-            f"|K_e|/|K_D| = {abs(K_e / K_D):.1f}, expected >> 100",
-        )
+        ratio = abs(K_e) / abs(K_D)
+        self.assertGreater(ratio, 10, f"|K_e|/|K_D| = {ratio:.1f}, expected ≈ 20")
+        self.assertLess(ratio, 50, f"|K_e|/|K_D| = {ratio:.1f}, expected ≈ 20")
 
     # ------------------------------------------------------------------
     # Pitch-angle scattering rate ν_D

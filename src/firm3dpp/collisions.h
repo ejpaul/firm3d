@@ -17,17 +17,17 @@ static constexpr double COLL_HBAR        = 1.054571817e-34;    // J·s (reduced 
 
 // --------------------------------------------------------------------------
 // Chandrasekhar G function: G(x) = [erf(x) - (2x/sqrt(pi)) exp(-x^2)] / (2x^2)
-// Satisfies G'(x) = (2/sqrt(pi)) exp(-x^2) - G(x)/x
+// Satisfies G'(x) = (2/sqrt(pi)) exp(-x^2) - 2 G(x)/x
 // --------------------------------------------------------------------------
 inline double chandrasekhar_G(double x) {
     if (x == 0.0) return 0.0;
     return (std::erf(x) - (2.0 * x / COLL_SQRT_PI) * std::exp(-x * x)) / (2.0 * x * x);
 }
 
-// dG/dx = (2/sqrt(pi)) exp(-x^2) - G(x)/x
+// dG/dx = (2/sqrt(pi)) exp(-x^2) - 2 G(x)/x
 inline double chandrasekhar_G_deriv(double x) {
     if (x == 0.0) return 2.0 / (3.0 * COLL_SQRT_PI);
-    return (2.0 / COLL_SQRT_PI) * std::exp(-x * x) - chandrasekhar_G(x) / x;
+    return (2.0 / COLL_SQRT_PI) * std::exp(-x * x) - 2.0 * chandrasekhar_G(x) / x;
 }
 
 // --------------------------------------------------------------------------
@@ -153,8 +153,13 @@ inline CollisionCoefficients compute_collision_coefficients(
         // Pitch-angle scattering frequency: nu_D = Gamma*(erf(x) - G(x)) / v^3
         double nu_D_b = Gamma * (erf_x - G) / (v * v * v);
 
-        // Drag (friction): Q = -(1 + m_a/m_b) * Gamma * G / v^2
-        double Q_b = -(1.0 + m_a / m_b) * Gamma * G / (v * v);
+        // Drag (Einstein relation): Q = -(m_a v / T_b) * D_par
+        //                             = -Gamma * G * m_a / T_b.
+        // Matches ASCOT5 mccc_coefs_Q and guarantees relaxation to the
+        // background Maxwellian.  This is not the full dynamical friction
+        // F = -(1 + m_a/m_b) * 2 x^2 G(x) * Gamma / v^2; the two are related
+        // by F = Q + dD_par/dv + 2*(D_par - D_perp)/v.
+        double Q_b = -Gamma * G * m_a / T_b;
 
         // Total deterministic drift in v: K = Q + d(D_par)/dv + 2*D_par/v
         double K_b = Q_b + dD_par_dv_b + 2.0 * D_par_b / v;
