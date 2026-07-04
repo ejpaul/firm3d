@@ -195,7 +195,11 @@ inline void milstein_collision_step(
     v  += g_v  * dW_v  + milstein_v;
     xi += g_xi * dW_xi + milstein_xi;
 
-    // Enforce physical bounds
-    v  = std::max(v,  0.0);
+    // Enforce physical bounds.  The speed reflects at v = 0: the exact
+    // process never reaches the origin (the 2 D_par / v drift repels it),
+    // but a discrete step can overshoot.  Clamping to exactly zero would
+    // kill the particle -- the collision coefficients are skipped at v = 0,
+    // every orbit term vanishes, and xi = v_par / v is undefined.
+    v  = std::fabs(v);
     xi = std::max(-1.0, std::min(1.0, xi));
 }

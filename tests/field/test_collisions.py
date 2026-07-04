@@ -35,6 +35,7 @@ import unittest
 import numpy as np
 import pytest
 import scipy.special
+import scipy.stats
 
 from firm3d.field.boozermagneticfield import BoozerAnalytic
 from firm3d.field.collisions import (
@@ -706,6 +707,120 @@ class TestCollisionCoefficients(unittest.TestCase):
             delta=0.02,
             msg=f"ν_D deviates from Γ/v³ limit at x={x:.1f}",
         )
+
+
+# ---------------------------------------------------------------------------
+# End-to-end thermalization through the production tracer (fast, local)
+# ---------------------------------------------------------------------------
+
+
+class TestMaxwellianEquilibration(unittest.TestCase):
+    """
+    End-to-end thermalization through trace_particles_boozer_with_collisions
+    with a BoozerAnalytic field -- the full production path (DP stepper +
+    Milstein noise + orbit dynamics), runnable locally in a few seconds.
+
+    Skew: all collision rates scale linearly with background density, so
+    n_b = 1e21 m^-3 makes the collisional relaxation time of a thermal
+    proton in a 1 keV proton background ~35 us, while its orbital transit
+    time (~14 us at v_th) remains shorter -- the adaptive DP stepper still
+    resolves the orbits and the Milstein noise stays accurate (nu h << 1).
+
+    DP_hmin = 1e-8 s floors the step when a particle diffuses deep below
+    the thermal speed, where nu_D ~ 1/v^3 would otherwise grind the
+    adaptive stepper to a halt.  Longer runs (>~ 4 tau) accumulate a small
+    low-energy bias from the under-resolved subthermal region, so the test
+    integrates exactly 4 tau, where the ensemble has already reached the
+    Maxwellian (verified against tighter-tolerance runs).
+
+    This is the direct end-to-end regression test for the Einstein-relation
+    drag Q = -(m_a v / T_b) D_par: with a wrong drag the stationary energy
+    is wrong by O(1) (the pre-fix drag equilibrated to <E> = 3.7 T_b).
+    """
+
+    _T_B = 1e3 * ONE_EV
+    _N_B = 1e21  # m^-3
+    _TAU = 3.5e-5  # collisional relaxation time at (_N_B, _T_B)
+    _N_PART = 40
+
+    def _equilibrate(self, E0_over_T, seed=42):
+        """Trace N_PART protons from a monoenergetic start; return final v."""
+        bg = ThermalBackground(
+            n_profile=lambda s: self._N_B,
+            T_profile=lambda s: self._T_B,
+            mass=PROTON_MASS,
+            charge=ELEMENTARY_CHARGE,
+        )
+        E0 = E0_over_T * self._T_B
+        v0 = np.sqrt(2 * E0 / PROTON_MASS)
+        rng = np.random.default_rng(seed)
+        stz = np.column_stack(
+            [
+                np.full(self._N_PART, 0.3),
+                rng.uniform(0, 2 * np.pi, self._N_PART),
+                rng.uniform(0, 2 * np.pi, self._N_PART),
+            ]
+        )
+        vpar = 0.7 * v0 * np.ones(self._N_PART)
+        tmax = 4 * self._TAU
+        res_tys, _ = trace_particles_boozer_with_collisions(
+            _field(),
+            stz,
+            vpar,
+            backgrounds=[bg],
+            tmax=tmax,
+            mass=PROTON_MASS,
+            charge=ELEMENTARY_CHARGE,
+            Ekin=E0,
+            tol=1e-8,
+            dt_save=tmax,
+            forget_exact_path=True,
+            DP_hmin=1e-8,
+            rng_seed=seed,
+        )
+        v_end = np.array([ty[-1, 5] for ty in res_tys])
+        vpar_end = np.array([ty[-1, 4] for ty in res_tys])
+        t_end = np.array([ty[-1, 0] for ty in res_tys])
+
+        # Every particle must reach tmax with a finite, nonzero speed:
+        # catches early loss, frozen v = 0 particles, and NaN states.
+        self.assertTrue(np.all(t_end >= 0.999 * tmax), "particles lost early")
+        self.assertTrue(np.all(np.isfinite(v_end)), "non-finite final v")
+        self.assertTrue(np.all(np.isfinite(vpar_end)), "non-finite final v_par")
+        self.assertGreater(v_end.min(), 0.0, "dead particle at v = 0")
+        return v_end, vpar_end
+
+    def _check_maxwellian(self, v_end, lo, hi):
+        E_mean = 0.5 * PROTON_MASS * np.mean(v_end**2) / self._T_B
+        self.assertGreater(
+            E_mean, lo, f"<E>/T_b = {E_mean:.2f}, expected ~1.5 at equilibrium"
+        )
+        self.assertLess(
+            E_mean, hi, f"<E>/T_b = {E_mean:.2f}, expected ~1.5 at equilibrium"
+        )
+        p = scipy.stats.kstest(
+            v_end,
+            scipy.stats.maxwell(scale=np.sqrt(self._T_B / PROTON_MASS)).cdf,
+        ).pvalue
+        self.assertGreater(p, 0.005, f"KS vs Maxwell speed law: p = {p:.2e}")
+
+    def test_equilibration_from_hot_start(self):
+        """Monoenergetic protons at E0 = 4.5 T_b cool to the Maxwellian."""
+        v_end, _ = self._equilibrate(E0_over_T=4.5)
+        self._check_maxwellian(v_end, lo=1.0, hi=2.3)
+
+    def test_equilibration_from_cold_start(self):
+        """Monoenergetic protons at E0 = 0.45 T_b heat to the Maxwellian."""
+        v_end, _ = self._equilibrate(E0_over_T=0.45)
+        self._check_maxwellian(v_end, lo=0.9, hi=2.1)
+
+    def test_pitch_isotropization(self):
+        """Initial xi = 0.7 must isotropize: <xi> ~ 0, <xi^2> ~ 1/3."""
+        v_end, vpar_end = self._equilibrate(E0_over_T=1.5)
+        xi = vpar_end / v_end
+        self.assertLess(abs(np.mean(xi)), 0.3, f"<xi> = {np.mean(xi):.3f}")
+        self.assertGreater(np.mean(xi**2), 0.18, f"<xi^2> = {np.mean(xi**2):.3f}")
+        self.assertLess(np.mean(xi**2), 0.50, f"<xi^2> = {np.mean(xi**2):.3f}")
 
 
 # ---------------------------------------------------------------------------

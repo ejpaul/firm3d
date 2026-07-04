@@ -478,11 +478,13 @@ solve(
 
     std::unique_ptr<ODESolver> solver;
     if (ode_solver == "dormand_prince") {
+        // DP_hmin is given in physical seconds; the solver operates in
+        // normalized time tau = t / tnorm.
         solver = create_dormand_prince_solver(
             abstol,
             reltol,
             dtau_max,
-            DP_hmin
+            DP_hmin / tnorm
         );
     } else if (ode_solver == "boost") {
         solver = create_dopri_boost_solver(
@@ -1050,7 +1052,10 @@ solve_sde(
     if (ode_solver == "boost") {
         solver = create_dopri_boost_solver(abstol, reltol, dtau_max);
     } else {
-        solver = create_dormand_prince_solver(abstol, reltol, dtau_max, DP_hmin);
+        // DP_hmin is given in physical seconds; the solver operates in
+        // normalized time tau = t / tnorm.
+        solver = create_dormand_prince_solver(abstol, reltol, dtau_max,
+                                              DP_hmin / tnorm);
     }
 
     // Helper: build a 6-element save record [t, s, theta, zeta, v_par, v]
@@ -1068,6 +1073,10 @@ solve_sde(
 
     double tau = 0.0;
     bool stop = false;
+    // Capture the state at tau_max before any Milstein re-initialization destroys
+    // the dense-output interval.  Set when the step crosses tau_max.
+    vector<double> y_at_tmax(state_size);
+    bool y_at_tmax_saved = false;
 
     do {
         auto step = solver->do_step(rhs);
@@ -1076,14 +1085,46 @@ solve_sde(
         double h_taken     = tau_current - tau_last;  // normalised step
         tau = tau_current;
 
-        // ---- Milstein noise applied to (v, xi) ----
-        // Evaluate collision coefficients at post-step state
+        // ---- Save path (BEFORE Milstein re-init, while dense output is valid) ----
+        {
+            double tau_save_last = (std::floor(tau_last / dtau_save) + 1) * dtau_save;
+            vector<double> y_save(state_size), sv_save(state_size);
+            for (double tau_save = tau_save_last;
+                 tau_save <= std::min(tau_current, tau_max);
+                 tau_save += dtau_save) {
+                if (tau_save != 0.0) {
+                    solver->calc_state(tau_save, y_save);
+                    if (!forget_exact_path) {
+                        y_to_stzv_xi(y_save, sv_save, axis, vnorm);
+                        res.push_back(make_record(tau_save * tnorm, sv_save));
+                    }
+                }
+            }
+            // When this step crosses tau_max, capture the interpolated endpoint
+            // before the Milstein re-init moves t_old_ past tau_max.
+            if (tau_current >= tau_max && !y_at_tmax_saved) {
+                solver->calc_state(tau_max, y_at_tmax);
+                y_at_tmax_saved = true;
+            }
+        }
+
+        // ---- Milstein noise applied to (v, xi) at tau_current ----
         {
             vector<double> y_now = solver->current_state();
             y_to_stzv_xi(y_now, stzv_xi, axis, vnorm);
             double v_now  = stzv_xi[3];
             double xi_now = stzv_xi[4];
             double s_now  = stzv_xi[0];
+
+            // A forced-minimum step (DP_hmin) can integrate v through zero;
+            // reflect through the origin (v -> -v reverses the direction
+            // along the field line, so xi -> -xi).
+            if (v_now < 0.0) {
+                v_now  = -v_now;
+                xi_now = -xi_now;
+                stzv_xi[3] = v_now;
+                stzv_xi[4] = xi_now;
+            }
 
             if (!backgrounds.empty() && v_now > 0.0) {
                 auto coef = compute_collision_coefficients(v_now, s_now, m_a, q_a, backgrounds);
@@ -1092,29 +1133,22 @@ solve_sde(
                 double dW_v  = normal_dist(rng) * sqrt_h;
                 double dW_xi = normal_dist(rng) * sqrt_h;
                 milstein_collision_step(v_now, xi_now, coef, h_phys, dW_v, dW_xi);
-                // Write updated v and xi back into the solver state
                 stzv_xi[3] = v_now;
                 stzv_xi[4] = xi_now;
                 stzv_xi_to_y(stzv_xi, y_now, axis, vnorm);
-                // Force solver's internal state to the post-noise state.
-                // DormandPrinceSolver and DopriBoostSolver both expose current_state_
-                // through current_state(); we update via re-initializing for next step.
-                // Since we only need the updated state for the *next* step's k1 (FSAL),
-                // we re-initialize the solver at the current time with the noisy state.
+                // Re-initialize so the next step's FSAL k1 uses the post-noise state.
                 solver->initialize(y_now, tau_current, solver->get_hnext(), rhs);
             }
         }
 
-        // ---- Check stopping criteria ----
-        // Re-read state (may have been updated by noise step)
+        // ---- Check stopping criteria (post-noise state) ----
         {
-            vector<double> y_check(state_size);
-            solver->calc_state(tau_current, y_check);
+            vector<double> y_check = solver->current_state();
             y_to_stzv_xi(y_check, stzv_xi, axis, vnorm);
-            double t_current  = tau_current * tnorm;
-            double s_current  = stzv_xi[0];
-            double th_current = stzv_xi[1];
-            double z_current  = stzv_xi[2];
+            double t_current    = tau_current * tnorm;
+            double s_current    = stzv_xi[0];
+            double th_current   = stzv_xi[1];
+            double z_current    = stzv_xi[2];
             double vpar_current = stzv_xi[3] * stzv_xi[4];  // v * xi
 
             for (int i = 0; i < (int)stopping_criteria.size(); ++i) {
@@ -1132,30 +1166,21 @@ solve_sde(
             }
         }
 
-        // ---- Save path ----
-        if (!forget_exact_path && !stop) {
-            double tau_save_last = (std::floor(tau_last / dtau_save) + 1) * dtau_save;
-            vector<double> y_save(state_size), sv_save(state_size);
-            for (double tau_save = tau_save_last;
-                 tau_save <= std::min(tau_current, tau_max);
-                 tau_save += dtau_save) {
-                if (tau_save != 0.0) {
-                    solver->calc_state(tau_save, y_save);
-                    y_to_stzv_xi(y_save, sv_save, axis, vnorm);
-                    res.push_back(make_record(tau_save * tnorm, sv_save));
-                }
-            }
-        }
-
     } while (tau < tau_max && !stop);
 
     // Save final state
     if (stop) tau_max = tau;
     double t_end = tau_max * tnorm;
     if (t_end - res.back()[0] > 1e-15) {
-        vector<double> y_fin(state_size), sv_fin(state_size);
-        solver->calc_state(tau_max, y_fin);
-        y_to_stzv_xi(y_fin, sv_fin, axis, vnorm);
+        vector<double> sv_fin(state_size);
+        if (y_at_tmax_saved) {
+            // Use the state captured before Milstein re-init (accurate interpolation).
+            y_to_stzv_xi(y_at_tmax, sv_fin, axis, vnorm);
+        } else {
+            // tau_max == tau_current (stop case): current_state() is exact.
+            vector<double> y_fin = solver->current_state();
+            y_to_stzv_xi(y_fin, sv_fin, axis, vnorm);
+        }
         res.push_back(make_record(t_end, sv_fin));
     }
 

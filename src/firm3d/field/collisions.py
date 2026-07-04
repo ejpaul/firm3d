@@ -156,7 +156,11 @@ def trace_particles_boozer_with_collisions(
             of each particle.
         axis: Coordinate singularity handling (0, 1, or 2; default 2).
         ode_solver: ``"dormand_prince"`` (recommended) or ``"boost"``.
-        DP_hmin: Minimum step size for the Dormand-Prince solver.
+        DP_hmin: Minimum step size for the Dormand-Prince solver, in
+            seconds.  When the adaptive step falls below this value the
+            step is accepted anyway.  Prevents the solver from grinding
+            when a particle diffuses deep below the background thermal
+            speed, where the pitch-scattering rate diverges as 1/v^3.
         rng_seed: Seed for the per-particle Wiener process.  Each particle
             uses ``rng_seed + particle_index`` so that MPI runs are
             reproducible.
