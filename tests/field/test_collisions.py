@@ -43,6 +43,7 @@ from firm3d.field.collisions import (
     trace_particles_boozer_with_collisions,
 )
 from firm3d.field.tracing import (
+    MaxToroidalFluxStoppingCriterion,
     trace_particles_boozer,
 )
 from firm3d.util.constants import (
@@ -728,11 +729,18 @@ class TestMaxwellianEquilibration(unittest.TestCase):
 
     The reflecting thermal-cutoff speed boundary (ASCOT5's MCCC_CUTOFF)
     keeps particles out of the v -> 0 region where the collision
-    coefficients diverge.  DP_hmin = 1e-8 s is still required: pitch
-    scattering lets particles radially diffuse toward the magnetic axis,
-    where the 1/sqrt(s) geometry terms of BoozerAnalytic otherwise stall
-    the adaptive stepper.  The test integrates 4 tau, where the ensemble
-    is already Maxwellian, to keep the runtime at a few seconds.
+    coefficients diverge.
+
+    The field differs from _field() used elsewhere: collisional v_par
+    kicks displace the canonical angular momentum, giving radial steps
+    ~ R0/(iota psi0) in normalized flux, and in the small-psi0 _field()
+    configuration thermal protons random-walk out through s = 1 within a
+    few relaxation times.  A fatter, higher-iota configuration (psi0 = 2,
+    iota0 = 0.8, aspect ratio 4) keeps all particles confined over the
+    test duration.  MaxToroidalFluxStoppingCriterion(1.0) guards the
+    s <= 1 domain: without it, escaped particles are silently integrated
+    in the unphysical analytic continuation of the near-axis field until
+    the adaptive stepper grinds to a halt chasing the runaway trajectory.
 
     This is the direct end-to-end regression test for the Einstein-relation
     drag Q = -(m_a v / T_b) D_par: with a wrong drag the stationary energy
@@ -743,6 +751,11 @@ class TestMaxwellianEquilibration(unittest.TestCase):
     _N_B = 1e21  # m^-3
     _TAU = 3.5e-5  # collisional relaxation time at (_N_B, _T_B)
     _N_PART = 40
+
+    @staticmethod
+    def _confining_field():
+        """Near-axis field with slow collisional radial transport."""
+        return BoozerAnalytic(0.25, 5.0, 0, 40.0, 2.0, 0.8)
 
     def _equilibrate(self, E0_over_T, seed=42):
         """Trace N_PART protons from a monoenergetic start; return final v."""
@@ -763,9 +776,9 @@ class TestMaxwellianEquilibration(unittest.TestCase):
             ]
         )
         vpar = 0.7 * v0 * np.ones(self._N_PART)
-        tmax = 4 * self._TAU
+        tmax = 8 * self._TAU
         res_tys, _ = trace_particles_boozer_with_collisions(
-            _field(),
+            self._confining_field(),
             stz,
             vpar,
             backgrounds=[bg],
@@ -776,15 +789,15 @@ class TestMaxwellianEquilibration(unittest.TestCase):
             tol=1e-8,
             dt_save=tmax,
             forget_exact_path=True,
-            DP_hmin=1e-8,
             rng_seed=seed,
+            stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
         )
         v_end = np.array([ty[-1, 5] for ty in res_tys])
         vpar_end = np.array([ty[-1, 4] for ty in res_tys])
         t_end = np.array([ty[-1, 0] for ty in res_tys])
 
-        # Every particle must reach tmax with a finite, nonzero speed:
-        # catches early loss, frozen v = 0 particles, and NaN states.
+        # Every particle must stay confined to tmax with a finite, nonzero
+        # speed: catches losses, frozen v = 0 particles, and NaN states.
         self.assertTrue(np.all(t_end >= 0.999 * tmax), "particles lost early")
         self.assertTrue(np.all(np.isfinite(v_end)), "non-finite final v")
         self.assertTrue(np.all(np.isfinite(vpar_end)), "non-finite final v_par")
