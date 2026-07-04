@@ -393,7 +393,19 @@ In terms of the coefficient structs, the Milstein correction for $\xi$ simplifie
   \delta\xi_{\mathrm{Milstein}}
   = -\half\,\xi\,\nu_D\,\bigl(\Delta W_\xi^2 - h\bigr).
 \end{equation}
-Physical bounds are enforced after each step: $v\geq 0$ and $\xi\in[-1,1]$.
+Boundary conditions follow ASCOT5 (\texttt{mccc\_gc\_milstein.c},
+\cite{ascot5code}).  The speed reflects off a thermal cutoff,
+\begin{equation}
+  v < v_{\mathrm{cut}} \;\Rightarrow\; v \leftarrow 2\,v_{\mathrm{cut}} - v,
+  \qquad
+  v_{\mathrm{cut}} = 0.1\,\sqrt{T_{\min}/m_a},
+\end{equation}
+where $T_{\min}$ is the coldest active background species (ASCOT5's
+\texttt{MCCC\_CUTOFF} uses its first background species), so that the
+collision coefficients, which diverge as $v\to0$, are never evaluated deep
+below the thermal speed.  The pitch mirrors at the boundary:
+$|\xi| > 1 \Rightarrow \xi \leftarrow \mathrm{sign}(\xi)\,(2 - |\xi|)$;
+a hard clamp would pile up probability at exactly $\xi = \pm 1$.
 
 %-----------------------------------------------------------------------
 \section{Adaptive Integration Strategy}

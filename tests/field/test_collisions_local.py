@@ -61,7 +61,6 @@ def _characteristic_rate():
 NU_CHAR = _characteristic_rate()
 DT = 1e-3 / NU_CHAR
 N_RELAX = 8000  # 8 relaxation times at DT
-V_FLOOR = 0.05 * V_TH
 
 
 def _maxwell_dist():
@@ -83,7 +82,6 @@ class TestMaxwellianRelaxation(unittest.TestCase):
             DT,
             N_RELAX,
             rng,
-            v_floor=V_FLOOR,
         )
         E_mean = 0.5 * M_A * np.mean(v**2) / T_B
         self.assertAlmostEqual(
@@ -118,7 +116,7 @@ class TestMaxwellianRelaxation(unittest.TestCase):
         v0 = _maxwell_dist().rvs(size=N_PART, random_state=42)
         xi0 = rng.uniform(-1.0, 1.0, N_PART)
         v, _ = evolve_velocity_ensemble(
-            v0, xi0, M_A, Q_A, SPECIES, DT, N_RELAX // 2, rng, v_floor=V_FLOOR
+            v0, xi0, M_A, Q_A, SPECIES, DT, N_RELAX // 2, rng
         )
         E_mean = 0.5 * M_A * np.mean(v**2) / T_B
         self.assertAlmostEqual(

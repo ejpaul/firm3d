@@ -92,24 +92,33 @@ def collision_coefficients(v, m_a, q_a, species):
     return K, D_par, dD_par, nu_D
 
 
-def evolve_velocity_ensemble(v, xi, m_a, q_a, species, dt, nsteps, rng, v_floor=0.0):
+def speed_cutoff(m_a, species):
+    """
+    Reflecting speed boundary, ASCOT5 style (MCCC_CUTOFF = 0.1 in mccc.h):
+    0.1 * sqrt(T_min / m_a) with T_min the coldest active species.
+    Mirrors compute_collision_coefficients() in collisions.h.
+    """
+    active = [T for (_, _, n, T) in species if n > 0 and T > 0]
+    return 0.1 * np.sqrt(min(active) / m_a) if active else 0.0
+
+
+def evolve_velocity_ensemble(v, xi, m_a, q_a, species, dt, nsteps, rng):
     """
     Velocity-space-only integration of the collisional SDE for an ensemble:
     Euler drift + Milstein noise per step for (v, xi), mirroring the
     operator splitting in trace_particles_boozer_with_collisions (with the
     orbital drifts switched off).
 
-    ``v_floor`` is a reflecting boundary in speed.  The exact process never
-    reaches v = 0 (the 2 D_par / v Bessel drift repels it), but with a fixed
-    time step the singular drift overshoots when a particle diffuses close
-    to the origin.  Production tracing avoids this via the adaptive
-    Dormand-Prince stepper; here a floor of ~0.05 v_th (equilibrium weight
-    below it ~1e-4) keeps the fixed-step scheme well behaved.
+    Boundary conditions follow ASCOT5 (mccc_gc_milstein.c): the speed
+    reflects off the thermal cutoff speed_cutoff(), which keeps the
+    fixed-step scheme away from v -> 0 where the collision coefficients
+    diverge; the pitch mirrors at |xi| = 1.
 
     Returns the final (v, xi) arrays.
     """
     v = np.array(v, dtype=float, copy=True)
     xi = np.array(xi, dtype=float, copy=True)
+    v_cut = speed_cutoff(m_a, species)
     sqdt = np.sqrt(dt)
     for _ in range(nsteps):
         K, D_par, dD_par, nu_D = collision_coefficients(v, m_a, q_a, species)
@@ -122,6 +131,7 @@ def evolve_velocity_ensemble(v, xi, m_a, q_a, species, dt, nsteps, rng, v_floor=
             + np.sqrt(np.maximum(nu_D * (1.0 - xi**2), 0.0)) * dW_xi
             - 0.5 * xi * nu_D * (dW_xi**2 - dt)
         )
-        v = v_floor + np.abs(v - v_floor)
+        v = np.where(v < v_cut, 2.0 * v_cut - v, v)
+        xi = np.where(np.abs(xi) > 1.0, np.sign(xi) * (2.0 - np.abs(xi)), xi)
         xi = np.clip(xi, -1.0, 1.0)
     return v, xi

@@ -726,12 +726,13 @@ class TestMaxwellianEquilibration(unittest.TestCase):
     time (~14 us at v_th) remains shorter -- the adaptive DP stepper still
     resolves the orbits and the Milstein noise stays accurate (nu h << 1).
 
-    DP_hmin = 1e-8 s floors the step when a particle diffuses deep below
-    the thermal speed, where nu_D ~ 1/v^3 would otherwise grind the
-    adaptive stepper to a halt.  Longer runs (>~ 4 tau) accumulate a small
-    low-energy bias from the under-resolved subthermal region, so the test
-    integrates exactly 4 tau, where the ensemble has already reached the
-    Maxwellian (verified against tighter-tolerance runs).
+    The reflecting thermal-cutoff speed boundary (ASCOT5's MCCC_CUTOFF)
+    keeps particles out of the v -> 0 region where the collision
+    coefficients diverge.  DP_hmin = 1e-8 s is still required: pitch
+    scattering lets particles radially diffuse toward the magnetic axis,
+    where the 1/sqrt(s) geometry terms of BoozerAnalytic otherwise stall
+    the adaptive stepper.  The test integrates 4 tau, where the ensemble
+    is already Maxwellian, to keep the runtime at a few seconds.
 
     This is the direct end-to-end regression test for the Einstein-relation
     drag Q = -(m_a v / T_b) D_par: with a wrong drag the stationary energy

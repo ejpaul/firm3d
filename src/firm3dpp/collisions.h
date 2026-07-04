@@ -3,6 +3,7 @@
 #include <vector>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <stdexcept>
 #include <algorithm>
 #include <functional>
@@ -14,6 +15,11 @@ static constexpr double COLL_PI          = 3.14159265358979323846;
 static constexpr double COLL_EPSILON0    = 8.8541878188e-12;   // F/m
 static constexpr double COLL_SQRT_PI     = 1.7724538509055159; // sqrt(pi)
 static constexpr double COLL_HBAR        = 1.054571817e-34;    // J·s (reduced Planck)
+
+// Reflecting speed boundary as a fraction of sqrt(T_b / m_a), following
+// ASCOT5 (MCCC_CUTOFF in mccc.h): "if the guiding center energy goes below
+// this, it is mirrored to prevent collision coefficients from diverging."
+static constexpr double COLL_CUTOFF      = 0.1;
 
 // --------------------------------------------------------------------------
 // Chandrasekhar G function: G(x) = [erf(x) - (2x/sqrt(pi)) exp(-x^2)] / (2x^2)
@@ -75,6 +81,7 @@ struct CollisionCoefficients {
     double dD_par_dv;   // m/s^3
     double nu_D;        // s^-1
     double K;           // m/s^2  (total deterministic drift in v)
+    double v_cutoff;    // m/s   (reflecting speed boundary, ASCOT5 style)
 };
 
 inline CollisionCoefficients compute_collision_coefficients(
@@ -84,17 +91,26 @@ inline CollisionCoefficients compute_collision_coefficients(
     double q_a,                   // EP charge [C]
     const vector<ThermalBackground>& backgrounds)
 {
-    CollisionCoefficients c = {0.0, 0.0, 0.0, 0.0};
+    CollisionCoefficients c = {0.0, 0.0, 0.0, 0.0, 0.0};
 
     // Pre-pass: total Debye length from all species (used when coulomb_log <= 0).
     // 1/lambda_D^2 = sum_b n_b q_b^2 / (eps0 T_b)
+    // Also track the coldest active species for the reflecting speed
+    // boundary v_cutoff = COLL_CUTOFF * sqrt(T_min / m_a).  ASCOT5 uses the
+    // first background species (Tb[0]); the coldest one is the conservative
+    // generalization when species temperatures differ.
     double inv_lD_sq = 0.0;
+    double T_min = std::numeric_limits<double>::infinity();
     for (const auto& bg : backgrounds) {
         double n_b = bg.n(s), T_b = bg.T(s);
-        if (n_b > 0.0 && T_b > 0.0)
+        if (n_b > 0.0 && T_b > 0.0) {
             inv_lD_sq += n_b * bg.charge * bg.charge / (COLL_EPSILON0 * T_b);
+            T_min = std::min(T_min, T_b);
+        }
     }
     double lambda_D = (inv_lD_sq > 0.0) ? 1.0 / std::sqrt(inv_lD_sq) : 0.0;
+    if (T_min < std::numeric_limits<double>::infinity())
+        c.v_cutoff = COLL_CUTOFF * std::sqrt(T_min / m_a);
 
     for (const auto& bg : backgrounds) {
         double n_b = bg.n(s);
@@ -195,11 +211,16 @@ inline void milstein_collision_step(
     v  += g_v  * dW_v  + milstein_v;
     xi += g_xi * dW_xi + milstein_xi;
 
-    // Enforce physical bounds.  The speed reflects at v = 0: the exact
-    // process never reaches the origin (the 2 D_par / v drift repels it),
-    // but a discrete step can overshoot.  Clamping to exactly zero would
-    // kill the particle -- the collision coefficients are skipped at v = 0,
-    // every orbit term vanishes, and xi = v_par / v is undefined.
-    v  = std::fabs(v);
+    // Boundary conditions, following ASCOT5 (mccc_gc_milstein.c):
+    //  - the speed reflects off the thermal cutoff v_cutoff, so the
+    //    collision coefficients, which diverge as v -> 0, are never
+    //    evaluated deep below the background thermal speed;
+    //  - the pitch mirrors at |xi| = 1 (a hard clamp would pile up
+    //    probability at exactly +-1).
+    // The final clamp on xi only acts on pathologically large steps.
+    if (v < coef.v_cutoff)
+        v = 2.0 * coef.v_cutoff - v;
+    if (std::fabs(xi) > 1.0)
+        xi = ((xi > 0.0) - (xi < 0.0)) * (2.0 - std::fabs(xi));
     xi = std::max(-1.0, std::min(1.0, xi));
 }
