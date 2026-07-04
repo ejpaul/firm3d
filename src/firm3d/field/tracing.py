@@ -404,10 +404,10 @@ def trace_particles_boozer(
             `ODE_solver` is "symplectic". If None, defaults to `tol`.
         predictor_step: provide better initial guess for the next time step
             using predictor steps. Defaults to True if `ODE_solver` is "symplectic".
-        DP_hmin: Minimal timestep to enforce during numerical integration with adaptive
-            timestep. If the adaptice time step gets below DP_hmin, the stepper
-            completes step with DP_hmin timestep. Default is 0.0. Only used if
-            `ODE_solver` is "dormand_prince".
+        DP_hmin: Minimal timestep, in seconds, to enforce during numerical
+            integration with adaptive timestep. If the adaptive time step gets
+            below DP_hmin, the stepper completes the step with DP_hmin anyway.
+            Default is 0.0. Only used if `ODE_solver` is "dormand_prince".
     Returns: 2 element tuple containing
         - ``res_tys``:
             A list of numpy arrays (one for each particle) describing the
