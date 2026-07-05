@@ -1286,7 +1286,7 @@ class TrappedPoincare:
                     final_DAs.append(np.nan)
             # normalized DA values for colormap
             if DA_max is None:
-                DA_max = np.nanmax(final_DAs)
+                DA_max = 7 #np.nanmax(final_DAs)
 
         def normalize(numbers):
             if not numbers:
@@ -2548,7 +2548,7 @@ class MapEquilibrium:
         min_timestep=1e-7,
         nconvergence_points=100,
         s_lims=None,
-        mean=True,
+        min_DA_time=None,
         comm=None,
         tmax=1e-2,
         tol=1e-10,
@@ -2637,6 +2637,14 @@ class MapEquilibrium:
 
         self.s_min = s_lims[0]
         self.s_max = s_lims[1]
+
+        if min_DA_time is None:
+            min_DA_time = 0
+        if min_DA_time > self.tmax:
+            raise ValueError(
+                "min_DA_time must be less than or equal to tmax."
+            )
+        self.min_DA_time = min_DA_time
 
         # plotting settings
         self.savedata = savedata
@@ -2970,6 +2978,8 @@ class MapEquilibrium:
         convergence_petas = []
         convergence_DAs = []
 
+        tolerance = 5 * self.min_timestep
+
         for i in range(len(res_tys)):
             # start_state = [s, theta, zeta, vpar, p_eta_0, mu]
             # end_state = [time, s, theta, zeta, vpar, p_eta_f, bounces, passes, DA]
@@ -2985,10 +2995,10 @@ class MapEquilibrium:
                 radial_coordinate_start.append(start_state[4])
             final_time = end_state[0]
             final_times.append(final_time)
-            if final_time < 1e-3:
+
+            if final_time < self.min_DA_time:
                 DAs_at_loss.append(np.nan)
-            else:
-                DAs_at_loss.append(end_state[8])
+            else: DAs_at_loss.append(end_state[8])
             trapped.append(end_state[6])
 
             s0.append(start_state[0])
@@ -3001,7 +3011,7 @@ class MapEquilibrium:
             passes.append(end_state[7])
 
             # params that depend on loss
-            if final_time < (self.tmax - (5 * self.min_timestep)):
+            if final_time < (self.tmax - tolerance):
                 lost_total.append(1)
                 DA_tfinal.append(np.nan)
             else:
@@ -3064,7 +3074,7 @@ class MapEquilibrium:
         self.B0.set_points(point)
         modB = self.B0.modB()[:, 0]
 
-        energy = self.Ekin - mu * modB
+        energy = 2 * (self.Ekin - mu * modB) / self.mass
         vpar = sgn * np.sqrt(np.maximum(energy, 0))
         # condtion, x, y
         # returns x (vpar) if energy > 0, else nan
@@ -3078,6 +3088,7 @@ class MapEquilibrium:
         DA_at_loss=True,
         ax=None,
         DA_max=None,
+        peta_exp=None,
         statistic="mean",
         plot_losses=False,
     ):
@@ -3101,13 +3112,14 @@ class MapEquilibrium:
             minimum_DA  : If True, show the minimum DA within each bin instead of
                         the mean (default: False).
             plot_losses : Currently unused (default: False).
-
+            peta_exp : Exponent to apply to the p_eta values axis for plotting.
+                Should be the integer of magnitude (eg. -19)
+        
         Returns:
             None
         """
         import matplotlib as mpl
         import matplotlib.pyplot as plt
-        from scipy.stats import binned_statistic_2d
 
         fDA = np.array(self.DAs_at_loss) if DA_at_loss else np.array(self.DA_at_tfinal)
 
@@ -3285,16 +3297,35 @@ class MapEquilibrium:
             label="Trapped-passing boundary",
             zorder=20,
         )
+
+        if peta_exp is not None:
+            import matplotlib.ticker as mticker
+
+            class FixedOrderFormatter(mticker.ScalarFormatter):
+                def __init__(self, order, fformat="%1.1f", mathText=True):
+                    self.oom = order
+                    self.fformat = fformat
+                    super().__init__(useMathText=mathText)
+                def _set_order_of_magnitude(self):
+                    self.orderOfMagnitude = self.oom
+                def _set_format(self):
+                    self.format = self.fformat
+                    if self._useMathText:
+                        self.format = r'$\mathdefault{%s}$' % self.format
+
+            ax.yaxis.set_major_formatter(FixedOrderFormatter(peta_exp))
+            ax.ticklabel_format(axis='y', scilimits=(0, 0))  # ensure sci notation is used
+
         if plot_losses:
             lost_frac, x_edges, y_edges, _ = binned_statistic_2d(
                 normalized_pitch,
                 radial_coordinate_start,
                 np.array(self.lost_total),
-                statistic="mean",
+                statistic="max",
                 bins=[nx, ny],
             )
-            x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
-            y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
+            x_centers = 0.5 * (x_edges[1:] + x_edges[:-1])
+            y_centers = 0.5 * (y_edges[1:] + y_edges[:-1])
             Xc, Yc = np.meshgrid(x_centers, y_centers)
             xf = Xc.ravel()
             yf = Yc.ravel()
@@ -3410,6 +3441,7 @@ class MapPhaseSpace:
         mu_lims=None,
         comm=None,
         tol=1e-9,
+        min_DA_time=None,
         solver_options=None,
         savedata=True,
         file_name="",
@@ -3548,6 +3580,14 @@ class MapPhaseSpace:
 
         self.min_volmodB = min_volumemodB(self.B0)
         self.plot_s = plot_s
+
+        if min_DA_time is None:
+            min_DA_time = 0
+        if min_DA_time > self.tmax:
+            raise ValueError(
+                "min_DA_time must be less than or equal to tmax."
+            )
+        self.min_DA_time = min_DA_time
 
         # plotting settings
         self.savedata = savedata
@@ -4096,6 +4136,8 @@ class MapPhaseSpace:
         convergence_energies = []
         convergence_DAs = []
 
+        tolerance = 5 * self.min_timestep
+
         for elem in res_tys:
             # start state vector:
             #   [s, theta, zeta, vpar, peta, E, mu, Eprime]
@@ -4131,14 +4173,17 @@ class MapPhaseSpace:
             E_final.append(end_state[6])
             E_init.append(start_state[5])
 
-            if final_time < (self.tmax - (5 * self.min_timestep)):
+            if final_time < (self.tmax - tolerance):
                 lost_total.append(1)
                 DA_tfinal.append(np.nan)
             else:
                 lost_total.append(0)
                 DA_tfinal.append(end_state[11])
 
-            DAs_at_loss.append(end_state[11])
+            if final_time < self.min_DA_time:
+                DAs_at_loss.append(np.nan)
+            else: DAs_at_loss.append(end_state[11])
+
             bounces.append(end_state[9])
             passes.append(end_state[10])
 
@@ -4196,7 +4241,7 @@ class MapPhaseSpace:
             print("Done Building Lists", flush=True)
         return
 
-    def surface_trapped_func_Eprime(self, mu, surface, perfect_field=None):
+    def surface_trapped_func_Eprime(self, mu, surface):
         r"""
         `    Determine whether a particle with the given pitch angle is trapped on a
             specified flux surface.
@@ -4267,7 +4312,7 @@ class MapPhaseSpace:
 
             return output, peta.tolist()
 
-    def return_peta_trapped_contoured_boundary(self, perfect_field=None):
+    def return_peta_trapped_contoured_boundary(self, negate_peta=False):
         r"""
         Estimate the trapped-passing boundary in the (pitch, p_eta) plane by
         sampling many points on flux surfaces, binning the trapped/passing
@@ -4275,8 +4320,7 @@ class MapPhaseSpace:
         fit with a quadratic polynomial.
 
         Args:
-            binned_statistic_2d : The scipy.stats.binned_statistic_2d callable
-                (injected to avoid re-importing).
+            negate_peta : If True, flip the sign of the y axis 
 
         Returns:
             poly : numpy.poly1d quadratic fit of the boundary.
@@ -4294,7 +4338,7 @@ class MapPhaseSpace:
 
         for s_val in s_vals:
             for mu_val in mu_vals:
-                trapped, radial_like = self.surface_trapped_func_Eprime(mu_val, s_val, perfect_field=perfect_field)
+                trapped, radial_like = self.surface_trapped_func_Eprime(mu_val, s_val)
 
                 pitch_val = (mu_val / self.Ekin) * self.min_volmodB
                 pitch_val *= self.sign
@@ -4312,6 +4356,9 @@ class MapPhaseSpace:
 
         volume_boundary_pitch = np.array(volume_boundary_pitch)
         volume_boundary_radlike = np.array(volume_boundary_radlike)
+
+        if negate_peta:
+            volume_boundary_radlike = -volume_boundary_radlike
         volume_trapped = np.array(volume_trapped)
 
         trapped_vals, pitch_edges, radlike_edges, binnumber = binned_statistic_2d(
@@ -4325,46 +4372,55 @@ class MapPhaseSpace:
         pitch_c = 0.5 * (pitch_edges[:-1] + pitch_edges[1:])
         radlike_c = 0.5 * (radlike_edges[:-1] + radlike_edges[1:])
 
-        T = np.nan_to_num(trapped_vals, nan=0.0)
+        T = np.nan_to_num(trapped_vals, nan=0.0).T
         # x, y -> (pitch, peta) dimensions
 
         boundary_pitch, boundary_radlike = [], []
 
-        for pitch_i in range(0, T.shape[0]):
-            peta_data = T[pitch_i, :]
-            if not peta_data.any() or peta_data.all():
+        for peta_i in range(0, T.shape[0]):
+            peta_data = T[peta_i, :]
+            if not peta_data.any():
                 continue
-            peta_i = int(np.argmax(peta_data > 0.5))
-            peta_value = (
-                radlike_c[peta_i]
-                if peta_i == 0
-                else 0.5 * (radlike_c[peta_i - 1] + radlike_c[peta_i])
-            )
-            boundary_pitch.append(pitch_c[pitch_i])
-            boundary_radlike.append(peta_value)
+            pitch_i = int(np.argmax(peta_data == 1))
+            boundary_pitch.append(pitch_edges[pitch_i])
+            boundary_radlike.append(radlike_edges[peta_i])
+            continue
 
+        if len(boundary_pitch) == 0:
+            return None, None, None
         boundary_pitch = np.array(boundary_pitch)
         boundary_radlike = np.array(boundary_radlike)
-
+        
         order = np.argsort(boundary_pitch)
         boundary_pitch = boundary_pitch[order]
         boundary_radlike = boundary_radlike[order]
 
-        coeffs = np.polyfit(boundary_pitch, boundary_radlike, 2)
+        # prevents polyfit from recieving a line in constant pitch
+        # and making an ill conditioned linear fit
+        if (boundary_pitch.max() - boundary_pitch.min()) < 0.001:
+            real_data = np.array(self.Plot_Radial)
+            if negate_peta:
+                real_data = -real_data
+            # enforce that the trapped fit is larger than the smallest
+            # sampled particle in peta and smaller than the
+            # largest simulated particle in peta
+            condition = (boundary_radlike > real_data.min()) & (boundary_radlike < real_data.max())
+            boundary_radlike = boundary_radlike[condition]
+            boundary_pitch = boundary_pitch[condition]
+            return None, boundary_pitch, boundary_radlike
+        # make a linear fit 
+        coeffs = np.polyfit(boundary_pitch, boundary_radlike, 1)
         poly = np.poly1d(coeffs)
 
         pitch_fit = np.linspace(boundary_pitch.min(), boundary_pitch.max(), 300)
         radlike_fit = poly(pitch_fit)
-        trunc = int(np.argmin(radlike_fit))
-        pitch_fit = pitch_fit[:trunc]
-        radlike_fit = radlike_fit[:trunc]
 
         return poly, pitch_fit, radlike_fit
 
-    def plot_heatmap(
+def plot_heatmap(
         self,
-        nx=30,
-        ny=30,
+        nx=None,
+        ny=None,
         savepath="heatmap_digit_accuracy.pdf",
         ax=None,
         DA_max=7,
@@ -4372,6 +4428,7 @@ class MapPhaseSpace:
         DA_at_loss=True,
         plot_losses=False,
         negate_peta=False,
+        lost_fraction=False,
     ):
         r"""
         Plot a 2D heatmap of digit accuracy in the (pitch, radial-like) plane and
@@ -4413,6 +4470,11 @@ class MapPhaseSpace:
         except ImportError:
             cmap = "viridis"
 
+        if nx is None:
+            nx = int(np.cbrt(len(self.pitch)))
+        if ny is None:
+            ny = int(np.cbrt(len(self.pitch)))
+
         DA_values = self.DAs_at_loss if DA_at_loss else self.DA_at_tfinal
 
         norm = mpl.colors.Normalize(vmin=0, vmax=DA_max)
@@ -4432,27 +4494,30 @@ class MapPhaseSpace:
             Y *= -1
         im2 = ax.pcolormesh(X, Y, DA_stats.T, shading="auto", cmap=cmap, norm=norm)
 
-        poly, pa_fit, rad_fit = self.return_peta_trapped_contoured_boundary()
+        poly, pa_fit, rad_fit = self.return_peta_trapped_contoured_boundary(negate_peta=negate_peta)
         self.trapped_boundary_fit = poly
         self.trapped_boundary_fit_pitch = pa_fit
         self.trapped_boundary_fit_radial = rad_fit
 
-        ax.plot(
-            pa_fit,
-            rad_fit,
-            color="grey",
-            linewidth=10,
-            label="Trapped-passing boundary",
-        )
+        if pa_fit is not None and rad_fit is not None:
+            ax.plot(
+                pa_fit,
+                rad_fit,
+                color="gray",
+                linewidth=10
+            )
+        else:
+            print("is none", flush=True)
 
         colorlabel = "Digit Accuracy"
 
         if plot_losses:
+            lost_stat = "mean" if lost_fraction else "max"
             lost_frac, x_edges, y_edges, _ = binned_statistic_2d(
                 plotting_pitch_normalized,
                 np.array(self.Plot_Radial),
                 np.array(self.lost_total),
-                statistic="mean",
+                statistic=lost_stat,
                 bins=[nx, ny],
             )
             x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
@@ -4464,15 +4529,20 @@ class MapPhaseSpace:
             af = lost_frac.T.ravel()
             if negate_peta:
                 yf = yf * -1
-            ax.scatter(
+            loss_norm = mpl.colors.Normalize(vmin=0, vmax=1)
+            loss_cmap = "Reds"
+            sc = ax.scatter(
                 xf,
                 yf,
                 marker="s",
-                s=20,
-                c="red",
-                alpha=af,
+                s=100,
+                c=af,
+                cmap=loss_cmap,
+                norm=loss_norm,
                 zorder=10,
             )
+            if lost_fraction: fig.colorbar(sc, ax=ax, label="Particle Fraction")
+
         ax.set_xlabel(r"$\lambda = \frac{\mu}{E} \text{sign}(v_{\|})$")
 
         if self.plot_s:
