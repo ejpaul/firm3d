@@ -7,9 +7,34 @@ def _isotonic_regression(y, increasing=True):
     r"""
     Isotonic regression (pool-adjacent-violators) on uniformly spaced samples.
 
-    Returns the closest (in least squares) monotonic sequence to ``y``.
-    Use ``increasing=False`` on the branch approaching ``|B|`` minimum and
-    ``increasing=True`` on the branch leaving it.
+    Returns the unique least-squares monotonic sequence closest to ``y``.
+    Use ``increasing=False`` on the branch approaching the ``|B|`` minimum
+    and ``increasing=True`` on the branch leaving it, so that the fitted
+    well is guaranteed to be monotone on each side even when the raw field
+    data contains small ripples or numerical noise.
+
+    The algorithm works by scanning ``y`` left-to-right and maintaining a
+    stack of constant-value *blocks*. Each new element starts as its own
+    block. Whenever the mean of the last block drops below the mean of the
+    preceding block (violating monotonicity), the two blocks are merged and
+    their common value is set to the pooled mean. Merging continues
+    (upward through the stack) until the sequence is again non-decreasing.
+    The result is the minimum-norm projection of ``y`` onto the cone of
+    non-decreasing sequences.
+
+    Notes:
+        - The decreasing case is handled by reversing ``y``, applying the
+          increasing solver, and reversing the result.
+
+    Args:
+        y (array-like): 1-D sequence of values to fit.
+        increasing (bool, optional): If ``True`` (default), fit a
+            non-decreasing sequence; if ``False``, fit a non-increasing
+            sequence.
+
+    Returns:
+        ndarray: Isotonic (monotone) approximation of ``y``, same shape as
+            the input.
     """
     y = np.asarray(y, dtype=float)
     if y.size <= 1:
@@ -51,6 +76,20 @@ def _monotonic_fit(x, y, x_eval=None, increasing=True):
     branch direction). If ``x_eval`` differs from ``x``, evaluates a
     shape-preserving cubic (PCHIP) through the isotonic values on sorted ``x``;
     PCHIP preserves the monotonicity of its input data.
+
+    Args:
+        x (array-like): Independent-variable coordinates of the sample
+            points, in the order they appear along the branch.
+        y (array-like): Dependent-variable values at each sample point.
+        x_eval (array-like, optional): Coordinates at which to evaluate
+            the monotonic fit. If ``None`` (default), returns values at
+            the original ``x`` locations.
+        increasing (bool, optional): If ``True`` (default), enforce a
+            non-decreasing fit; if ``False``, enforce non-increasing.
+
+    Returns:
+        ndarray: Monotonic fit values evaluated at ``x_eval`` (or at ``x``
+            if ``x_eval`` is ``None``).
     """
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -73,7 +112,21 @@ def _monotonic_fit(x, y, x_eval=None, increasing=True):
 
 
 def _chi_branch_shift(chi_ref, chi_target, period=2 * np.pi):
-    """Shift ``chi_ref`` by an integer multiple of ``period`` to overlap ``chi_target``."""
+    """
+    Shift ``chi_ref`` by an integer multiple of ``period`` to overlap ``chi_target``.
+
+    Args:
+        chi_ref (array-like): Reference chi array to be shifted.
+        chi_target (array-like): Target chi array that defines the desired
+            branch.
+        period (float, optional): Periodicity of chi [radians].
+            Default is :math:`2\\pi`.
+
+    Returns:
+        float: The shift ``k * period`` (integer multiple of ``period``)
+            that minimises the maximum nearest-neighbour distance from
+            any point in ``chi_target`` to the shifted ``chi_ref``.
+    """
     chi_ref = np.asarray(chi_ref, dtype=float)
     chi_target = np.atleast_1d(np.asarray(chi_target, dtype=float))
     if chi_target.size == 0:
@@ -89,12 +142,6 @@ def _chi_branch_shift(chi_ref, chi_target, period=2 * np.pi):
             best_score = score
             best_k = k
     return best_k * period
-
-
-def _chi_on_branch(chi, chi_center, period=2 * np.pi):
-    """Express ``chi`` on the same 2pi branch as ``chi_center``."""
-    chi = np.asarray(chi, dtype=float)
-    return chi_center + ((chi - chi_center + period / 2) % period) - period / 2
 
 
 class OrbitClassification:
@@ -356,11 +403,11 @@ class OrbitClassification:
             res_ty_seg = res_ty[index_start : index_end + 1, :]
             # --- Trajectory arrays (field evaluation on trajectory points only) ---
             point = np.zeros((len(res_ty_seg), 3))
-            point[:, 0] = res_ty_seg[:, 1]   # s
-            point[:, 1] = res_ty_seg[:, 2]   # theta
-            point[:, 2] = res_ty_seg[:, 3]   # zeta
+            point[:, 0] = res_ty_seg[:, 1]  # s
+            point[:, 1] = res_ty_seg[:, 2]  # theta
+            point[:, 2] = res_ty_seg[:, 3]  # zeta
             self.field.set_points(point)
-            modB_traj     = self.field.modB()[:, 0]
+            modB_traj = self.field.modB()[:, 0]
             vpar_traj = res_ty[index_start : index_end + 1, 4]
 
             lam_traj = (2 * self.Ekin / self.mass - vpar_traj**2) / (
@@ -378,10 +425,12 @@ class OrbitClassification:
             dzeta = zetas[index_end] - zetas[index_start]
             thetas_unwrap = np.unwrap(thetas[index_start : index_end + 1])
             zetas_unwrap = np.unwrap(zetas[index_start : index_end + 1])
-            chis_unwrap = np.unwrap(self.helicity_M * thetas_unwrap - self.helicity_N * zetas_unwrap)
+            chis_unwrap = np.unwrap(
+                self.helicity_M * thetas_unwrap - self.helicity_N * zetas_unwrap
+            )
             dchi = np.abs(chis_unwrap[-1] - chis_unwrap[0])
             dchis.append(np.abs(dchi))
- 
+
             # Compute mean radial position during this bounce segment
             mean_s = np.mean(res_ty[index_start : index_end + 1, 1])
             s_means.append(mean_s)
@@ -393,7 +442,9 @@ class OrbitClassification:
             iota_s = self.field.iota()[0, 0]
 
             # Compute mean field-line label alpha during this bounce segment
-            mean_alpha = np.mean(np.unwrap(res_ty[index_start : index_end + 1, 2] - iota_s * res_ty[index_start : index_end + 1, 3]))
+            theta_seg = res_ty[index_start : index_end + 1, 2]
+            zeta_seg = res_ty[index_start : index_end + 1, 3]
+            mean_alpha = np.mean(np.unwrap(theta_seg - iota_s * zeta_seg))
             alpha_means.append(mean_alpha)
 
             # Trajectory chi center: used to center the field-line sweep and to
@@ -412,7 +463,9 @@ class OrbitClassification:
                 1000,
             )
             zeta_grid = (self.helicity_M * mean_alpha - chi_grid_mean) / _denom
-            theta_fieldline = (self.helicity_N * mean_alpha - iota_s * chi_grid_mean) / _denom
+            theta_fieldline = (
+                self.helicity_N * mean_alpha - iota_s * chi_grid_mean
+            ) / _denom
             points = np.zeros((1000, 3))
             points[:, 0] = mean_s
             points[:, 1] = theta_fieldline
@@ -428,20 +481,30 @@ class OrbitClassification:
 
             # Nearest |B| peak on the low-chi side (left half) and high-chi side
             # (right half).  chi_grid_mean is increasing so lower indices = lower chi.
-            idx_l_peak = int(np.argmax(modB[: idx_center]))
-            idx_r_peak = idx_center + int(np.argmax(modB[idx_center :])) 
+            idx_l_peak = int(np.argmax(modB[:idx_center]))
+            idx_r_peak = idx_center + int(np.argmax(modB[idx_center:]))
             # Identified maxima are more than a field period apart
-            if np.abs(chi_grid_mean[idx_l_peak] - chi_grid_mean[idx_r_peak]) > 1.25 * 2*np.pi:
-                # Find min between max l and center
+            if (
+                np.abs(chi_grid_mean[idx_l_peak] - chi_grid_mean[idx_r_peak])
+                > 1.25 * 2 * np.pi
+            ):
+                # Find min between max_l and center
                 idx_min_l = int(np.argmin(modB[idx_l_peak : idx_center + 1]))
-                # Find min between center and max r
+                # Find min between center and max_r
                 idx_min_r = int(np.argmin(modB[idx_center : idx_r_peak + 1]))
-                # Find max between min l and center 
-                idx_max_l = int(np.argmax(modB[(idx_min_l + idx_l_peak) : idx_center + 1]))
-                # Find max between center and min r
-                idx_max_r = int(np.argmax(modB[idx_center : (idx_center +idx_min_r) + 1]))
-                # Choose larger of the two maxima 
-                if modB[idx_min_l + idx_l_peak + idx_max_l] > modB[idx_center + idx_max_r]:
+                # Find max between min_l and center
+                idx_max_l = int(
+                    np.argmax(modB[(idx_min_l + idx_l_peak) : idx_center + 1])
+                )
+                # Find max between center and min_r
+                idx_max_r = int(
+                    np.argmax(modB[idx_center : (idx_center + idx_min_r) + 1])
+                )
+                # Choose larger of the two maxima
+                if (
+                    modB[idx_min_l + idx_l_peak + idx_max_l]
+                    > modB[idx_center + idx_max_r]
+                ):
                     idx_l_peak = idx_min_l + idx_l_peak + idx_max_l
                 else:
                     idx_r_peak = idx_center + idx_max_r
@@ -457,10 +520,18 @@ class OrbitClassification:
             modB_right = modB[min_loc : idx_r_peak + 1]
 
             # Force monotonic |B| on each side of the well minimum.
-            modB_left_mon = _monotonic_fit(chi_left, modB_left, chi_left, increasing=False)
-            modB_right_mon = _monotonic_fit(chi_right, modB_right, chi_right, increasing=True)
-            chi_mirror_left = chi_left[np.argmin(np.abs(modB_left_mon - modB_crit_traj))]
-            chi_mirror_right = chi_right[np.argmin(np.abs(modB_right_mon - modB_crit_traj))]
+            modB_left_mon = _monotonic_fit(
+                chi_left, modB_left, chi_left, increasing=False
+            )
+            modB_right_mon = _monotonic_fit(
+                chi_right, modB_right, chi_right, increasing=True
+            )
+            chi_mirror_left = chi_left[
+                np.argmin(np.abs(modB_left_mon - modB_crit_traj))
+            ]
+            chi_mirror_right = chi_right[
+                np.argmin(np.abs(modB_right_mon - modB_crit_traj))
+            ]
 
             # Classification quantities derived from already-available variables.
             dalpha = dtheta - iota_s * dzeta
@@ -655,13 +726,14 @@ class OrbitClassification:
         r"""
         Generate diagnostic plots for a single bounce segment.
 
-        Produces two figures:
+        Produces three figures:
 
-        1. **Full field-line well** – |B| vs χ for the mean field line, the
-           α / s envelope field lines, and the monotonic-fit well shape over
-           the full ±2π χ window.
+        1. **Full field-line well** – |B| vs χ for the mean field line and
+           the monotonic-fit well shape over the full ±2π χ window.
         2. **Zoom plot** – same curves restricted to the trajectory χ range,
            with mirror-point / well-minimum markers.
+        3. **Parallel velocity** – :math:`v_{\parallel}` vs χ along the
+           bounce segment.
 
         Args:
             data (dict): One entry from ``particle_dict['debug_data']``, as
@@ -669,64 +741,85 @@ class OrbitClassification:
             show (bool, optional): Call ``plt.show()`` after each figure.
                 Set ``False`` when saving figures programmatically.
                 Default ``True``.
+
+        Returns:
+            list: Three :class:`matplotlib.figure.Figure` objects
+                ``[fig1, fig2, fig3]`` corresponding to the full well,
+                zoom, and :math:`v_{\parallel}` plots respectively.
         """
         import matplotlib.pyplot as plt
 
         # --- Unpack precomputed data from classify_orbit ---
-        dchi             = data['dchi']
-        dchi_predicted   = data['dchi_predicted']
-        modB_crit        = data['modB_crit']
-        modB_crit_traj   = data['modB_crit_traj']
-        chi_min          = data['chi_min']
-        chi_mirror_left  = data['chi_mirror_left']
+        dchi = data['dchi']
+        dchi_predicted = data['dchi_predicted']
+        modB_crit = data['modB_crit']
+        modB_crit_traj = data['modB_crit_traj']
+        chi_min = data['chi_min']
+        chi_mirror_left = data['chi_mirror_left']
         chi_mirror_right = data['chi_mirror_right']
-        res_ty_seg       = data['res_ty_segment']
-        chi_traj_center  = data['chi_traj_center']
-        chi_grid_mean    = data['chi_grid_mean']
-        modB_grid_mean   = data['modB_grid_mean']
-        chi_left_mon     = data['chi_left_mon']
-        chi_right_mon    = data['chi_right_mon']
-        modB_left_mon    = data['modB_left_mon']
-        modB_right_mon   = data['modB_right_mon']
+        res_ty_seg = data['res_ty_segment']
+        chi_traj_center = data['chi_traj_center']
+        chi_grid_mean = data['chi_grid_mean']
+        modB_grid_mean = data['modB_grid_mean']
+        chi_left_mon = data['chi_left_mon']
+        chi_right_mon = data['chi_right_mon']
+        modB_left_mon = data['modB_left_mon']
+        modB_right_mon = data['modB_right_mon']
 
         # --- Trajectory arrays (field evaluation on trajectory points only) ---
         point = np.zeros((len(res_ty_seg), 3))
-        point[:, 0] = res_ty_seg[:, 1]   # s
-        point[:, 1] = res_ty_seg[:, 2]   # theta
-        point[:, 2] = res_ty_seg[:, 3]   # zeta
+        point[:, 0] = res_ty_seg[:, 1]  # s
+        point[:, 1] = res_ty_seg[:, 2]  # theta
+        point[:, 2] = res_ty_seg[:, 3]  # zeta
         self.field.set_points(point)
-        modB_traj     = self.field.modB()[:, 0]
-        chi_traj_plot = np.unwrap(self.helicity_M * point[:, 1] - self.helicity_N * point[:, 2])
+        modB_traj = self.field.modB()[:, 0]
+        chi_traj_plot = np.unwrap(
+            self.helicity_M * point[:, 1] - self.helicity_N * point[:, 2]
+        )
 
-        title_str = 'dchi={:.2f}, dchi_predicted={:.2f}'.format(dchi, dchi_predicted)
+        title_str = f"dchi={dchi:.2f}, dchi_predicted={dchi_predicted:.2f}"
 
         # Align precomputed field-line χ grid to the same branch as the trajectory.
-        chi_shift             = _chi_branch_shift(chi_grid_mean, chi_traj_plot)
-        chi_field             = chi_grid_mean    + chi_shift
-        chi_min_plot          = chi_min          + chi_shift
-        chi_mirror_left_plot  = chi_mirror_left  + chi_shift
+        chi_shift = _chi_branch_shift(chi_grid_mean, chi_traj_plot)
+        chi_field = chi_grid_mean + chi_shift
+        chi_min_plot = chi_min + chi_shift
+        chi_mirror_left_plot = chi_mirror_left + chi_shift
         chi_mirror_right_plot = chi_mirror_right + chi_shift
-        chi_traj_center_plot  = chi_traj_center  + chi_shift
+        chi_traj_center_plot = chi_traj_center + chi_shift
 
-        chi_left_mon_plot  = chi_left_mon  + chi_shift
+        chi_left_mon_plot = chi_left_mon + chi_shift
         chi_right_mon_plot = chi_right_mon + chi_shift
 
         # --- Figure 1: Full field-line well ---
         fig1 = plt.figure()
-        plt.plot(chi_field, modB_grid_mean,
-                 color="blue",      label=r"$\alpha_{\rm mean}$",   zorder=1)
-        plt.plot(chi_left_mon_plot,  modB_left_mon,
-                 color="magenta", linewidth=2, linestyle="-", label=r"monotonic well", zorder=3)
-        plt.plot(chi_right_mon_plot, modB_right_mon,
-                 color="magenta", linewidth=2, linestyle="-", zorder=3)
-        plt.plot(chi_traj_plot, modB_traj,
-                 color="black",     label="trajectory",             linestyle="--", zorder=5)
+        plt.plot(
+            chi_field, modB_grid_mean,
+            color="blue", label=r"$\alpha_{\rm mean}$", zorder=1,
+        )
+        plt.plot(
+            chi_left_mon_plot, modB_left_mon,
+            color="magenta", linewidth=2, linestyle="-",
+            label=r"monotonic well", zorder=3,
+        )
+        plt.plot(
+            chi_right_mon_plot, modB_right_mon,
+            color="magenta", linewidth=2, linestyle="-", zorder=3,
+        )
+        plt.plot(
+            chi_traj_plot, modB_traj,
+            color="black", label="trajectory", linestyle="--", zorder=5,
+        )
         plt.axhline(modB_crit, color="red", label=r"$B_{\rm crit}$")
         plt.axhline(modB_crit_traj, color="green", label=r"$B_{\rm crit, traj}$")
-        plt.axvline(chi_traj_center_plot, color="gray", linestyle="-.", linewidth=1.5, label=r"$\chi_{\rm center}$")
+        plt.axvline(
+            chi_traj_center_plot,
+            color="gray", linestyle="-.", linewidth=1.5, label=r"$\chi_{\rm center}$",
+        )
         plt.ylim(modB_grid_mean.min(), modB_grid_mean.max())
-        plt.xlabel(r"$\chi$"); plt.ylabel(r"$|B|$")
-        plt.title(title_str); plt.legend()
+        plt.xlabel(r"$\chi$")
+        plt.ylabel(r"$|B|$")
+        plt.title(title_str)
+        plt.legend()
         if show:
             plt.show()
 
@@ -756,39 +849,63 @@ class OrbitClassification:
 
         fig2 = plt.figure()
         if np.any(field_mask):
-            plt.plot(chi_field[field_mask], modB_grid_mean[field_mask],
-                     color="blue",      label=r"$\alpha_{\rm mean}$", linestyle="--", linewidth=1.5, zorder=2)
-        plt.plot(chi_left_mon_plot,  modB_left_mon,
-                 color="magenta", linewidth=2, linestyle="-", label="monotonic well", zorder=4)
-        plt.plot(chi_right_mon_plot, modB_right_mon,
-                 color="magenta", linewidth=2, linestyle="-", zorder=4)
-        plt.plot(chi_traj_plot, modB_traj,
-                 color="black", linestyle="--", marker="o", markersize=4, label="trajectory", zorder=3)
+            plt.plot(
+                chi_field[field_mask], modB_grid_mean[field_mask],
+                color="blue", label=r"$\alpha_{\rm mean}$",
+                linestyle="--", linewidth=1.5, zorder=2,
+            )
+        plt.plot(
+            chi_left_mon_plot, modB_left_mon,
+            color="magenta", linewidth=2, linestyle="-",
+            label="monotonic well", zorder=4,
+        )
+        plt.plot(
+            chi_right_mon_plot, modB_right_mon,
+            color="magenta", linewidth=2, linestyle="-", zorder=4,
+        )
+        plt.plot(
+            chi_traj_plot, modB_traj,
+            color="black", linestyle="--", marker="o", markersize=4,
+            label="trajectory", zorder=3,
+        )
         plt.axhline(modB_crit, color="red", label=r"$B_{\rm crit}$")
         plt.axhline(modB_crit_traj, color="green", label=r"$B_{\rm crit, traj}$")
-        for chi_val, col, lbl in ((chi_min_plot,          "green",  "chi_min"),
-                                   (chi_mirror_left_plot,  "orange", "chi_mirror_left"),
-                                   (chi_mirror_right_plot, "purple", "chi_mirror_right"),
-                                   (chi_traj_center_plot,  "gray",   r"$\chi_{\rm center}$")):
+        for chi_val, col, lbl in (
+            (chi_min_plot, "green", "chi_min"),
+            (chi_mirror_left_plot, "orange", "chi_mirror_left"),
+            (chi_mirror_right_plot, "purple", "chi_mirror_right"),
+            (chi_traj_center_plot, "gray", r"$\chi_{\rm center}$"),
+        ):
             if chi_xlim[0] <= chi_val <= chi_xlim[1]:
                 plt.axvline(chi_val, color=col, linestyle=":", label=lbl)
-        plt.xlim(chi_xlim); plt.ylim(b_lo - b_pad, b_hi + b_pad)
-        plt.xlabel(r"$\chi$"); plt.ylabel(r"$|B|$")
-        plt.title(title_str); plt.legend()
+        plt.xlim(chi_xlim)
+        plt.ylim(b_lo - b_pad, b_hi + b_pad)
+        plt.xlabel(r"$\chi$")
+        plt.ylabel(r"$|B|$")
+        plt.title(title_str)
+        plt.legend()
         if show:
             plt.show()
 
         # --- Figure 3: v_par vs χ ---
         vpar_traj = res_ty_seg[:, 4]
         fig3 = plt.figure()
-        plt.plot(chi_traj_plot, vpar_traj,
-                 color="black", linestyle="--", marker="o", markersize=4, zorder=2)
-        plt.axhline(0, color="red", linewidth=1, linestyle="-", label=r"$v_{\parallel}=0$")
-        for chi_val, col, lbl in ((chi_traj_center_plot, "gray",   r"$\chi_{\rm center}$"),):
-            if chi_xlim[0] <= chi_val <= chi_xlim[1]:
-                plt.axvline(chi_val, color=col, linestyle=":", label=lbl)
-        plt.xlabel(r"$\chi$"); plt.ylabel(r"$v_{\parallel}$")
-        plt.title(title_str); plt.legend()
+        plt.plot(
+            chi_traj_plot, vpar_traj,
+            color="black", linestyle="--", marker="o", markersize=4, zorder=2,
+        )
+        plt.axhline(
+            0, color="red", linewidth=1, linestyle="-", label=r"$v_{\parallel}=0$"
+        )
+        if chi_xlim[0] <= chi_traj_center_plot <= chi_xlim[1]:
+            plt.axvline(
+                chi_traj_center_plot,
+                color="gray", linestyle=":", label=r"$\chi_{\rm center}$",
+            )
+        plt.xlabel(r"$\chi$")
+        plt.ylabel(r"$v_{\parallel}$")
+        plt.title(title_str)
+        plt.legend()
         if show:
             plt.show()
 
