@@ -58,6 +58,14 @@ Reference local result (2026-07-05, N = 100, n = 1e21 m^-3):
                      ASCOT5 2.690 +/- 0.011 ms   (-0.4 %, 0.7 sigma)
   max |<E>_firm3d - <E>_ascot5| / E0 = 0.4 %
 
+Reference high-statistics result at the published ASCOT5 test point
+(2026-07-06, N = 1024, n = 1e20 m^-3; firm3d on one Perlmutter CPU node
+with 128 MPI ranks via sample_slurm.sh, ~15 min):
+  mean slowing time  firm3d 24.915 +/- 0.027 ms,
+                     ASCOT5 24.885 +/- 0.029 ms   (+0.1 %, 0.7 sigma)
+  max |<E>_firm3d - <E>_ascot5| / E0 = 0.4 %
+  (analytic 0.5 ts ln(E0/Emin) = 26.855 ms)
+
 Perlmutter
 ----------
 Both scripts are serial and self-contained; for higher statistics
