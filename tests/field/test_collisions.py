@@ -549,6 +549,26 @@ class TestCollisionlessLimit(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+class TestUnphysicalCoulombLog(unittest.TestCase):
+    """
+    ln Lambda <= 0 (Debye length below the minimum impact parameter,
+    e.g. T -> 0 at finite density) makes the binary-collision model
+    undefined; the tracer must raise rather than integrate garbage.
+    ASCOT5 handles the equivalent situation by aborting markers through
+    its input-evaluation errors.
+    """
+
+    def test_tracer_raises(self):
+        bad_bg = ThermalBackground(
+            n_profile=lambda s: 1e30,
+            T_profile=lambda s: 1e-3 * ONE_EV,
+            mass=ELECTRON_MASS,
+            charge=-ELEMENTARY_CHARGE,
+        )
+        with self.assertRaises(RuntimeError):
+            _coll_trace(_field(), bad_bg, tmax=1e-8)
+
+
 class TestCollisionCoefficients(unittest.TestCase):
     """
     Unit tests for the analytical collision coefficient formulae that mirror
@@ -1174,17 +1194,28 @@ class TestPitchIsotropization(unittest.TestCase):
     @pytest.mark.slow
     def test_pitch_angle_exponential_decay(self):
         """
-        ⟨ξ(t)⟩ = ξ₀ exp(−ν_D t): the ASCOT5 pitch-angle benchmark.
+        ⟨ξ⟩ ∝ v^{m_b/m_a}: pitch decay of fast alphas on deuterium.
 
-        Starting from ξ₀ = 0.8 with N = 50 particles, the ensemble mean
-        pitch must decay to ξ₀ exp(−0.5) ≈ 0.485 after tmax = 0.5/ν_D.
+        For a fast test particle (x = v/v_th >> 1) on a single ion
+        background, pitch scattering CANNOT be isolated from drag: both
+        rates scale as 1/v^3 with the fixed ratio
+        nu_drag/nu_D = m_a/m_b (= 2 for alphas on D).  Over nu_D t = 0.5
+        the alphas lose most of their speed, nu_D(v) explodes, and <xi>
+        isotropizes completely -- the original form of this test, which
+        assumed constant v, failed with <xi> = 0.
 
-        Statistical tolerance [0.5, 1.5] × ξ_expected gives a 4.5σ window
-        (false-failure probability < 10⁻⁵ for a correct implementation).
+        Eliminating time between d<xi>/dt = -nu_D <xi> and
+        dv/dt = -(m_a/m_b) Gamma / v^2 gives the classical relation
+            <xi(t)> / <xi(t1)> = ( v(t) / v(t1) )^{m_b/m_a},
+        which is checked here using the simulation's own mean speed.
+        Referencing the first SAVED snapshot (t1 = tmax/8) rather than
+        the initial condition cancels the geometric offset from sampling
+        xi along orbits (xi varies with B along a field line).
 
-        Note: ν_D × tmax = 0.5 is chosen so (a) the signal is large enough
-        to measure (⟨ξ⟩ drops by ~37%), (b) v barely changes (Δv/v₀ < 0.1%),
-        keeping ν_D effectively constant throughout the integration.
+        tmax = 0.15/nu_D(v0) keeps x >> 1 throughout (v_end ~ 0.6 v0).
+        With N = 128 the accumulated pitch scatter gives a ~2-3 % standard
+        error on the ratio; the +/-15 % bracket is a >5 sigma window that
+        still catches an O(1) error in nu_D or the drag.
         """
         bg = self._background_high_n()
         Ekin = FUSION_ALPHA_PARTICLE_ENERGY
@@ -1194,9 +1225,9 @@ class TestPitchIsotropization(unittest.TestCase):
         s0 = 0.3
 
         nu_D_theory = _analytical_nu_D(v0, s0, m, q, [bg])
-        tmax = 0.5 / nu_D_theory  # ν_D × tmax = 0.5 exactly
+        tmax = 0.15 / nu_D_theory
 
-        nP = 50
+        nP = 128
         stz = np.tile([s0, 0.0, 0.0], (nP, 1))
         vpar = np.full(nP, xi0 * v0)
 
@@ -1210,30 +1241,41 @@ class TestPitchIsotropization(unittest.TestCase):
             charge=q,
             Ekin=Ekin,
             tol=1e-8,
-            dt_save=tmax,
-            forget_exact_path=True,
+            dt_save=tmax / 8,
+            forget_exact_path=False,
             rng_seed=0,
             comm=_COMM,
             stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
         )
         self._assert_confined(res_tys, tmax)
 
-        xi_final = np.array([t[-1, 4] / t[-1, 5] for t in res_tys])
-        mean_xi = np.mean(xi_final)
-        xi_expected = xi0 * np.exp(-nu_D_theory * tmax)  # = xi0 * exp(-0.5)
+        # First saved snapshot (t = tmax/8) as reference, last as end
+        xi_1 = np.array([t[1, 4] / t[1, 5] for t in res_tys])
+        v_1 = np.array([t[1, 5] for t in res_tys])
+        xi_2 = np.array([t[-1, 4] / t[-1, 5] for t in res_tys])
+        v_2 = np.array([t[-1, 5] for t in res_tys])
 
-        ratio = mean_xi / xi_expected
+        measured = np.mean(xi_2) / np.mean(xi_1)
+        predicted = (np.mean(v_2) / np.mean(v_1)) ** (
+            (2 * PROTON_MASS) / ALPHA_PARTICLE_MASS
+        )
+
+        # The speed must have decayed appreciably (drag active) while
+        # the alphas remain fast (asymptotic relation applicable)
+        self.assertLess(np.mean(v_2) / np.mean(v_1), 0.95, "no drag signal")
+        self.assertGreater(np.mean(v_2) / np.mean(v_1), 0.4, "over-slowed")
+
         self.assertGreater(
-            ratio,
-            0.5,
-            f"Mean pitch decayed too fast: ⟨ξ⟩/ξ_theory = {ratio:.2f} "
-            f"(expected ≈ {xi_expected:.3f}, got {mean_xi:.3f})",
+            measured,
+            0.85 * predicted,
+            f"pitch decayed too fast: <xi_2>/<xi_1> = {measured:.3f}, "
+            f"(v_2/v_1)^(m_D/m_alpha) = {predicted:.3f}",
         )
         self.assertLess(
-            ratio,
-            1.5,
-            f"Mean pitch decayed too slow: ⟨ξ⟩/ξ_theory = {ratio:.2f} "
-            f"(expected ≈ {xi_expected:.3f}, got {mean_xi:.3f})",
+            measured,
+            1.15 * predicted,
+            f"pitch decayed too slow: <xi_2>/<xi_1> = {measured:.3f}, "
+            f"(v_2/v_1)^(m_D/m_alpha) = {predicted:.3f}",
         )
 
     def test_nu_D_positive(self):

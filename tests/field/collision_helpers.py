@@ -47,14 +47,21 @@ def debye_length(species):
 def coulomb_log(v, m_a, q_a, m_b, q_b, T_b, lambda_D):
     """
     ln Lambda = ln(lambda_D / max(b_cl, b_qm)), ASCOT5 convention, no floor.
-    Vectorized over v.
+    Vectorized over v.  Raises if ln Lambda <= 0 (mirrors the exception
+    in collisions.h): the binary-collision model is undefined there.
     """
     v_th = np.sqrt(2.0 * T_b / m_b)
     m_r = m_a * m_b / (m_a + m_b)
     v_eff_sq = v * v + v_th * v_th
     b_cl = np.abs(q_a * q_b) / (4.0 * np.pi * EPS0 * m_r * v_eff_sq)
     b_qm = HBAR / (2.0 * m_r * np.sqrt(v_eff_sq))
-    return np.log(lambda_D / np.maximum(b_cl, b_qm))
+    lnL = np.log(lambda_D / np.maximum(b_cl, b_qm))
+    if np.any(lnL <= 0.0):
+        raise ValueError(
+            f"ln_Lambda <= 0 (min {np.min(lnL):.3f}): unphysical Coulomb "
+            "logarithm; keep the background temperature finite where n > 0"
+        )
+    return lnL
 
 
 def collision_coefficients(v, m_a, q_a, species):

@@ -144,6 +144,18 @@ class TestMaxwellianRelaxation(unittest.TestCase):
         )
 
 
+class TestUnphysicalCoulombLog(unittest.TestCase):
+    """ln Lambda <= 0 must raise (mirrors the collisions.h exception)."""
+
+    def test_coulomb_log_raises(self):
+        from tests.field.collision_helpers import collision_coefficients
+
+        cold_dense = [(ELECTRON_MASS, -E_CHARGE, 1e30, 1e-3 * ONE_EV)]
+        v = np.array([np.sqrt(2.0 * 3.52e6 * ONE_EV / ALPHA_MASS)])
+        with self.assertRaises(ValueError):
+            collision_coefficients(v, ALPHA_MASS, 2 * E_CHARGE, cold_dense)
+
+
 class TestDeterministicDrift(unittest.TestCase):
     """Short-time mean drift of the ensemble must match K(v0)."""
 
