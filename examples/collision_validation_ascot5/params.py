@@ -80,6 +80,25 @@ N_SAVE = 100
 DT_SAVE = TMAX / N_SAVE
 
 
+def set_case(density=None, n_markers=None):
+    """Override the default case (e.g. the published ASCOT5 test point
+    n = 1e20 with more markers on an HPC system) and recompute the
+    derived quantities."""
+    global DENSITY, N_MARKERS, TMAX, DT_SAVE
+    if density is not None:
+        DENSITY = density
+    if n_markers is not None:
+        N_MARKERS = n_markers
+    TMAX = 1.8 * analytic_slowing_time()
+    DT_SAVE = TMAX / N_SAVE
+
+
+def add_case_arguments(parser):
+    """Common CLI arguments for the run scripts."""
+    parser.add_argument("--density", type=float, default=None)
+    parser.add_argument("--nmarkers", type=int, default=None)
+
+
 def initial_pitches():
     """Shared initial pitch samples (uniform in [-1, 1], fixed seed)."""
     rng = np.random.default_rng(SEED)

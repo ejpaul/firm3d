@@ -28,7 +28,9 @@ def main():
         default="/Users/elizabethpaul/Documents/Research/ascot5/build/ascot5_main",
     )
     parser.add_argument("--outdir", default=".")
+    params.add_case_arguments(parser)
     args = parser.parse_args()
+    params.set_case(density=args.density, n_markers=args.nmarkers)
 
     fn = os.path.join(args.outdir, "validation_ascot5.h5")
     if os.path.exists(fn):
