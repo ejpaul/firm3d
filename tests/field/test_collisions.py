@@ -56,6 +56,36 @@ from firm3d.util.constants import (
     VACUUM_PERMITTIVITY,
 )
 
+
+def _mpi_comm():
+    """MPI communicator when launched under an MPI launcher, else None.
+
+    The tracer distributes particles over ranks and allgathers the
+    results, so every rank sees identical data and runs identical
+    assertions.  Per-particle RNG seeds are rank-independent, making the
+    results bit-identical to a serial run.  Launch e.g. with
+    srun -n 64 python -m pytest tests/field/test_collisions.py -m slow
+    (see tests/perlmutter/run_slow_tests.sh).  mpi4py is only imported
+    when an MPI launcher is detected, so serial runs never touch MPI.
+    """
+    import os
+
+    if (
+        int(os.environ.get("SLURM_NTASKS", "1")) > 1
+        or int(os.environ.get("PMI_SIZE", "1")) > 1
+        or int(os.environ.get("OMPI_COMM_WORLD_SIZE", "1")) > 1
+    ):
+        try:
+            from mpi4py import MPI
+
+            return MPI.COMM_WORLD
+        except ImportError:
+            return None
+    return None
+
+
+_COMM = _mpi_comm()
+
 ELECTRON_MASS = 9.1093837015e-31  # kg
 
 # ---------------------------------------------------------------------------
@@ -880,6 +910,7 @@ class TestCollisionPhysics(unittest.TestCase):
             dt_save=5e-6,
             forget_exact_path=True,
             rng_seed=0,
+            comm=_COMM,
             DP_hmin=1e-10,
         )
         v_final = np.array([t[-1, 5] for t in res_tys])
@@ -929,6 +960,7 @@ class TestCollisionPhysics(unittest.TestCase):
             dt_save=tmax,
             forget_exact_path=True,
             rng_seed=0,
+            comm=_COMM,
             DP_hmin=1e-10,
         )
         res_two, _ = trace_particles_boozer_with_collisions(
@@ -944,6 +976,7 @@ class TestCollisionPhysics(unittest.TestCase):
             dt_save=tmax,
             forget_exact_path=True,
             rng_seed=0,
+            comm=_COMM,
             DP_hmin=1e-10,
         )
         v_one = np.mean([t[-1, 5] for t in res_one])
@@ -1012,6 +1045,7 @@ class TestCollisionPhysics(unittest.TestCase):
             dt_save=tmax,
             forget_exact_path=True,
             rng_seed=0,
+            comm=_COMM,
             DP_hmin=1e-10,
         )
 
@@ -1118,6 +1152,7 @@ class TestPitchIsotropization(unittest.TestCase):
             dt_save=tmax,
             forget_exact_path=True,
             rng_seed=0,
+            comm=_COMM,
             stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
         )
         self._assert_confined(res_tys, tmax)
@@ -1178,6 +1213,7 @@ class TestPitchIsotropization(unittest.TestCase):
             dt_save=tmax,
             forget_exact_path=True,
             rng_seed=0,
+            comm=_COMM,
             stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
         )
         self._assert_confined(res_tys, tmax)
