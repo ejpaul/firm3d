@@ -133,7 +133,6 @@ class OrbitClassification:
         helicity_N,
         barely_trapped_crit=2 * np.pi * 1.25,
         ripple_trapped_crit=0.5,
-        ripple_trapped_crit_min=0.05,
     ):
         r"""
         Initialize the OrbitClassification class.
@@ -614,12 +613,11 @@ class OrbitClassification:
                 dchis > self.barely_trapped_crit
             ) / len(dchis)
             ripple_trapped_frac = np.count_nonzero(
-                (dchis < self.ripple_trapped_crit * dchis_predicted) & (np.abs(dchis_predicted) > self.ripple_trapped_crit_min*2*np.pi)
+                dchis < self.ripple_trapped_crit * dchis_predicted
             ) / len(dchis)
             banana_frac = np.count_nonzero(
                 (dchis <= self.barely_trapped_crit)
                 * (dchis >= self.ripple_trapped_crit * dchis_predicted)
-                * (np.abs(dchis_predicted) > self.ripple_trapped_crit_min*2*np.pi)
             ) / len(dchis)
 
             # Count transitions between different trapping states
