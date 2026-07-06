@@ -41,7 +41,18 @@ def field():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--outdir", default=".")
+    params.add_case_arguments(parser)
     args = parser.parse_args()
+    params.set_case(density=args.density, n_markers=args.nmarkers)
+
+    try:
+        from mpi4py import MPI
+
+        comm = MPI.COMM_WORLD
+        rank = comm.rank
+    except ImportError:
+        comm = None
+        rank = 0
 
     T = params.TEMPERATURE_EV * params.EV
     electrons = ThermalBackground(
@@ -82,8 +93,11 @@ def main():
         tol=1e-8,
         dt_save=params.DT_SAVE,
         rng_seed=params.SEED,
+        comm=comm,
         stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
     )
+    if rank != 0:
+        return
     print(f"firm3d tracing: {walltime.time() - t0:.1f} s wall")
 
     tgrid = params.DT_SAVE * np.arange(1, params.N_SAVE + 1)

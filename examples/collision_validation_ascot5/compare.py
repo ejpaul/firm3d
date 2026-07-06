@@ -25,7 +25,9 @@ import params
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--outdir", default=".")
+    params.add_case_arguments(parser)
     args = parser.parse_args()
+    params.set_case(density=args.density, n_markers=args.nmarkers)
 
     f3d = np.load(os.path.join(args.outdir, "firm3d_moments.npz"))
     a5 = np.load(os.path.join(args.outdir, "ascot5_moments.npz"))
