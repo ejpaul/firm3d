@@ -17,3 +17,17 @@ states.
 
 Run on Perlmutter:   sbatch sample_slurm.sh     (~1-2 h on one CPU node)
 Local smoke test:    python fusion_distribution_collisional.py --smoke
+
+Reference results (2026-07-06, Perlmutter, 1 CPU node x 128 ranks,
+13 min in the debug queue; commit 3499735e):
+  particle losses at 150 ms:  19-21 % with collisions
+                              1.2 %  collisionless (prompt orbit losses)
+  energy loss fraction (wall loading): 7.6 % of total birth energy
+  (particle vs energy loss differ because late losses are increasingly
+  thermalized ash)
+  lost-alpha energies: bimodal -- prompt losses at 3.3-3.5 MeV plus a
+  slowed population peaking near 0.5 MeV
+  time-integrated slowing-down spectrum vs the classical distribution
+  (E_c = 266 keV): mean |relative residual| 4.7 % over 0.9-3.3 MeV
+  (below ~0.8 MeV the 150 ms window has not yet fully populated the
+  steady-state equivalent spectrum)
