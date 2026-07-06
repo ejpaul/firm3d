@@ -19,9 +19,10 @@
 #
 # Usage: sbatch sample_slurm.sh [outdir]
 
-module load cpu 2>/dev/null
-module unload craype-accel-nvidia80 cudatoolkit 2>/dev/null
 module load python cray-hdf5/1.14.3.7 cray-netcdf/4.9.2.1
+# cudatoolkit at RUNTIME only (booz_xform in the environment links
+# libcudart); keep it out of the BUILD environment per the note above.
+module load cudatoolkit 2>/dev/null
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate firm3d-ci
 
