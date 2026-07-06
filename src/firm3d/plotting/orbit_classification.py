@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.interpolate import PchipInterpolator
 
 __all__ = ["OrbitClassification"]
 
@@ -104,11 +105,7 @@ def _monotonic_fit(x, y, x_eval=None, increasing=True):
 
     y_mono = _isotonic_regression(y, increasing=increasing)
     sort_idx = np.argsort(x)
-    from scipy.interpolate import PchipInterpolator
-
-    return PchipInterpolator(x[sort_idx], y_mono[sort_idx], extrapolate=False)(
-        x_eval
-    )
+    return PchipInterpolator(x[sort_idx], y_mono[sort_idx], extrapolate=False)(x_eval)
 
 
 def _chi_branch_shift(chi_ref, chi_target, period=2 * np.pi):
@@ -413,6 +410,9 @@ class OrbitClassification:
             lam_traj = (2 * self.Ekin / self.mass - vpar_traj**2) / (
                 modB_traj * 2 * self.Ekin / self.mass
             )
+            # Clip lam_traj to a small positive floor before inversion to guard
+            # against numerical noise pushing near-zero values to zero or negative.
+            lam_traj = np.maximum(lam_traj, 1e-30)
             modB_crit_traj = np.mean(1 / lam_traj)
 
             # Compute radial excursion during this bounce
@@ -457,6 +457,12 @@ class OrbitClassification:
             #   θ = (N*α − ι*χ) / (N − ι*M)
             #   ζ = (M*α − χ)   / (N − ι*M)
             _denom = self.helicity_N - iota_s * self.helicity_M
+            if np.abs(_denom) < 1e-10:
+                raise ValueError(
+                    f"Helicity vector (M={self.helicity_M}, N={self.helicity_N}) "
+                    f"is aligned with the field-line pitch (iota={iota_s:.6f}): "
+                    "N - iota*M = 0.  Cannot sweep chi at fixed alpha."
+                )
             chi_grid_mean = np.linspace(
                 chi_traj_center - 2 * np.pi,
                 chi_traj_center + 2 * np.pi,
@@ -536,41 +542,49 @@ class OrbitClassification:
             # Classification quantities derived from already-available variables.
             dalpha = dtheta - iota_s * dzeta
             dalphas.append(dalpha)
-            gammac = (2 / np.pi) * np.arctan(np.abs(ds) / np.abs(dalpha))
+            # Use a small floor on |dalpha| to avoid division by zero for
+            # orbits that are exactly tangential (dalpha=0 → gammac=1).
+            gammac = (2 / np.pi) * np.arctan(
+                np.abs(ds) / np.maximum(np.abs(dalpha), 1e-30)
+            )
             gammacs.append(gammac)
 
             # Predicted dchi: 2× distance from chi_min to the nearer mirror point.
-            dchi_predicted = np.min([
-                np.abs(2 * (chi_mirror_left  - chi_min)),
-                np.abs(2 * (chi_mirror_right - chi_min)),
-                2 * np.pi,
-            ])
+            dchi_predicted = np.min(
+                [
+                    np.abs(2 * (chi_mirror_left - chi_min)),
+                    np.abs(2 * (chi_mirror_right - chi_min)),
+                    2 * np.pi,
+                ]
+            )
             dchis_predicted.append(dchi_predicted)
 
             # Per-segment data for plot_bounce_segment.  Field-line sweep and
             # monotonic-fit arrays are stored here so plot_bounce_segment only
             # needs to unpack and plot (no re-evaluation of the field).
-            debug_data.append({
-                'dchi': dchi,
-                'dchi_predicted': dchi_predicted,
-                'modB_crit': modB_crit,
-                'modB_crit_traj': modB_crit_traj,
-                'chi_min': chi_min,
-                'chi_mirror_left': chi_mirror_left,
-                'chi_mirror_right': chi_mirror_right,
-                'mean_s': mean_s,
-                'mean_alpha': mean_alpha,
-                'iota_s': iota_s,
-                'chi_traj_center': chi_traj_center,
-                'res_ty_segment': res_ty[index_start:index_end + 1, :].copy(),
-                # Field-line sweep and monotonic well (precomputed for plotting)
-                'chi_grid_mean': chi_grid_mean.copy(),
-                'modB_grid_mean': modB.copy(),
-                'chi_left_mon': chi_left.copy(),
-                'chi_right_mon': chi_right.copy(),
-                'modB_left_mon': modB_left_mon.copy(),
-                'modB_right_mon': modB_right_mon.copy(),
-            })
+            debug_data.append(
+                {
+                    "dchi": dchi,
+                    "dchi_predicted": dchi_predicted,
+                    "modB_crit": modB_crit,
+                    "modB_crit_traj": modB_crit_traj,
+                    "chi_min": chi_min,
+                    "chi_mirror_left": chi_mirror_left,
+                    "chi_mirror_right": chi_mirror_right,
+                    "mean_s": mean_s,
+                    "mean_alpha": mean_alpha,
+                    "iota_s": iota_s,
+                    "chi_traj_center": chi_traj_center,
+                    "res_ty_segment": res_ty[index_start : index_end + 1, :].copy(),
+                    # Field-line sweep and monotonic well (precomputed for plotting)
+                    "chi_grid_mean": chi_grid_mean.copy(),
+                    "modB_grid_mean": modB.copy(),
+                    "chi_left_mon": chi_left.copy(),
+                    "chi_right_mon": chi_right.copy(),
+                    "modB_left_mon": modB_left_mon.copy(),
+                    "modB_right_mon": modB_right_mon.copy(),
+                }
+            )
 
             # Compute parallel action variable J_|| = ∮ v_|| dℓ_|| / (2π)
             # Using the canonical form: J_|| = ∫ v_|| dζ / (b·∇ζ)
@@ -688,7 +702,7 @@ class OrbitClassification:
             ) / len(dchis)
             banana_frac = np.count_nonzero(
                 (dchis <= self.barely_trapped_crit)
-                * (dchis >= self.ripple_trapped_crit * dchis_predicted)
+                & (dchis >= self.ripple_trapped_crit * dchis_predicted)
             ) / len(dchis)
 
             # Count transitions between different trapping states
@@ -750,21 +764,21 @@ class OrbitClassification:
         import matplotlib.pyplot as plt
 
         # --- Unpack precomputed data from classify_orbit ---
-        dchi = data['dchi']
-        dchi_predicted = data['dchi_predicted']
-        modB_crit = data['modB_crit']
-        modB_crit_traj = data['modB_crit_traj']
-        chi_min = data['chi_min']
-        chi_mirror_left = data['chi_mirror_left']
-        chi_mirror_right = data['chi_mirror_right']
-        res_ty_seg = data['res_ty_segment']
-        chi_traj_center = data['chi_traj_center']
-        chi_grid_mean = data['chi_grid_mean']
-        modB_grid_mean = data['modB_grid_mean']
-        chi_left_mon = data['chi_left_mon']
-        chi_right_mon = data['chi_right_mon']
-        modB_left_mon = data['modB_left_mon']
-        modB_right_mon = data['modB_right_mon']
+        dchi = data["dchi"]
+        dchi_predicted = data["dchi_predicted"]
+        modB_crit = data["modB_crit"]
+        modB_crit_traj = data["modB_crit_traj"]
+        chi_min = data["chi_min"]
+        chi_mirror_left = data["chi_mirror_left"]
+        chi_mirror_right = data["chi_mirror_right"]
+        res_ty_seg = data["res_ty_segment"]
+        chi_traj_center = data["chi_traj_center"]
+        chi_grid_mean = data["chi_grid_mean"]
+        modB_grid_mean = data["modB_grid_mean"]
+        chi_left_mon = data["chi_left_mon"]
+        chi_right_mon = data["chi_right_mon"]
+        modB_left_mon = data["modB_left_mon"]
+        modB_right_mon = data["modB_right_mon"]
 
         # --- Trajectory arrays (field evaluation on trajectory points only) ---
         point = np.zeros((len(res_ty_seg), 3))
@@ -793,27 +807,45 @@ class OrbitClassification:
         # --- Figure 1: Full field-line well ---
         fig1 = plt.figure()
         plt.plot(
-            chi_field, modB_grid_mean,
-            color="blue", label=r"$\alpha_{\rm mean}$", zorder=1,
+            chi_field,
+            modB_grid_mean,
+            color="blue",
+            label=r"$\alpha_{\rm mean}$",
+            zorder=1,
         )
         plt.plot(
-            chi_left_mon_plot, modB_left_mon,
-            color="magenta", linewidth=2, linestyle="-",
-            label=r"monotonic well", zorder=3,
+            chi_left_mon_plot,
+            modB_left_mon,
+            color="magenta",
+            linewidth=2,
+            linestyle="-",
+            label=r"monotonic well",
+            zorder=3,
         )
         plt.plot(
-            chi_right_mon_plot, modB_right_mon,
-            color="magenta", linewidth=2, linestyle="-", zorder=3,
+            chi_right_mon_plot,
+            modB_right_mon,
+            color="magenta",
+            linewidth=2,
+            linestyle="-",
+            zorder=3,
         )
         plt.plot(
-            chi_traj_plot, modB_traj,
-            color="black", label="trajectory", linestyle="--", zorder=5,
+            chi_traj_plot,
+            modB_traj,
+            color="black",
+            label="trajectory",
+            linestyle="--",
+            zorder=5,
         )
         plt.axhline(modB_crit, color="red", label=r"$B_{\rm crit}$")
         plt.axhline(modB_crit_traj, color="green", label=r"$B_{\rm crit, traj}$")
         plt.axvline(
             chi_traj_center_plot,
-            color="gray", linestyle="-.", linewidth=1.5, label=r"$\chi_{\rm center}$",
+            color="gray",
+            linestyle="-.",
+            linewidth=1.5,
+            label=r"$\chi_{\rm center}$",
         )
         plt.ylim(modB_grid_mean.min(), modB_grid_mean.max())
         plt.xlabel(r"$\chi$")
@@ -824,17 +856,16 @@ class OrbitClassification:
             plt.show()
 
         # --- Figure 2: Zoom on trajectory χ window ---
-        chi_ptp    = np.ptp(chi_traj_plot)
+        chi_ptp = np.ptp(chi_traj_plot)
         chi_margin = max(0.01, 0.1 * chi_ptp) if chi_ptp > 0 else 0.01
-        chi_xlim   = (chi_traj_plot.min() - chi_margin,
-                      chi_traj_plot.max() + chi_margin)
+        chi_xlim = (chi_traj_plot.min() - chi_margin, chi_traj_plot.max() + chi_margin)
 
         def _in_win(chi_arr):
             return (chi_arr >= chi_xlim[0]) & (chi_arr <= chi_xlim[1])
 
-        field_mask     = _in_win(chi_field)
+        field_mask = _in_win(chi_field)
 
-        mon_left_mask  = _in_win(chi_left_mon_plot)
+        mon_left_mask = _in_win(chi_left_mon_plot)
         mon_right_mask = _in_win(chi_right_mon_plot)
         b_parts = [modB_traj, np.array([modB_crit])]
         if field_mask.any():
@@ -850,23 +881,40 @@ class OrbitClassification:
         fig2 = plt.figure()
         if np.any(field_mask):
             plt.plot(
-                chi_field[field_mask], modB_grid_mean[field_mask],
-                color="blue", label=r"$\alpha_{\rm mean}$",
-                linestyle="--", linewidth=1.5, zorder=2,
+                chi_field[field_mask],
+                modB_grid_mean[field_mask],
+                color="blue",
+                label=r"$\alpha_{\rm mean}$",
+                linestyle="--",
+                linewidth=1.5,
+                zorder=2,
             )
         plt.plot(
-            chi_left_mon_plot, modB_left_mon,
-            color="magenta", linewidth=2, linestyle="-",
-            label="monotonic well", zorder=4,
+            chi_left_mon_plot,
+            modB_left_mon,
+            color="magenta",
+            linewidth=2,
+            linestyle="-",
+            label="monotonic well",
+            zorder=4,
         )
         plt.plot(
-            chi_right_mon_plot, modB_right_mon,
-            color="magenta", linewidth=2, linestyle="-", zorder=4,
+            chi_right_mon_plot,
+            modB_right_mon,
+            color="magenta",
+            linewidth=2,
+            linestyle="-",
+            zorder=4,
         )
         plt.plot(
-            chi_traj_plot, modB_traj,
-            color="black", linestyle="--", marker="o", markersize=4,
-            label="trajectory", zorder=3,
+            chi_traj_plot,
+            modB_traj,
+            color="black",
+            linestyle="--",
+            marker="o",
+            markersize=4,
+            label="trajectory",
+            zorder=3,
         )
         plt.axhline(modB_crit, color="red", label=r"$B_{\rm crit}$")
         plt.axhline(modB_crit_traj, color="green", label=r"$B_{\rm crit, traj}$")
@@ -891,8 +939,13 @@ class OrbitClassification:
         vpar_traj = res_ty_seg[:, 4]
         fig3 = plt.figure()
         plt.plot(
-            chi_traj_plot, vpar_traj,
-            color="black", linestyle="--", marker="o", markersize=4, zorder=2,
+            chi_traj_plot,
+            vpar_traj,
+            color="black",
+            linestyle="--",
+            marker="o",
+            markersize=4,
+            zorder=2,
         )
         plt.axhline(
             0, color="red", linewidth=1, linestyle="-", label=r"$v_{\parallel}=0$"
@@ -900,7 +953,9 @@ class OrbitClassification:
         if chi_xlim[0] <= chi_traj_center_plot <= chi_xlim[1]:
             plt.axvline(
                 chi_traj_center_plot,
-                color="gray", linestyle=":", label=r"$\chi_{\rm center}$",
+                color="gray",
+                linestyle=":",
+                label=r"$\chi_{\rm center}$",
             )
         plt.xlabel(r"$\chi$")
         plt.ylabel(r"$v_{\parallel}$")
