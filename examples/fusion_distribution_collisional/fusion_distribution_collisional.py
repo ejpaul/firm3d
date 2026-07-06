@@ -205,11 +205,24 @@ if verbose:
     plt.tight_layout()
     plt.savefig("loss_fraction_comparison.png", dpi=150)
 
-    # Confined-alpha energy spectrum vs classical slowing-down
-    # distribution f(E) ~ sqrt(E) / (E^{3/2} + Ec^{3/2}), E < E0
+    # Slowing-down energy spectrum vs the classical distribution
+    # f(E) ~ sqrt(E) / (E^{3/2} + Ec^{3/2}), E < E0.  The classical curve
+    # describes a STEADY-STATE source; time-integrating the E(t) history
+    # of a single birth cohort is ergodically equivalent, so all saved
+    # snapshots (equal dt weights) are pooled as samples.
     plt.figure()
     E_conf = E_end_c[~lost_c]
-    plt.hist(E_conf, bins=40, density=True, alpha=0.6, label="confined alphas (end)")
+    E_samples = np.concatenate(
+        [0.5 * mass * ty[:, 5] ** 2 / (1e6 * ONE_EV) for ty in res_coll]
+    )
+    E_samples = E_samples[(E_samples > 0.05) & (E_samples < 3.5)]
+    plt.hist(
+        E_samples,
+        bins=60,
+        density=True,
+        alpha=0.6,
+        label="time-integrated cohort (= steady state)",
+    )
     # E_c = 14.8 A_alpha T_e [sum_i n_i Z_i^2 / (n_e A_i)]^{2/3}
     # (Stix 1972); 50/50 D-T gives the bracket = 5/12.
     Te_keV = T0_KEV * 0.7  # density-weighted average, roughly
@@ -218,6 +231,8 @@ if verbose:
     fE = np.sqrt(Egrid) / (Egrid**1.5 + Ec_MeV**1.5)
     # normalize over the plotted window
     fE /= np.trapezoid(fE, Egrid)
+    # (classical curve assumes E >> T; the pile-up of thermalized ash at
+    # E ~ T appears as an excess at the lowest energies)
     plt.plot(Egrid, fE, "k:", label="classical slowing-down (shape)")
     plt.xlabel("E [MeV]")
     plt.ylabel("f(E) [1/MeV]")
@@ -236,6 +251,7 @@ if verbose:
 
     np.savez(
         "results_collisional.npz",
+        E_samples_MeV=E_samples,
         t_end=t_end_c,
         E_end_MeV=E_end_c,
         lost=lost_c,
@@ -244,10 +260,16 @@ if verbose:
         loss_times_free=times_f,
         loss_fraction_free=lf_f,
     )
+    E0_MeV = Ekin / (1e6 * ONE_EV)
+    energy_loss_frac = E_end_c[lost_c].sum() / (nParticles * E0_MeV)
     proc0_print(
         f"lost (collisional): {lost_c.sum()}/{nParticles} "
         f"({100 * lost_c.mean():.1f} %); "
         f"final loss fraction collisionless: {lf_f[-1]:.3f}"
+    )
+    proc0_print(
+        f"energy loss fraction (wall loading): {100 * energy_loss_frac:.1f} % "
+        "of total birth energy"
     )
     proc0_print(
         f"confined mean energy at t = tmax: {E_conf.mean():.2f} MeV (birth 3.52 MeV)"

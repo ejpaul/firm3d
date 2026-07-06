@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH -J fusion-alphas-collisional
 #SBATCH -C cpu
-#SBATCH -q regular
+#SBATCH -q debug
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=128
-#SBATCH -t 03:00:00
+#SBATCH -t 00:30:00
 #SBATCH -o fusion-collisional-%j.out
 
 # Reactor-scale alpha slowing-down in Wistell-A (ARIES-CS scale) with
