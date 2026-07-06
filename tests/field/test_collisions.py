@@ -1054,6 +1054,25 @@ class TestPitchIsotropization(unittest.TestCase):
         ν_D × tmax = 0.5, N = 50 → SNR ≈ 5 on ⟨ξ⟩ change).
     """
 
+    @staticmethod
+    def _confining_field():
+        """ITER-scale near-axis field (R0 = 6.2 m, B0 = 5.3 T, psi0 = 10.6).
+
+        3.5 MeV alphas have radial orbit widths delta-s ~ 0.15 here, so
+        markers started at s = 0.3 stay inside the plasma.  In the
+        small-psi0 _field() used elsewhere, alpha orbit widths are order
+        unity: markers escape through s = 1 within a few transits and
+        their states corrupt in the analytic continuation of the field.
+        """
+        return BoozerAnalytic(0.25, 5.3, 0, 32.86, 10.6, 1.0, Bbar=5.3)
+
+    @staticmethod
+    def _assert_confined(res_tys, tmax):
+        t_end = np.array([t[-1, 0] for t in res_tys])
+        v_end = np.array([t[-1, 5] for t in res_tys])
+        assert np.all(t_end >= 0.999 * tmax), "particles lost before tmax"
+        assert np.all(np.isfinite(v_end)), "non-finite final state"
+
     def _background_low_n(self):
         return ThermalBackground(
             n_profile=lambda s: 1e23,
@@ -1087,7 +1106,7 @@ class TestPitchIsotropization(unittest.TestCase):
         vpar = np.zeros(nP)  # ξ₀ = 0: perpendicular particles
 
         res_tys, _ = trace_particles_boozer_with_collisions(
-            _field(),
+            self._confining_field(),
             stz,
             vpar,
             backgrounds=bg,
@@ -1099,8 +1118,9 @@ class TestPitchIsotropization(unittest.TestCase):
             dt_save=tmax,
             forget_exact_path=True,
             rng_seed=0,
-            DP_hmin=1e-10,
+            stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
         )
+        self._assert_confined(res_tys, tmax)
 
         xi_f = np.array([t[-1, 4] / t[-1, 5] for t in res_tys])
         std_xi = np.std(xi_f)
@@ -1146,7 +1166,7 @@ class TestPitchIsotropization(unittest.TestCase):
         vpar = np.full(nP, xi0 * v0)
 
         res_tys, _ = trace_particles_boozer_with_collisions(
-            _field(),
+            self._confining_field(),
             stz,
             vpar,
             backgrounds=bg,
@@ -1158,8 +1178,9 @@ class TestPitchIsotropization(unittest.TestCase):
             dt_save=tmax,
             forget_exact_path=True,
             rng_seed=0,
-            DP_hmin=1e-10,
+            stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
         )
+        self._assert_confined(res_tys, tmax)
 
         xi_final = np.array([t[-1, 4] / t[-1, 5] for t in res_tys])
         mean_xi = np.mean(xi_final)
