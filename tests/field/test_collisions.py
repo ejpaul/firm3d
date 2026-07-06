@@ -803,19 +803,6 @@ class TestMaxwellianEquilibration(unittest.TestCase):
     _N_PART = 40
 
     @staticmethod
-    def _uniform_field():
-        """Near-uniform |B| (etabar ~ 0): no mirror force and no trapped
-        cone, so the uniform-plasma pitch-decay law applies exactly.
-        In a toroidal field the trapped-passing boundary at s = 0.3 sits
-        at xi_t ~ 0.65, just below the xi0 = 0.8 beam: scattered
-        particles fall into the trapped cone where their orbit-sampled
-        xi averages to zero, and <xi> decays ~2x faster than the
-        uniform-plasma law (measured exponent 1.05 vs m_D/m_alpha =
-        0.50) -- real physics, but not what this test verifies.
-        """
-        return BoozerAnalytic(1e-8, 5.3, 0, 32.86, 10.6, 1.0, Bbar=5.3)
-
-    @staticmethod
     def _confining_field():
         """Near-axis field with slow collisional radial transport."""
         return BoozerAnalytic(0.25, 5.0, 0, 40.0, 2.0, 0.8)
@@ -1120,6 +1107,19 @@ class TestPitchIsotropization(unittest.TestCase):
         Used for the quantitative decay test (tmax = 0.5/ν_D ≈ 107 μs,
         ν_D × tmax = 0.5, N = 50 → SNR ≈ 5 on ⟨ξ⟩ change).
     """
+
+    @staticmethod
+    def _uniform_field():
+        """Near-uniform |B| (etabar ~ 0): no mirror force and no trapped
+        cone, so the uniform-plasma pitch-decay law applies exactly.
+        In a toroidal field the trapped-passing boundary at s = 0.3 sits
+        at xi_t ~ 0.65, just below the xi0 = 0.8 beam: scattered
+        particles fall into the trapped cone where their orbit-sampled
+        xi averages to zero, and <xi> decays ~2x faster than the
+        uniform-plasma law (measured exponent 1.05 vs m_D/m_alpha =
+        0.50) -- real physics, but not what this test verifies.
+        """
+        return BoozerAnalytic(1e-8, 5.3, 0, 32.86, 10.6, 1.0, Bbar=5.3)
 
     @staticmethod
     def _confining_field():
