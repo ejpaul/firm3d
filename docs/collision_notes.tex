@@ -173,8 +173,13 @@ i.e.\ when the de~Broglie wavelength of the reduced mass particle exceeds the
 classical distance of closest approach.  For 3.52\,MeV $\alpha$-particles
 scattering off 10\,keV electrons one finds $b_{\mathrm{qm}} \approx 22\,b_{\mathrm{cl}}$,
 so the quantum branch is active throughout alpha slowing-down against electrons.
-A warning is printed if $\lnL < 2$, where the perturbative binary-collision
-expansion underlying the Fokker--Planck operator begins to lose validity.
+If $\lnL \leq 0$ (Debye length below the minimum impact parameter, e.g.\
+$T_b \to 0$ at finite density) the binary-collision model is undefined and
+an exception is raised; ASCOT5 reaches the equivalent outcome by aborting
+markers through its input-evaluation errors, and its input profiles keep
+the temperature finite wherever the density is nonzero.  A warning is
+printed for $0 < \lnL < 2$, where the perturbative expansion underlying
+the Fokker--Planck operator begins to lose validity.
 
 \subsection{Chandrasekhar G Function}
 

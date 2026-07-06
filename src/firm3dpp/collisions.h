@@ -146,6 +146,21 @@ inline CollisionCoefficients compute_collision_coefficients(
         double bqm      = COLL_HBAR / (2.0 * m_r * std::sqrt(v_eff_sq));
         double b_min    = std::max(bcl, bqm);
         double lnL      = std::log(lambda_D / b_min);
+        if (lnL <= 0.0) {
+            // The Debye length is smaller than the minimum impact
+            // parameter: the binary-collision model is undefined and the
+            // coefficients would change sign.  This happens when the
+            // background temperature goes to zero at finite density --
+            // fail loudly (ASCOT5 aborts such markers via its input
+            // evaluation errors) rather than integrate garbage.
+            char msg[256];
+            std::snprintf(msg, sizeof(msg),
+                "collisions: ln_Lambda = %.3f <= 0 (v=%.3e m/s, s=%.3f, "
+                "n_b=%.3e m^-3, T_b=%.3e J): background profiles give an "
+                "unphysical Coulomb logarithm; keep T finite where n > 0",
+                lnL, v, s, n_b, T_b);
+            throw std::runtime_error(msg);
+        }
         if (lnL < 2.0) {
             std::fprintf(stderr,
                 "collisions: warning: ln_Lambda = %.3f < 2 "
