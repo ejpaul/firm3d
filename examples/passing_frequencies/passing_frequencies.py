@@ -65,7 +65,6 @@ poinc = PassingPoincare(
 )
 
 omega_theta_prof, omega_zeta_prof, s_prof = poinc.compute_frequencies()
-print(f'{s_prof=}')
 points = np.zeros((len(s_prof), 3))
 points[:, 0] = s_prof
 field.set_points(points)
