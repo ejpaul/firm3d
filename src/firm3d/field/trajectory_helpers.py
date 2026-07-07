@@ -11,7 +11,7 @@ from ..field.boozermagneticfield import (
     ShearAlfvenHarmonic,
     ShearAlfvenWave,
     ShearAlfvenWavesSuperposition,
-    InterpolatedShearAlfvenWave
+    InterpolatedShearAlfvenWave,
 )
 from ..field.tracing import (
     MaxToroidalFluxStoppingCriterion,
@@ -118,7 +118,7 @@ def min_volumemodB(B0, NFP=None):
 
     s_grid = np.linspace(0, 1, 100)
     theta_grid = np.linspace(0, 2 * np.pi, 100, endpoint=False)
-    zeta_grid = np.linspace(0, 2 * np.pi/NFP, 100, endpoint=False)
+    zeta_grid = np.linspace(0, 2 * np.pi / NFP, 100, endpoint=False)
     [zeta_grid, theta_grid, s_grid] = np.meshgrid(zeta_grid, theta_grid, s_grid)
     points = np.zeros((len(theta_grid.flatten()), 3))
     points[:, 0] = s_grid.flatten()
@@ -1342,7 +1342,7 @@ class TrappedPoincare:
                     final_DAs.append(np.nan)
             # normalized DA values for colormap
             if DA_max is None:
-                DA_max = 7 #np.nanmax(final_DAs)
+                DA_max = 7  # np.nanmax(final_DAs)
 
         def normalize(numbers):
             if not numbers:
@@ -1563,9 +1563,7 @@ def compute_peta(
     return peta
 
 
-def compute_Eprime(
-    saw, points, vpar, mu, mass, charge, helicity_M, helicity_N
-):
+def compute_Eprime(saw, points, vpar, mu, mass, charge, helicity_M, helicity_N):
     r"""
     Compute the invariant Eprime for a ShearAlfvenHarmonic instance given
     points in Boozer coordinates.
@@ -2780,9 +2778,7 @@ class MapEquilibrium:
         if min_DA_time is None:
             min_DA_time = 0
         if min_DA_time > self.tmax:
-            raise ValueError(
-                "min_DA_time must be less than or equal to tmax."
-            )
+            raise ValueError("min_DA_time must be less than or equal to tmax.")
         self.min_DA_time = min_DA_time
 
         # plotting settings
@@ -2796,7 +2792,7 @@ class MapEquilibrium:
         if savedata:
             self.res_filepaths = {
                 "tys": savepath + "DA_data.txt",
-                "ICs": savepath + "initial_conditions.txt"
+                "ICs": savepath + "initial_conditions.txt",
             }
             if exists(self.res_filepaths["ICs"]):
                 load_ics = True
@@ -2816,7 +2812,7 @@ class MapEquilibrium:
             self.nlambda_points = xy_pts
 
         if load_ics:
-            initial_conditions = np.loadtxt(self.res_filepaths['ICs'])
+            initial_conditions = np.loadtxt(self.res_filepaths["ICs"])
             s, thetas, zetas, vpar, mu = (
                 initial_conditions[:, 0],
                 initial_conditions[:, 1],
@@ -3446,8 +3442,10 @@ class MapEquilibrium:
                     self.oom = order
                     self.fformat = fformat
                     super().__init__(useMathText=mathText)
+
                 def _set_order_of_magnitude(self):
                     self.orderOfMagnitude = self.oom
+
                 def _set_format(self):
                     self.format = self.fformat
                     if self._useMathText:
@@ -3455,7 +3453,8 @@ class MapEquilibrium:
 
             ax.yaxis.set_major_formatter(FixedOrderFormatter(peta_exp))
             ax.ticklabel_format(
-                axis='y', scilimits=(0, 0)  # ensure sci notation is used
+                axis="y",
+                scilimits=(0, 0),  # ensure sci notation is used
             )
 
         if plot_losses:
@@ -3726,9 +3725,7 @@ class MapPhaseSpace:
         if min_DA_time is None:
             min_DA_time = 0
         if min_DA_time > self.tmax:
-            raise ValueError(
-                "min_DA_time must be less than or equal to tmax."
-            )
+            raise ValueError("min_DA_time must be less than or equal to tmax.")
         self.min_DA_time = min_DA_time
 
         # plotting settings
@@ -4074,7 +4071,7 @@ class MapPhaseSpace:
         )
 
         lost_tolerance = 5 * self.min_timestep
-        #assert len(gc_tys) == len(points)
+        # assert len(gc_tys) == len(points)
         assert len(gc_tys) == len(points)
 
         # check if any particles were lost to the wall
@@ -4595,9 +4592,8 @@ class MapPhaseSpace:
             # enforce that the trapped fit is larger than the smallest
             # sampled particle in peta and smaller than the
             # largest simulated particle in peta
-            condition = (
-                (boundary_radlike > real_data.min())
-                & (boundary_radlike < real_data.max())
+            condition = (boundary_radlike > real_data.min()) & (
+                boundary_radlike < real_data.max()
             )
             boundary_radlike = boundary_radlike[condition]
             boundary_pitch = boundary_pitch[condition]
@@ -4612,149 +4608,145 @@ class MapPhaseSpace:
         return poly, pitch_fit, radlike_fit
 
     def plot_heatmap(
-            self,
-            nx=None,
-            ny=None,
-            savepath="heatmap_digit_accuracy.pdf",
-            ax=None,
-            DA_max=7,
-            statistic="mean",
-            DA_at_loss=True,
-            plot_losses=False,
-            negate_peta=False,
-            lost_fraction=False,
-        ):
-            r"""
-            Plot a 2D heatmap of digit accuracy in the (pitch, radial-like) plane and
-            overlay the fitted trapped-passing boundary. Optionally overlay loss
-            fractions as triangle markers per bin.
+        self,
+        nx=None,
+        ny=None,
+        savepath="heatmap_digit_accuracy.pdf",
+        ax=None,
+        DA_max=7,
+        statistic="mean",
+        DA_at_loss=True,
+        plot_losses=False,
+        negate_peta=False,
+        lost_fraction=False,
+    ):
+        r"""
+        Plot a 2D heatmap of digit accuracy in the (pitch, radial-like) plane and
+        overlay the fitted trapped-passing boundary. Optionally overlay loss
+        fractions as triangle markers per bin.
 
-            Args:
-                nx : Number of pitch bins.
-                ny : Number of radial bins.
-                savepath : Output file path for the heatmap.
-                ax : Matplotlib axis. If None, a new figure and axis are created.
-                DA_max : Maximum DA value shown on the colorbar.
-                statistic : Aggregation statistic passed to binned_statistic_2d.
-                DA_at_loss : If True, use the DA value at loss; otherwise the final
-                    integration DA.
-                plot_losses : If True, overlay loss-fraction markers per bin.
-                negate_peta : If True, flip the sign of the y axis (useful when
-                    plotting against -p_eta).
+        Args:
+            nx : Number of pitch bins.
+            ny : Number of radial bins.
+            savepath : Output file path for the heatmap.
+            ax : Matplotlib axis. If None, a new figure and axis are created.
+            DA_max : Maximum DA value shown on the colorbar.
+            statistic : Aggregation statistic passed to binned_statistic_2d.
+            DA_at_loss : If True, use the DA value at loss; otherwise the final
+                integration DA.
+            plot_losses : If True, overlay loss-fraction markers per bin.
+            negate_peta : If True, flip the sign of the y axis (useful when
+                plotting against -p_eta).
 
-            Returns:
-                ax : The Matplotlib axis containing the plot.
-            """
-            import matplotlib as mpl
-            import matplotlib.pyplot as plt
+        Returns:
+            ax : The Matplotlib axis containing the plot.
+        """
+        import matplotlib as mpl
+        import matplotlib.pyplot as plt
 
-            if self.verbose:
-                proc0_print("Plotting...")
+        if self.verbose:
+            proc0_print("Plotting...")
 
-            if ax is None:
-                fig, ax = plt.subplots(figsize=(16, 12))
-            else:
-                fig = ax.get_figure()
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(16, 12))
+        else:
+            fig = ax.get_figure()
 
-            try:
-                import cmcrameri.cm as cmc  # noqa: F401
+        try:
+            import cmcrameri.cm as cmc  # noqa: F401
 
-                cmap = "cmc.managua"
+            cmap = "cmc.managua"
 
-            except ImportError:
-                cmap = "viridis"
+        except ImportError:
+            cmap = "viridis"
 
-            if nx is None:
-                nx = int(np.cbrt(len(self.pitch)))
-            if ny is None:
-                ny = int(np.cbrt(len(self.pitch)))
+        if nx is None:
+            nx = int(np.cbrt(len(self.pitch)))
+        if ny is None:
+            ny = int(np.cbrt(len(self.pitch)))
 
-            DA_values = self.DAs_at_loss if DA_at_loss else self.DA_at_tfinal
+        DA_values = self.DAs_at_loss if DA_at_loss else self.DA_at_tfinal
 
-            norm = mpl.colors.Normalize(vmin=0, vmax=DA_max)
+        norm = mpl.colors.Normalize(vmin=0, vmax=DA_max)
 
-            plotting_pitch_normalized = np.array(self.pitch) * self.min_volmodB
+        plotting_pitch_normalized = np.array(self.pitch) * self.min_volmodB
 
-            DA_stats, x_edges, y_edges, binnumber = binned_statistic_2d(
+        DA_stats, x_edges, y_edges, binnumber = binned_statistic_2d(
+            plotting_pitch_normalized,
+            np.array(self.Plot_Radial),
+            np.array(DA_values),
+            statistic=statistic,
+            bins=[nx, ny],
+        )
+
+        X, Y = np.meshgrid(x_edges, y_edges)
+        if negate_peta:
+            Y *= -1
+        im2 = ax.pcolormesh(X, Y, DA_stats.T, shading="auto", cmap=cmap, norm=norm)
+
+        poly, pa_fit, rad_fit = self.return_peta_trapped_contoured_boundary(
+            negate_peta=negate_peta
+        )
+        self.trapped_boundary_fit = poly
+        self.trapped_boundary_fit_pitch = pa_fit
+        self.trapped_boundary_fit_radial = rad_fit
+
+        if pa_fit is not None and rad_fit is not None:
+            ax.plot(pa_fit, rad_fit, color="gray", linewidth=10)
+        else:
+            proc0_print("Fitting Trapped Passing Boundary Failed")
+
+        colorlabel = "Digit Accuracy"
+
+        if plot_losses:
+            from matplotlib.cm import ScalarMappable
+            from matplotlib.colors import Normalize
+
+            lost_stat = "mean" if lost_fraction else "max"
+            lost_frac, x_edges, y_edges, _ = binned_statistic_2d(
                 plotting_pitch_normalized,
                 np.array(self.Plot_Radial),
-                np.array(DA_values),
-                statistic=statistic,
+                np.array(self.lost_total),
+                statistic=lost_stat,
                 bins=[nx, ny],
             )
-
-            X, Y = np.meshgrid(x_edges, y_edges)
+            x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
+            y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
+            Xc, Yc = np.meshgrid(x_centers, y_centers)
+            xf = Xc.ravel()
+            yf = Yc.ravel()
+            lost_frac = np.nan_to_num(lost_frac, nan=0.0)
+            af = lost_frac.T.ravel()
             if negate_peta:
-                Y *= -1
-            im2 = ax.pcolormesh(X, Y, DA_stats.T, shading="auto", cmap=cmap, norm=norm)
-
-            poly, pa_fit, rad_fit = self.return_peta_trapped_contoured_boundary(
-                negate_peta=negate_peta
+                yf = yf * -1
+            sm = ScalarMappable(cmap="Reds", norm=Normalize(vmin=0, vmax=1))
+            sm.set_array([])  # avoids warnings on older matplotlib
+            ax.scatter(
+                xf,
+                yf,
+                marker="s",
+                s=100,
+                c="red",
+                alpha=af,
+                zorder=10,
             )
-            self.trapped_boundary_fit = poly
-            self.trapped_boundary_fit_pitch = pa_fit
-            self.trapped_boundary_fit_radial = rad_fit
+            if lost_fraction:
+                fig.colorbar(sm, ax=ax, label="Particle Loss Fraction")
 
-            if pa_fit is not None and rad_fit is not None:
-                ax.plot(
-                    pa_fit,
-                    rad_fit,
-                    color="gray",
-                    linewidth=10
-                )
+        ax.set_xlabel(r"$\lambda = \frac{\mu}{E} \text{sign}(v_{\|})$")
+
+        if self.plot_s:
+            ax.set_ylabel(r"$s$")
+        else:
+            if negate_peta:
+                ax.set_ylabel(r"$-P_\eta$")
             else:
-                proc0_print("Fitting Trapped Passing Boundary Failed")
+                ax.set_ylabel(r"$P_\eta$")
 
-            colorlabel = "Digit Accuracy"
-
-            if plot_losses:
-                from matplotlib.cm import ScalarMappable
-                from matplotlib.colors import Normalize
-                lost_stat = "mean" if lost_fraction else "max"
-                lost_frac, x_edges, y_edges, _ = binned_statistic_2d(
-                    plotting_pitch_normalized,
-                    np.array(self.Plot_Radial),
-                    np.array(self.lost_total),
-                    statistic=lost_stat,
-                    bins=[nx, ny],
-                )
-                x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
-                y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
-                Xc, Yc = np.meshgrid(x_centers, y_centers)
-                xf = Xc.ravel()
-                yf = Yc.ravel()
-                lost_frac = np.nan_to_num(lost_frac, nan=0.0)
-                af = lost_frac.T.ravel()
-                if negate_peta:
-                    yf = yf * -1
-                sm = ScalarMappable(cmap='Reds', norm=Normalize(vmin=0, vmax=1))
-                sm.set_array([])  # avoids warnings on older matplotlib
-                ax.scatter(
-                    xf,
-                    yf,
-                    marker="s",
-                    s=100,
-                    c='red',
-                    alpha=af,
-                    zorder=10,
-                )
-                if lost_fraction:
-                    fig.colorbar(sm, ax=ax, label="Particle Loss Fraction")
-
-            ax.set_xlabel(r"$\lambda = \frac{\mu}{E} \text{sign}(v_{\|})$")
-
-            if self.plot_s:
-                ax.set_ylabel(r"$s$")
-            else:
-                if negate_peta:
-                    ax.set_ylabel(r"$-P_\eta$")
-                else:
-                    ax.set_ylabel(r"$P_\eta$")
-
-            fig.tight_layout()
-            fig.colorbar(im2, ax=ax, label=colorlabel)
-            plt.savefig(savepath, dpi=400)
-            return ax
+        fig.tight_layout()
+        fig.colorbar(im2, ax=ax, label=colorlabel)
+        plt.savefig(savepath, dpi=400)
+        return ax
 
 
 class WBAPerturbedParticles:

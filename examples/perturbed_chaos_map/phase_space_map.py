@@ -495,7 +495,6 @@ if verbose:
                 if trapped_passing_line_pitch[0] < resonance_pitch[0]:
                     continue
 
-
                 diff = trapped_passing_fit - s_fit
                 sign_changes = np.where(np.sign(diff[:-1]) != np.sign(diff[1:]))[0]
 
