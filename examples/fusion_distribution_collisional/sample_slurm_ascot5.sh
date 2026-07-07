@@ -13,11 +13,23 @@
 # dominates at ~50 min for nphi=180 on comparable hardware; the
 # GC-adaptive tracing phase after that uses OpenMP threading.
 #
-# One-time setup on a Perlmutter login node:
+# One-time setup on a Perlmutter login node.  Two source patches are
+# required beyond a stock ASCOT5 checkout; see run_ascot5_wistell.py's
+# module docstring for the full diagnosis of each (a Wiener-array
+# capacity limit, and a near-axis floating-point edge case in the
+# generic rho evaluator that has no compile-time escape hatch):
 #   git clone https://github.com/ascot4fusion/ascot5.git ~/ascot5
 #   sed -i 's/#define WIENERSLOTS 20/#define WIENERSLOTS 200/' \
-#       ~/ascot5/src/ascot5.h   # default array is too small; see
-#                               # run_ascot5_wistell.py's module docstring
+#       ~/ascot5/src/ascot5.h
+#   # In ~/ascot5/src/B_field.c, B_field_eval_rho(): replace
+#   #     if( (psi - psi0) / delta < 0 ) {
+#   #          err = error_raise( ERR_INPUT_UNPHYSICAL, __LINE__, EF_B_FIELD );
+#   #     } else {
+#   # with
+#   #     if( (psi - psi0) / delta < 0 ) {
+#   #         rho[0] = 0.0;
+#   #         rho[1] = 0.0;
+#   #     } else {
 #   module load cpu cray-hdf5/1.14.3.7
 #   cd ~/ascot5 && make ascot5_main CC=cc -j8 -C src ascot5_main \
 #       && make libascot CC=cc -j8
