@@ -44,18 +44,30 @@ def main():
     n_a = a5["lost"].size
     tmax = max(f3d["t_end"].max(), a5["t_end"].max())
 
+    # ASCOT5 markers can abort (numerical edge cases in the B_STS spline
+    # / collision-operator Wiener array; see run_ascot5_wistell.py) with
+    # an unreliable final state; firm3d has no equivalent failure mode.
+    # Excluded from both the numerator and denominator of the ASCOT5
+    # loss fraction below, and reported separately so it isn't silently
+    # absorbed into "confined".
+    aborted_a = a5["aborted"] if "aborted" in a5.files else np.zeros(n_a, dtype=bool)
+    n_a_valid = n_a - aborted_a.sum()
+
     lost_f = f3d["lost"]
-    lost_a = a5["lost"]
+    lost_a = a5["lost"][~aborted_a]
     pf, pa = lost_f.mean(), lost_a.mean()
     sf = np.sqrt(pf * (1 - pf) / n_f)
-    sa = np.sqrt(pa * (1 - pa) / n_a)
+    sa = np.sqrt(pa * (1 - pa) / n_a_valid)
 
     ef = f3d["E_end_MeV"][lost_f].sum() / (n_f * args.e0_mev)
-    ea = a5["e_end_MeV"][lost_a].sum() / (n_a * args.e0_mev)
+    ea = a5["e_end_MeV"][~aborted_a][lost_a].sum() / (n_a_valid * args.e0_mev)
 
     print("=" * 64)
     print("Wistell-A (ARIES-CS scale) collisional alphas: firm3d vs ASCOT5")
-    print(f"N = {n_f} (firm3d) / {n_a} (ASCOT5)")
+    print(
+        f"N = {n_f} (firm3d) / {n_a} (ASCOT5, {aborted_a.sum()} aborted -> "
+        f"{n_a_valid} valid)"
+    )
     print("=" * 64)
     print(f"{'':30s} {'firm3d':>10s} {'ASCOT5':>10s}")
     print(
@@ -67,9 +79,12 @@ def main():
     sig = abs(pf - pa) / np.hypot(sf, sa)
     print(f"{'particle-loss difference':30s} {sig:>9.1f} sigma")
 
+    t_end_a_valid = a5["t_end"][~aborted_a]
+    e_end_a_valid = a5["e_end_MeV"][~aborted_a]
+
     plt.figure()
     tf, ff = loss_curve(f3d["t_end"][lost_f], n_f, 1e-5, tmax)
-    ta, fa = loss_curve(a5["t_end"][lost_a], n_a, 1e-5, tmax)
+    ta, fa = loss_curve(t_end_a_valid[lost_a], n_a_valid, 1e-5, tmax)
     plt.loglog(tf, ff, label="firm3d")
     plt.loglog(ta, fa, "--", label="ASCOT5")
     plt.xlabel("Time [s]")
@@ -83,7 +98,7 @@ def main():
     plt.figure()
     bins = np.linspace(0, args.e0_mev, 30)
     plt.hist(f3d["E_end_MeV"][lost_f], bins=bins, alpha=0.5, label="firm3d")
-    plt.hist(a5["e_end_MeV"][lost_a], bins=bins, alpha=0.5, label="ASCOT5")
+    plt.hist(e_end_a_valid[lost_a], bins=bins, alpha=0.5, label="ASCOT5")
     plt.xlabel("E at loss [MeV]")
     plt.ylabel("lost alphas")
     plt.legend()
