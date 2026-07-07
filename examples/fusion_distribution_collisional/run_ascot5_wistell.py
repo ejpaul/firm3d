@@ -100,7 +100,12 @@ def main():
 
     n = 8 if args.smoke else args.nmarkers
     tmax = 2e-3 if args.smoke else args.tmax
-    res = (120, 64, 64) if args.smoke else (360, 160, 160)  # nphi, nr, nz
+    # nphi, nr, nz for the B_STS import.  The a5py importer does a pure-
+    # Python inverse-VMEC mapping per grid point, so cost scales directly
+    # with grid size: (180, 120, 120) imports in tens of minutes and gives
+    # 45 toroidal points per field period (nfp = 4), comparable to the
+    # firm3d Boozer grid (48 per period).
+    res = (120, 64, 64) if args.smoke else (180, 120, 120)
 
     fn = os.path.join(args.outdir, "wistell_ascot5.h5")
     if os.path.exists(fn):
