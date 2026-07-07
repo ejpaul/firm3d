@@ -569,7 +569,7 @@ class PassingPoincare:
             self.s_all, self.thetas_all, self.vpars_all, self.t_all, self.peta_all
         ):
             if (
-                len(init_s) < 2
+                len(s_traj) < 2
             ):  # Need at least one full Poincare return maps to compute frequency
                 continue
             delta_theta = np.array(theta_traj[1:]) - np.array(theta_traj[0:-1])
