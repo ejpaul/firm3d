@@ -584,7 +584,7 @@ class PassingPoincare:
                 init_peta.append(np.mean(peta_traj))
         else:
             for s_traj, theta_traj, _vpar_traj, t_traj in zip(
-                self.s_all, self.thetas_all, self.vpars_all,  self.t_all
+                self.s_all, self.thetas_all, self.vpars_all, self.t_all
             ):
                 if (
                     len(s_traj) < 2
