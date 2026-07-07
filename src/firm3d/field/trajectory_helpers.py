@@ -131,11 +131,6 @@ def min_volumemodB(B0, NFP=None):
 
 
 class PassingPoincare:
-    """
-    Class to compute and store passing Poincare maps and related quantities
-    for a given BoozerMagneticField.
-    """
-
     def __init__(
         self,
         field,
@@ -565,26 +560,48 @@ class PassingPoincare:
         omega_zeta = []
         init_s = []
         init_peta = []
-        for s_traj, theta_traj, _vpar_traj, t_traj, peta_traj in zip(
-            self.s_all, self.thetas_all, self.vpars_all, self.t_all, self.peta_all
-        ):
-            if (
-                len(s_traj) < 2
-            ):  # Need at least one full Poincare return maps to compute frequency
-                continue
-            delta_theta = np.array(theta_traj[1:]) - np.array(theta_traj[0:-1])
 
-            delta_t = t_traj[1::]
-            delta_zeta = 2 * np.pi * self.sign_vpar * sign_G
+        if not s_profile:
+            for s_traj, theta_traj, _vpar_traj, t_traj, peta_traj in zip(
+                self.s_all, self.thetas_all, self.vpars_all, self.t_all, self.peta_all
+            ):
+                if (
+                    len(s_traj) < 2
+                ):  # Need at least one full Poincare return maps to compute frequency
+                    continue
+                delta_theta = np.array(theta_traj[1:]) - np.array(theta_traj[0:-1])
 
-            # Average over wells along one field line
-            freq_theta = np.mean(delta_theta) / np.mean(delta_t)
-            freq_zeta = delta_zeta / np.mean(delta_t)
+                delta_t = t_traj[1::]
+                delta_zeta = 2 * np.pi * self.sign_vpar * sign_G
 
-            omega_theta.append(freq_theta)
-            omega_zeta.append(freq_zeta)
-            init_s.append(np.mean(s_traj))
-            init_peta.append(np.mean(peta_traj))
+                # Average over wells along one field line
+                freq_theta = np.mean(delta_theta) / np.mean(delta_t)
+                freq_zeta = delta_zeta / np.mean(delta_t)
+
+                omega_theta.append(freq_theta)
+                omega_zeta.append(freq_zeta)
+                init_s.append(np.mean(s_traj))
+                init_peta.append(np.mean(peta_traj))
+        else:
+            for s_traj, theta_traj, _vpar_traj, t_traj in zip(
+                self.s_all, self.thetas_all, self.vpars_all, self.t_all
+            ):
+                if (
+                    len(s_traj) < 2
+                ):  # Need at least one full Poincare return maps to compute frequency
+                    continue
+                delta_theta = np.array(theta_traj[1:]) - np.array(theta_traj[0:-1])
+
+                delta_t = t_traj[1::]
+                delta_zeta = 2 * np.pi * self.sign_vpar * sign_G
+
+                # Average over wells along one field line
+                freq_theta = np.mean(delta_theta) / np.mean(delta_t)
+                freq_zeta = delta_zeta / np.mean(delta_t)
+
+                omega_theta.append(freq_theta)
+                omega_zeta.append(freq_zeta)
+                init_s.append(np.mean(s_traj))
 
         omega_theta = np.array(omega_theta)
         omega_zeta = np.array(omega_zeta)
