@@ -12,8 +12,46 @@ Differences from the firm3d run that are inherent to the comparison:
     marker-identical) to firm3d's Jacobian-weighted Boozer sampling;
   * losses: ASCOT5 rho_max = 1 end condition vs firm3d s = 1.
 
+Required ASCOT5 source patches (this file cannot fix these -- ascot5.h
+and B_field.c live in the separate, non-vendored ascot5 repo):
+
+  1. WIENERSLOTS 20 -> 200 in src/ascot5.h.  The collision operator's
+     fixed-size Wiener process array (one slot per rejected/subdivided
+     step within a macro step) overflows for a meaningful fraction of
+     markers at the default size, aborting them with ERR_WIENER_ARRAY.
+
+  2. B_field_eval_rho in src/B_field.c: when (psi - psi0)/delta < 0 it
+     currently raises ERR_INPUT_UNPHYSICAL unconditionally.  Near the
+     magnetic axis psi is a smooth extremum equal to psi0, so floating-
+     point/interpolation error in the upstream psi(R,z) evaluation can
+     push this fractionally negative for a location that is genuinely
+     at or very near rho = 0 -- NOT a real physical/domain problem.
+     B_STS_eval_rho_drho (src/Bfield/B_STS.c) already has an opt-in
+     clamp for exactly this case (B_STS_CLAMP_RHO_NONNEGATIVE), but
+     B_field.c's generic wrapper -- which is what actually fires here,
+     for EVERY rho evaluation including plasma-profile lookups, not
+     just B_STS's own -- has no such escape hatch.  Diagnosed from
+     production data: 229/1024 markers aborted with this error in an
+     unpatched run, and the abort rate fell monotonically from 98% for
+     markers born at rho < 0.1 down to 0% for rho > 0.7 -- unambiguously
+     a near-axis effect, not (as first suspected) an artifact of the
+     (R,z) grid padding below.  Patch, mirroring B_STS's own fix:
+         real delta = (psi1 - psi0);
+         if( (psi - psi0) / delta < 0 ) {
+             rho[0] = 0.0;
+             rho[1] = 0.0;
+         } else {
+             rho[0] = sqrt( (psi - psi0) / delta );
+             rho[1] = 1.0 / (2*delta*rho[0]);
+         }
+     (rho[1] = drho/dpsi also has to go to zero, not just rho[0]: it
+     diverges as rho -> 0 by construction, so it cannot be assigned any
+     finite nonzero value exactly at the axis either.)
+
 Usage (in the environment with a5py):
     python run_ascot5_wistell.py --outdir /path/to/workdir [--smoke]
+    (--nphi/--nr/--nz override the B_STS import grid; see the comment
+    at their point of use for the cost/accuracy tradeoff.)
 Then compare with compare_wistell.py.
 """
 
@@ -102,11 +140,18 @@ def import_padded_vmec_bfield(wout, nphi, nr, nz, pad_frac=0.4, psifill_factor=1
     evaluation fails with ERR_INPUT_UNPHYSICAL and the marker aborts
     with no clean end condition, silently biasing the loss statistics.
 
-    The padding region is filled with B = 0 and a psi value well past
-    rho_max (rho ~ sqrt(2.5) ~ 1.58) -- markers only reach it after
-    already being unambiguously lost, so the field there is never
-    dynamically relevant, but it keeps the boundary spline evaluation
-    inside its domain long enough for the end condition to register.
+    The padding is filled by repeating the outermost (R, z) ring of
+    a5py's own returned arrays outward (np.pad mode="edge"), rather than
+    inventing a new constant, purely to avoid adding any discontinuity
+    beyond what a5py's own fill (a constant psi = psi1 * psifill_factor
+    outside the LCFS, giving rho > rho_max there, plus a nearest-
+    neighbor extrapolation of B) already has.  Note this padding is NOT
+    what was behind the 229/1024 (22%) abort rate seen in early testing
+    -- that turned out to be an unrelated near-axis floating-point edge
+    case in ASCOT5 itself (see the module docstring's B_field.c patch
+    for the diagnosis and fix); it was mistakenly suspected to be a
+    padding-seam artifact at first, before the per-marker abort-vs-rho
+    data made the real, near-axis cause unambiguous.
     """
     raw = ImportData.vmec_field(
         wout,
@@ -128,23 +173,15 @@ def import_padded_vmec_bfield(wout, nphi, nr, nz, pad_frac=0.4, psifill_factor=1
     pad_r = max(2, int(pad_frac * (rmax - rmin) / dr))
     pad_z = max(2, int(pad_frac * (zmax - zmin) / dz))
 
-    new_nr, new_nz = nr0 + 2 * pad_r, nz0 + 2 * pad_z
     new_rmin, new_rmax = rmin - pad_r * dr, rmax + pad_r * dr
     new_zmin, new_zmax = zmin - pad_z * dz, zmax + pad_z * dz
 
-    psi0, psi1 = raw["psi0"], raw["psi1"]
-    pad_psi = psi0 + 2.5 * (psi1 - psi0)  # rho ~ sqrt(2.5) in the padding
-
-    new_br = np.zeros((new_nr, nphi, new_nz))
-    new_bphi = np.zeros((new_nr, nphi, new_nz))
-    new_bz = np.zeros((new_nr, nphi, new_nz))
-    new_psi = np.full((new_nr, nphi, new_nz), pad_psi)
-
-    sl_r, sl_z = slice(pad_r, pad_r + nr0), slice(pad_z, pad_z + nz0)
-    new_br[sl_r, :, sl_z] = br
-    new_bphi[sl_r, :, sl_z] = bphi
-    new_bz[sl_r, :, sl_z] = bz
-    new_psi[sl_r, :, sl_z] = psi
+    pad_width = ((pad_r, pad_r), (0, 0), (pad_z, pad_z))
+    new_br = np.pad(br, pad_width, mode="edge")
+    new_bphi = np.pad(bphi, pad_width, mode="edge")
+    new_bz = np.pad(bz, pad_width, mode="edge")
+    new_psi = np.pad(psi, pad_width, mode="edge")
+    new_nr, new_nz = new_psi.shape[0], new_psi.shape[2]
 
     raw.update(
         {
@@ -182,6 +219,9 @@ def main():
     parser.add_argument("--nmarkers", type=int, default=1024)
     parser.add_argument("--tmax", type=float, default=TMAX)
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--nphi", type=int, default=None)
+    parser.add_argument("--nr", type=int, default=None)
+    parser.add_argument("--nz", type=int, default=None)
     args = parser.parse_args()
 
     n = 8 if args.smoke else args.nmarkers
@@ -198,6 +238,7 @@ def main():
     # to take many tiny steps, overflowing ASCOT5's fixed-size Wiener
     # process array (ERR_WIENER_ARRAY) for most markers.  Keep nphi high.
     res = (60, 64, 64) if args.smoke else (180, 120, 120)
+    res = (args.nphi or res[0], args.nr or res[1], args.nz or res[2])
 
     fn = os.path.join(args.outdir, "wistell_ascot5.h5")
     if os.path.exists(fn):
