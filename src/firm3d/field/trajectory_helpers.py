@@ -583,8 +583,8 @@ class PassingPoincare:
                 init_s.append(np.mean(s_traj))
                 init_peta.append(np.mean(peta_traj))
         else:
-            for s_traj, theta_traj, _vpar_traj in zip(
-                self.s_all, self.thetas_all, self.vpars_all
+            for s_traj, theta_traj, _vpar_traj, t_traj in zip(
+                self.s_all, self.thetas_all, self.vpars_all,  self.t_all
             ):
                 if (
                     len(s_traj) < 2
@@ -592,6 +592,7 @@ class PassingPoincare:
                     continue
                 delta_theta = np.array(theta_traj[1:]) - np.array(theta_traj[0:-1])
 
+                delta_t = t_traj[1::]
                 delta_zeta = 2 * np.pi * self.sign_vpar * sign_G
 
                 # Average over wells along one field line
