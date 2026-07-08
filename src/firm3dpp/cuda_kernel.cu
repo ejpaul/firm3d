@@ -1752,8 +1752,10 @@ py::array_t<T> test_gpu_derivatives(py::array_t<T> quad_pts, py::array_t<double>
     T* dtmax_d;
     cudaMalloc((void**)&dtmax_d, n_points*sizeof(T));
 
+    std::vector<T> mu_init(n_points, T(-1.0));
     T* mu_d;
     cudaMalloc((void**)&mu_d, n_points*sizeof(T));
+    cudaMemcpy(mu_d, mu_init.data(), n_points*sizeof(T), cudaMemcpyHostToDevice);
 
     T* out_d;
     cudaMalloc((void**)&out_d, 4*n_points * sizeof(T));
@@ -2090,8 +2092,10 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
     gpuErrchk( cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double)) );
     gpuErrchk( cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice) );
 
+    std::vector<double> mu_init(nparticles, -1.0);
     double* mu_d;
     cudaMalloc((void**)&mu_d, nparticles*sizeof(double));
+    cudaMemcpy(mu_d, mu_init.data(), nparticles*sizeof(double), cudaMemcpyHostToDevice);
 
     double* t_d;
     cudaMalloc((void**)&t_d, nparticles*sizeof(double));
