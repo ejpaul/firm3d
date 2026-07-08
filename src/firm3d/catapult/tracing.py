@@ -117,15 +117,6 @@ def trace_particles_boozer_gpu(
             field, field.nfp, ns, ntheta, nzeta, vacuum=vacuum
         )
         psi0 = field.psi0
-        import time
-        start = time.time()
-        print(stz_inits.dtype)
-        print(parallel_speeds.dtype)
-        print("quad_pts:", quad_info.astype(stz_inits.dtype).dtype, quad_info.astype(stz_inits.dtype).flags['C_CONTIGUOUS'])
-        print("stz_init:", stz_inits.dtype, stz_inits.flags['C_CONTIGUOUS'])
-        print("vtang:", parallel_speeds.dtype, parallel_speeds.flags['C_CONTIGUOUS'])
-        dt_arr = -np.ones(nparticles).astype(stz_inits.dtype)
-        print("dt_in:", dt_arr.dtype, dt_arr.flags['C_CONTIGUOUS'])
         last_time = firm3dpp.boozer_gpu_tracing(
             quad_pts=quad_info.astype(stz_inits.dtype),
             srange=srange,
@@ -143,7 +134,6 @@ def trace_particles_boozer_gpu(
             nparticles=nparticles,
             vacuum=vacuum,
         )
-        print(time.time() - start)
 
     last_time = np.reshape(last_time, (nparticles, 6))
     return last_time
