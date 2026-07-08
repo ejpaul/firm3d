@@ -97,6 +97,7 @@ void init_tracing(py::module_ &m){
         py::arg("tmax"),
         py::arg("tol"),
         py::arg("dt_in"),
+        py::arg("mu_in").noconvert(),
         py::arg("nparticles")
         );
 
@@ -113,6 +114,7 @@ void init_tracing(py::module_ &m){
         py::arg("tmax"),
         py::arg("tol"),
         py::arg("dt_in").noconvert(),
+        py::arg("mu_in").noconvert(),
         py::arg("psi0"),
         py::arg("nparticles"),
         py::arg("vacuum") = false
@@ -131,6 +133,7 @@ void init_tracing(py::module_ &m){
         py::arg("tmax"),
         py::arg("tol"),
         py::arg("dt_in").noconvert(),
+        py::arg("mu_in").noconvert(),
         py::arg("psi0"),
         py::arg("nparticles"),
         py::arg("vacuum") = false
@@ -156,6 +159,7 @@ void init_tracing(py::module_ &m){
         py::arg("tmax"),
         py::arg("tol"),
         py::arg("dt_in"),
+        py::arg("mu_in"),
         py::arg("psi0"),
         py::arg("nparticles")
         );
@@ -179,6 +183,7 @@ void init_tracing(py::module_ &m){
         py::arg("tmax"),
         py::arg("tol"),
         py::arg("dt_in"),
+        py::arg("mu_in"),
         py::arg("psi0"),
         py::arg("nparticles")
         );

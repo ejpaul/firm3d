@@ -118,22 +118,22 @@ vector<double> simsopt_derivs_saw(shared_ptr<ShearAlfvenWave> perturbed_field, v
 template<typename T>
 vector<T> cartesian_gpu_tracing(py::array_t<T> quad_pts, py::array_t<double> rrange,
         py::array_t<double> phirange, py::array_t<double> zrange, py::array_t<T> xyz_init, double m, double q, double vtotal, py::array_t<T> vtang, 
-        double tmax, double tol, py::array_t<T> dt_in, int nparticles);
+        py::array_t<double> tmax, double tol, py::array_t<T> dt_in, py::array_t<T> mu_in, int nparticles);
 
 template<typename T>
 vector<T> boozer_gpu_tracing(py::array_t<T> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<T> stz_init, double m, double q, double vtotal, py::array_t<T> vtang, 
-        double tmax, double tol, py::array_t<T> dt_in, double psi0, int nparticles, bool vacuum);
+        py::array_t<double> tmax, double tol, py::array_t<T> dt_in, py::array_t<T> mu_in, double psi0, int nparticles, bool vacuum);
         
 template<typename T>
 vector<T> boozer_saw_gpu_tracing(py::array_t<T> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, 
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<T> saw_phihats, int saw_nharmonics,
-        py::array_t<T> stz_init, double m, double q, double vtotal, py::array_t<T> vtang, double tmax, double tol, py::array_t<T> dt_in, double psi0, int nparticles);
+        py::array_t<T> stz_init, double m, double q, double vtotal, py::array_t<T> vtang, py::array_t<double> tmax, double tol, py::array_t<T> dt_in, py::array_t<T> mu_in, double psi0, int nparticles);
 
 template<typename T>
 vector<T> boozer_saw_nok_gpu_tracing(py::array_t<T> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, 
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<T> saw_phihats, int saw_nharmonics,
-        py::array_t<T> stz_init, double m, double q, double vtotal, py::array_t<T> vtang, double tmax, double tol, py::array_t<T> dt_in, double psi0, int nparticles);
+        py::array_t<T> stz_init, double m, double q, double vtotal, py::array_t<T> vtang, py::array_t<double> tmax, double tol, py::array_t<T> dt_in, py::array_t<T> mu_in, double psi0, int nparticles);
 
 template<typename T>
 py::array_t<T> test_gpu_interpolation(py::array_t<T> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange, py::array_t<T> loc, std::string coordinates, int n_points);

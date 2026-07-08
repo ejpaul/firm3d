@@ -23,6 +23,7 @@ def trace_particles_boozer_gpu(
     ntheta,
     nzeta,
     dt=None,
+    in_boozer=True, # if in Boozer coordinates, otherwise in pseudo-Cartesian coordinates
 ):
     """
     Trace particles in Boozer coordinates using CATAPULT
@@ -37,6 +38,16 @@ def trace_particles_boozer_gpu(
     dt: the initial time step size for the solver (optional)
     """
     nparticles = stz_inits.shape[0]
+
+    if in_boozer:
+        stz_inits = stz_inits.copy()
+
+        s = stz_inits[:, 0]
+        theta = stz_inits[:, 1]
+        x1 = s * np.cos(theta)
+        x2 = s * np.sin(theta)
+        stz_inits[:, 0] = x1
+        stz_inits[:, 1] = x2
 
     if isinstance(field, ShearAlfvenWavesSuperposition):
         B0 = field.B0
@@ -136,6 +147,15 @@ def trace_particles_boozer_gpu(
         )
 
     last_time = np.reshape(last_time, (nparticles, 6))
+
+    if in_boozer:
+        x1 = last_time[:, 1]
+        x2 = last_time[:, 2]
+        s = np.sqrt(x1**2 + x2**2)
+        theta = np.arctan2(x2, x1)
+        last_time[:, 1] = s
+        last_time[:, 2] = theta
+
     return last_time
 
 
