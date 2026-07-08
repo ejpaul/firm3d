@@ -222,6 +222,12 @@ def main():
     parser.add_argument("--nphi", type=int, default=None)
     parser.add_argument("--nr", type=int, default=None)
     parser.add_argument("--nz", type=int, default=None)
+    parser.add_argument(
+        "--collisionless",
+        action="store_true",
+        help="disable Coulomb collisions (orbit-following-only companion, "
+        "matching fusion_distribution_collisional.py's res_free run)",
+    )
     args = parser.parse_args()
 
     n = 8 if args.smoke else args.nmarkers
@@ -240,7 +246,8 @@ def main():
     res = (60, 64, 64) if args.smoke else (180, 120, 120)
     res = (args.nphi or res[0], args.nr or res[1], args.nz or res[2])
 
-    fn = os.path.join(args.outdir, "wistell_ascot5.h5")
+    suffix = "_collisionless" if args.collisionless else ""
+    fn = os.path.join(args.outdir, f"wistell_ascot5{suffix}.h5")
     if os.path.exists(fn):
         os.remove(fn)
     a5 = Ascot(fn, create=True)
@@ -324,7 +331,7 @@ def main():
             "ENDCOND_RHOLIM": 1,
             "ENDCOND_MAX_RHO": 1.02,
             "ENABLE_ORBIT_FOLLOWING": 1,
-            "ENABLE_COULOMB_COLLISIONS": 1,
+            "ENABLE_COULOMB_COLLISIONS": 0 if args.collisionless else 1,
         }
     )
     init("opt", **opt, desc="WISTELL")
@@ -381,7 +388,7 @@ def main():
         print(f"  by module: {dict(zip(mods.tolist(), cnts.tolist()))}")
         print(f"  by errtype: {dict(zip(msgs.tolist(), mcnts.tolist()))}")
 
-    out = os.path.join(args.outdir, "ascot5_wistell.npz")
+    out = os.path.join(args.outdir, f"ascot5_wistell{suffix}.npz")
     np.savez(
         out,
         t_end=t_end,
