@@ -3,6 +3,8 @@
 \usepackage{geometry}
 \usepackage{hyperref}
 \usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{booktabs}
 \geometry{margin=1.1in}
 
 \newcommand{\vpar}{v_{\!\parallel}}
@@ -514,6 +516,336 @@ res_tys, res_hits = trace_particles_boozer_with_collisions(
 \end{verbatim}
 
 %-----------------------------------------------------------------------
+\section{Testing and Validation}
+\label{sec:testing}
+%-----------------------------------------------------------------------
+
+The implementation is exercised at four levels of increasing scope: analytic
+unit tests of the coefficient formulae, pure-Python velocity-space relaxation
+tests with no compiled module or magnetic field, end-to-end tests of the full
+production tracer (guiding-centre orbits $+$ Milstein noise), and cross-code
+validation against ASCOT5 \cite{ascot5code} in both a controlled uniform
+plasma and a full reactor-scale 3D stellarator equilibrium.  All numbers
+below are reproducible from \texttt{tests/field/test\_collisions.py},
+\texttt{tests/field/test\_collisions\_local.py}, and the examples referenced
+in each subsection.
+
+\subsection{Analytic Coefficient Unit Tests}
+
+\texttt{TestCollisionCoefficients} checks the Chandrasekhar function
+$G(x)$ and its derivative against known limits ($G(0)=0$,
+$G(x{\to}\infty)\to 1/2x^2$, sign change of $G'$ near $x\approx 0.92$),
+verifies $K<0$ (drag always decelerates) and $\nu_D>0$ for arbitrary finite
+backgrounds, and checks the expected scalings $K\propto n_b$,
+$K\propto q_a^2$, $\nu_D\propto n_b$, and additivity across species to
+$\lesssim 10\%$ (the residual comes from the $\ln\Lambda$ dependence on
+$\lambda_D$).  \texttt{TestUnphysicalCoulombLog} confirms that
+$\ln\Lambda\le 0$ raises an exception rather than returning silently
+unphysical coefficients (Section~\ref{sec:clog}).  These are deterministic,
+sub-second checks with no random component.
+
+\subsection{Local Velocity-Space Relaxation Tests}
+\label{sec:local-tests}
+
+\texttt{tests/field/test\_collisions\_local.py} mirrors
+\texttt{collisions.h} in pure Python (no compiled module, no magnetic
+field) and integrates only the velocity-space SDE
+(Eqs.~\eqref{eq:sde_v}--\eqref{eq:sde_xi} with the orbital drifts set to
+zero) for an ensemble of $N=4000$ particles.  All collision rates scale
+linearly with the background density, so boosting $n_b\to 10^{23}\,\mathrm{m}^{-3}$
+compresses the relaxation time to microseconds, letting the full suite run
+in about $10$ seconds on a laptop.  These tests are the most direct
+regression check on the Einstein-relation drag (Eq.~\eqref{eq:Q}): an
+earlier, incorrect form of $Q$ passed all analytic unit tests but drove a
+proton ensemble to $\langle E\rangle = 3.7\,T_b$ instead of $1.5\,T_b$ here,
+with a Kolmogorov--Smirnov (KS) $p$-value of $0$ against the Maxwell speed
+law.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+Test & $\langle E\rangle/T_b$ (target $1.5$) & KS $p$-value & Pass \\
+\midrule
+Cold start ($E_0=0.45\,T_b$) & $1.446$ & $0.037$ & \checkmark \\
+Hot start ($E_0=4.5\,T_b$)   & $1.486$ & $0.095$ & \checkmark \\
+Stationarity (start at equilibrium) & $1.500$ & $0.777$ & \checkmark \\
+\bottomrule
+\end{tabular}
+\caption{Relaxation of a proton ensemble in a $1$\,keV proton background
+($n_b=10^{23}\,\mathrm{m}^{-3}$) to the Maxwellian, evolved for $8$
+relaxation times.  KS $p$-values test the final speed distribution
+against the Maxwell speed law at the background temperature.}
+\end{table}
+
+The same ensemble also verifies pitch isotropisation: starting from
+$\xi_0=1$, the relaxed ensemble gives $\langle\xi\rangle = 0.009$ (target
+$0$) and $\langle\xi^2\rangle = 0.330$ (target $1/3$), consistent with
+convergence to $\xi\sim\mathcal{U}(-1,1)$.  A short-time drift check on
+$3.52$\,MeV $\alpha$-particles against $10$\,keV electrons, over a window
+short enough that $K(v)$ is nearly constant (Doppler shift in speed
+$<2\%$), gives $\left.\dfrac{d\langle v\rangle}{dt}\middle/ K(v_0)\right. = 0.984$
+(target $1$), confirming the deterministic drift term independently of the
+noise terms.
+
+\subsection{End-to-End Equilibration Tests (Production Tracer)}
+\label{sec:e2e-tests}
+
+\texttt{Test\-Maxwellian\-Equilibration} and \texttt{Test\-Pitch\-Isotropization} in
+\url{tests/field/test_collisions.py} exercise the full production path
+--- \texttt{trace\_\-particles\_\-boozer\_\-with\_\-collisions}, i.e.\ the adaptive
+Dormand--Prince orbital integrator coupled to the Milstein noise step,
+compiled C\texttt{++} coefficients, real (though simplified,
+\texttt{BoozerAnalytic}) magnetic geometry, and a
+\texttt{Max\-Toroidal\-Flux\-Stopping\-Criterion} --- rather than the idealised
+velocity-space-only integration of Section~\ref{sec:local-tests}.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+Test & Measured & Target & Pass \\
+\midrule
+Hot start ($E_0=4.5\,T_b$), $\langle E\rangle/T_b$  & $1.392$ & $1.5$ & \checkmark \\
+Cold start ($E_0=0.45\,T_b$), $\langle E\rangle/T_b$ & $1.601$ & $1.5$ & \checkmark \\
+Pitch isotropisation, $\langle\xi\rangle$           & $-0.019$ & $0$ & \checkmark \\
+Pitch isotropisation, $\langle\xi^2\rangle$         & $0.326$ & $1/3$ & \checkmark \\
+Pitch broadening ($\xi_0=0$), $\mathrm{std}(\xi)$    & $0.418$ & $>0.05$ & \checkmark \\
+\bottomrule
+\end{tabular}
+\caption{End-to-end equilibration through the production tracer:
+$40$ protons on a $1$\,keV proton background, $n_b=10^{21}\,\mathrm{m}^{-3}$,
+$8$ relaxation times, ITER-scale confining field.  All particles remain
+confined and finite throughout (no losses, no NaN states).}
+\end{table}
+
+\paragraph{The pitch-decay benchmark and its correction.}
+A quantitative pitch-decay test against the naive expectation
+$\langle\xi(t)\rangle=\xi_0 e^{-\nu_D t}$ (the usual ASCOT5-style benchmark,
+which assumes $v$ constant) failed the first time this test suite was run
+on Perlmutter: for $3.52$\,MeV $\alpha$-particles on a single deuterium
+background, the drag rate is $(m_a/m_b)\,\nu_D = 2\,\nu_D$, so the ensemble
+slows almost completely over the same window in which pitch decay is
+measured, and $\nu_D(v)\propto v^{-3}$ diverges as the particles thermalise
+--- the ensemble fully isotropises ($\langle\xi\rangle\to 0$) rather than
+decaying exponentially at the fixed initial rate.  The test was corrected to
+check the classical relation obtained by eliminating time between the drag
+and pitch equations,
+\begin{equation}
+  \frac{\langle\xi(t_2)\rangle}{\langle\xi(t_1)\rangle}
+  = \left(\frac{v(t_2)}{v(t_1)}\right)^{m_b/m_a},
+\end{equation}
+evaluated self-consistently against the simulation's own mean speed
+(referencing the first saved snapshot rather than $t=0$ cancels a
+geometric offset from sampling $\xi$ along field-line-following orbits).  A
+second, independent effect was found in the same debugging pass: in a
+toroidal (non-uniform-$|B|$) field the trapped--passing boundary can sit
+just below the injected pitch, so scattered particles fall into the
+trapped population where the orbit-averaged $\xi$ is systematically pulled
+toward zero, roughly doubling the apparent decay rate relative to the
+uniform-plasma law --- real neoclassical physics, but not what a
+velocity-space-operator test should measure.  The test therefore uses a
+near-uniform-$|B|$ configuration ($\bar\eta\to 0$: no mirror force, no
+trapped population), giving
+\begin{equation*}
+  \frac{\langle\xi_2\rangle/\langle\xi_1\rangle}
+       {(v_2/v_1)^{m_b/m_a}} = 1.038
+  \qquad(\text{target } 1,\ \text{tolerance } \pm 15\%),
+\end{equation*}
+with $v_2/v_1 = 0.498$ over the measurement window.
+
+\subsection{Slow Physics Suite (MPI, HPC)}
+
+Five tests marked \texttt{@pytest.mark.slow} run longer physical
+integrations ($N\sim20$--$128$ particles, $5$--$100\,\mu\mathrm{s}$ of
+physical time) that are impractical to run serially: an electron-drag
+signal-to-noise test (chosen specifically because ion-background drag is
+buried in noise for $3.52$\,MeV $\alpha$-particles, whereas electron-background
+drag is enhanced by $m_\alpha/m_e$), a cold-plasma energy-loss test, a
+two-background superposition test, and the pitch-broadening/decay tests of
+Section~\ref{sec:e2e-tests}.  The tracer's MPI support (particles
+distributed across ranks, results all-gathered identically on every rank,
+per-particle seeds rank-independent) lets this suite run on
+\url{tests/perlmutter/run_slow_tests.sh}: all five tests pass in
+$77$\,s under $64$ MPI ranks on Perlmutter, versus $3\mathrm{h}45\mathrm{m}$
+running the same suite serially.
+
+\subsection{Cross-Code Validation Against ASCOT5: Uniform Plasma}
+\label{sec:ascot5-uniform}
+
+\url{examples/collision_validation_ascot5/} mirrors the alpha
+slowing-down branch of ASCOT5's own built-in Coulomb-collision physics
+test: $N$ fusion alphas (birth energy $3.52$\,MeV, isotropic pitch, shared
+random seed) slow down in a uniform $1$\,keV hydrogen plasma.  The two
+codes use different magnetic geometries (ASCOT5's analytical ITER-like
+circular tokamak; firm3d's \texttt{BoozerAnalytic} at the same $R_0,B_0$
+scale), but since the plasma is uniform the compared quantities ---
+mean slowing-down time to $50$\,keV and $\langle E(t)\rangle$ --- are
+geometry-insensitive, isolating the collision operator itself.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+& firm3d & ASCOT5 & Agreement \\
+\midrule
+Mean slowing-down time [ms] & $24.915 \pm 0.027$ & $24.885 \pm 0.029$ & $+0.1\%$, $0.7\sigma$ \\
+\bottomrule
+\end{tabular}
+\caption{$N=1024$ alphas, $n=10^{20}\,\mathrm{m}^{-3}$ (the published
+ASCOT5 test-point density), $T=1$\,keV.  Also: $\max|\langle
+E(t)\rangle_{\mathrm{firm3d}} - \langle E(t)\rangle_{\mathrm{ASCOT5}}|/E_0 = 0.4\%$
+over the full slowing-down window.}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ascot5_validation_uniform_plasma.png}
+\caption{firm3d vs.\ ASCOT5, uniform $1$\,keV plasma, $N=1024$: mean energy
+$\langle E(t)\rangle$ against the analytic electron-drag estimate
+$v=v_0 e^{-t/\tau_{se}}$ (left); mean pitch $\langle\xi(t)\rangle$, shown
+for qualitative comparison only since it is geometry-sensitive (centre);
+and the distribution of per-particle slowing-down times to $50$\,keV
+against the analytic Spitzer estimate (right).}
+\label{fig:ascot5-uniform}
+\end{figure}
+
+\subsection{Reactor-Scale Demonstration: Wistell-A / ARIES-CS}
+\label{sec:wistell-firm3d}
+
+\url{examples/fusion_distribution_collisional/} traces $1024$
+fusion-born alphas (birth positions weighted by the fusion reactivity
+profile, isotropic pitch) for $150$\,ms in the Wistell-A configuration
+scaled to ARIES-CS size and field strength, against a D--T--electron
+background with the profile shapes of Bader et al.\ \cite{bader2021}
+(core $n_D=n_T=10^{20}\,\mathrm{m}^{-3}$, $T_0=11.5$\,keV).  The identical
+birth ensemble is also traced collisionlessly, isolating prompt orbit
+losses from collisional (pitch-angle-scattering-driven) transport.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcc}
+\toprule
+& With collisions & Collisionless \\
+\midrule
+Particle loss fraction (150 ms) & $19$--$21\%$ & $1.2\%$ \\
+Energy loss fraction (wall loading) & $7.6\%$ & --- \\
+\bottomrule
+\end{tabular}
+\caption{firm3d, Wistell-A/ARIES-CS scale, $N=1024$, $1$ CPU node
+$\times$ $128$ MPI ranks, $13$\,min (debug queue).  Particle and energy
+loss fractions differ because late-time collisional losses are
+increasingly thermalised ash carrying little energy.}
+\end{table}
+
+The time-integrated (i.e.\ ergodically equivalent to a steady-state
+source) energy spectrum of confined alphas matches the classical
+slowing-down distribution $f(E)\propto \sqrt{E}/(E^{3/2}+E_c^{3/2})$
+(critical energy $E_c=266$\,keV) to a mean $|$relative residual$|$ of
+$4.7\%$ over $0.9$--$3.3$\,MeV (Figure~\ref{fig:wistell-firm3d}, right).
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.48\textwidth]{figures/wistell_firm3d_loss_fraction.png}
+\hfill
+\includegraphics[width=0.48\textwidth]{figures/wistell_firm3d_slowing_spectrum.png}
+\caption{Left: loss fraction vs.\ time, with and without collisions.
+Right: time-integrated confined-alpha energy spectrum vs.\ the classical
+slowing-down distribution.}
+\label{fig:wistell-firm3d}
+\end{figure}
+
+As a literature consistency check (not a marker-level validation), Bader
+et al.\ \cite{bader2021} ran the same Wistell-A/ARIES-CS-scale
+configuration with the ANTS code and report a collisional energy-loss
+fraction of $\approx 8\%$ (their Fig.~3, plateau near $100$\,ms), with
+Wistell-A performing on par with W7-X.  The firm3d result above
+($7.6\%$ at $150$\,ms) is consistent, though several inputs differ (Bader
+et al.\ use $n_{e,0}=4.8\times10^{20}\,\mathrm{m}^{-3}$ with $Z_{\rm eff}=1.13$
+versus $n_{e,0}=2\times10^{20}\,\mathrm{m}^{-3}$, $Z_{\rm eff}=1$ here, and
+follow particles to full thermalisation).
+
+\subsection{Direct Cross-Code Comparison in the Wistell-A Geometry}
+\label{sec:wistell-ascot5}
+
+Beyond the uniform-plasma validation of Section~\ref{sec:ascot5-uniform},
+\url{examples/fusion_distribution_collisional/run_ascot5_wistell.py}
+builds an ASCOT5 input for the identical Wistell-A equilibrium directly
+from the VMEC \texttt{wout} file (a hand-padded real-space
+$(R,\phi,z)$ spline, as opposed to firm3d's Boozer-coordinate spline of
+the same \texttt{booz\_xform}-transformed field), with the same
+D--T--electron profiles, birth-energy and pitch distribution, and
+integration time as Section~\ref{sec:wistell-firm3d}.\footnote{Two ASCOT5
+source patches were required and are documented in
+\url{run_ascot5_wistell.py}'s module docstring: a compile-time Wiener
+process array too small for this problem, and a near-magnetic-axis
+floating-point edge case in the generic $\rho$ evaluator that a sibling
+function in the same codebase already guards against.}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+Collisional & firm3d & ASCOT5 & Agreement \\
+\midrule
+Particle loss fraction & $19.4\%$ & $22.6\%$ & $1.7\sigma$ \\
+Energy loss fraction   & $7.6\%$  & $13.4\%$ & large discrepancy \\
+\bottomrule
+\end{tabular}
+\begin{tabular}{lccc}
+\toprule
+Collisionless & firm3d & ASCOT5 & Agreement \\
+\midrule
+Final loss fraction & $1.2\%$ & $27.2\%$ & $18.2\sigma$ \\
+\bottomrule
+\end{tabular}
+\caption{$N=1024$, same Wistell-A/ARIES-CS equilibrium, same birth
+distribution shape and profiles.  Collisionless: particles retain full
+birth energy until lost, so particle-loss fraction is energy-loss
+fraction.}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.48\textwidth]{figures/wistell_ascot5_loss_comparison_collisional.png}
+\hfill
+\includegraphics[width=0.48\textwidth]{figures/wistell_ascot5_lost_energy_collisional.png}
+\caption{Collisional Wistell-A comparison. Left: loss fraction vs.\
+time.  Right: energy distribution of lost alphas -- ASCOT5's lost
+population skews markedly toward near-birth-energy (``prompt'') losses
+relative to firm3d's, which skews toward thermalised, low-energy losses;
+this drives the energy-loss-fraction discrepancy despite the particle
+counts agreeing to $1.7\sigma$.}
+\label{fig:wistell-ascot5-collisional}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.6\textwidth]{figures/wistell_ascot5_loss_comparison_collisionless.png}
+\caption{Collisionless (orbit-following only) loss fraction vs.\ time.
+The two codes agree at early times ($\sim 0.3$--$1\%$ within the first
+millisecond, consistent prompt-loss physics) but diverge entirely in a
+late-time, slow ``stochastic'' loss channel with zero collisions:
+firm3d's curve is flat after $\sim1$\,ms, while ASCOT5's continues
+climbing through the full $150$\,ms window.}
+\label{fig:wistell-ascot5-collisionless}
+\end{figure}
+
+The $18.2\sigma$ collisionless discrepancy is noteworthy because both
+codes trace the \emph{same} VMEC equilibrium (Section~\ref{sec:wistell-ascot5}),
+so a large gap in a real physical effect (secular guiding-centre orbit
+diffusion from broken exact quasisymmetry) more likely reflects a
+numerical or methodological difference between the two field
+representations than two genuinely different physical predictions.
+Candidate explanations --- none yet confirmed --- include differing
+resolution of the fine, non-quasisymmetric ripple harmonics that drive
+this diffusion in each code's respective spline, boundary-handling
+differences for orbits that repeatedly graze the loss boundary, and
+differences in the guiding-centre equations or order retained by each
+code.  This is flagged as an open item for a future, better-suited
+cross-code comparison rather than a validated result.
+
+%-----------------------------------------------------------------------
 \section{Validity and Limitations}
 %-----------------------------------------------------------------------
 
@@ -624,6 +956,12 @@ J.~R.~Dormand and P.~J.~Prince,
 ``A family of embedded Runge-Kutta formulae,''
 \textit{J.\ Comput.\ Appl.\ Math.} \textbf{6}, 19 (1980).
 \texttt{doi:10.1016/0771-050X(80)90013-3}
+
+\bibitem{bader2021}
+A.~Bader et al.,
+``Modeling of energetic particle transport in optimized stellarators,''
+\textit{Nucl.\ Fusion} \textbf{61}, 116060 (2021).
+\texttt{arXiv:2106.00716}
 
 \end{thebibliography}
 
