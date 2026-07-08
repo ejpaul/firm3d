@@ -81,7 +81,7 @@ vpar_init = initialize_velocity_uniform(vpar0, nParticles, comm=comm, seed=0)
 
 field.set_points(tracing_points)
 modB = field.modB()[:, 0]
-mus_per_mass = (Ekin - 0.5 * vpar_init**2) / (modB * mass)
+mus_per_mass = (0.5 * vpar0**2 - 0.5 * vpar_init**2) / (modB)
 
 object_WBA = WBAPerturbedParticles(
     saw,
