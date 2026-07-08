@@ -255,33 +255,40 @@ def cartesian_interpolant(field, surface_classifier, dtype=np.float64):
             quad_info.shape[1],
         )
     )
-    for cell_r in range(field.r_range[2]):
-        for cell_phi in range(field.phi_range[2]):
-            for cell_z in range(field.z_range[2]):
+
+    r_ncells = int((r_range[2] - 1) / 3)
+    phi_ncells = int((phi_range[2] - 1) / 3)
+    z_ncells = int((z_range[2] - 1) / 3)
+    n_windows = r_ncells * phi_ncells * z_ncells
+
+    cell_quad_pts = np.empty((n_windows, quad_info.shape[1],64))
+    for cell_r in range(r_ncells):
+        for cell_phi in range(phi_ncells):
+            for cell_z in range(z_ncells):
                 row_start = 64 * (
-                    cell_r * field.phi_range[2] * field.z_range[2]
-                    + cell_phi * field.z_range[2]
+                    cell_r * phi_ncells * z_ncells
+                    + cell_phi * z_ncells
                     + cell_z
                 )
 
-                # if cell_r == 24 and cell_phi == 22 and cell_z == 20:
-                #     print(row_start)
+                window_id = (
+                    cell_r * phi_ncells * z_ncells + cell_phi * z_ncells + cell_z
+                )
 
-                assert 3 * cell_r + i < r_range[2]
                 # iterate over spline locations for this cell
+                window = np.empty((64, quad_info.shape[1]))
                 for i in range(4):
                     for j in range(4):
                         for k in range(4):
-                            row_idx = row_start + 16 * i + 4 * j + k
-
-                            cell_quad_pts[row_idx, :] = quad_info[
+                            row_idx = 16 * i + 4 * j + k
+                            window[row_idx, :] = quad_info[
                                 phi_range[2] * z_range[2] * (3 * cell_r + i)
                                 + z_range[2] * (3 * cell_phi + j)
-                                + 3 * cell_z
-                                + k,
-                                :,
-                            ]
-
-    cell_quad_pts = np.ascontiguousarray(cell_quad_pts.T)
+                                + 3 * cell_z + k, :, ]
+    
+                # tranpose each window independently
+                cell_quad_pts[window_id, :, :] = window.T
+    
+    cell_quad_pts = np.ascontiguousarray(cell_quad_pts)
 
     return r_range, phi_range, z_range, cell_quad_pts.astype(dtype)

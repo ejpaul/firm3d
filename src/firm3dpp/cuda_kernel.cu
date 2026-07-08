@@ -196,7 +196,7 @@ __device__ void rhs_GC_CartesianVacuum(T* derivs, const T* __restrict__ x_temp, 
     T GradAbsB_phi = block_interpolants[4*PARTICLES_PER_BLOCK];
     T GradAbsB_z = block_interpolants[5*PARTICLES_PER_BLOCK];
 
-    if(symmetry_exploited[threadIdx.x]){
+    if(symmetry_exploited[0]){
         B_r *= T(-1.0);
         GradAbsB_phi *= T(-1.0);
         GradAbsB_z *= T(-1.0);
