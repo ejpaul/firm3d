@@ -1,4 +1,3 @@
-// #include "simdhelpers.h" // import above cuda_runtime to prevent collision for rsqrt
 #include <cuda_runtime.h>
 #include <iostream>
 #include "tracing.h"
@@ -100,8 +99,7 @@ __constant__ double bhat_wgts[7] = {
 };
 
 // each RHS has an associated 3 dimensional coordinates system (x1, x2, x3)
-// xi_range_d containts the beginning, end, number of grid points, and grid step size for an interpolant
-// __constant__ double x1_range_d[4], x2_range_d[4], x3_range_d[4]; // contains start, end, number of points, grid size
+// grid information for all 3 dimensions of the interpolant start, end, n_pts, 1/grid_size
 __constant__ double grid_ranges_d[12];
 
 // store the particle's mass, charge, max tracing time, absolute and relative tolerances for timestepping
@@ -120,7 +118,6 @@ __constant__ bool is_test_d = false;
 // global counter for workstealing
 __device__ int next_particle_d;
 
-
 // interpolate performs tricubic interpolation in the r, phi, z coordinates
 // which we assume is on a regular grid
 // the name of these coordinates only reflects the original cylindircal coordinates
@@ -138,28 +135,36 @@ __device__ int next_particle_d;
 template <typename T, int n> __device__ void interpolate(T*  out, const T* __restrict__ data, const int* __restrict__ cell_index_start,
     const T* __restrict__ shape_fun_vals, const bool* __restrict__ is_valid){
 
+    // 8 threads per particles, iterate over particles in the block
     for(int p=threadIdx.x / 8; p<PARTICLES_PER_BLOCK; p+= THREADS_PER_BLOCK/8){
+        // cell_ids from build_state
         const int i = cell_index_start[3*p];
         const int j = cell_index_start[3*p + 1];
         const int k = cell_index_start[3*p + 2];
 
-
+        // constant third dimension index for the thread
         const int kk = threadIdx.x % 4;
-        const int jj = (threadIdx.x / 4) % 2; // 0 -> 2 and 1 -> 3
 
+        // second dimension index for the thread, 0 -> 2 and 1 -> 3
+        const int jj = (threadIdx.x / 4) % 2; 
+
+        // compute the base offset for the interpolant data for this thread
         const int base_offset = 64*n*(i*n_x2_d * n_x3_d + j*n_x3_d + k) + 4*jj + kk;
 
+        // each thread handles two j,k pairs, compute shape contributions
         const T shape_jk1 = shape_fun_vals[(8 + kk)*PARTICLES_PER_BLOCK + p] * shape_fun_vals[(4 + jj)*PARTICLES_PER_BLOCK + p];
         const T shape_jk2 = shape_fun_vals[(8 + kk)*PARTICLES_PER_BLOCK + p] * shape_fun_vals[(4 + jj + 2)*PARTICLES_PER_BLOCK + p];
 
+        // only issue loads if the particle is still alive
         const bool p_valid = is_valid[p];
+
+        // iterate over interpolant elements
+        // in gc boozer vacuum, this is modB, dmodBds, dmodBdtheta, dmodBdzeta, G, iota
         for(int zz=0; zz<n; ++zz){
             T local_val = 0.0;
-            
-            if(p_valid){
+            if(p_valid){ // check particle is still alive
                 for(int ii=0; ii<4; ++ii){
                     int base = base_offset + 16*ii ;
-
                     const T shape_i = shape_fun_vals[ii*PARTICLES_PER_BLOCK + p]; //shape_fun_vals[(8 + kk)*PARTICLES_PER_BLOCK + p];
 
                     local_val += shape_i * (shape_jk1 * data[base + 64*zz] + 
@@ -167,11 +172,11 @@ template <typename T, int n> __device__ void interpolate(T*  out, const T* __res
                 }
             }
 
-            // warp reduction
+            // warp reduction down to 4 elements (one per particle)
             for (int offset = 4; offset > 0; offset /= 2) {
                 local_val += __shfl_down_sync(FULL_MASK, local_val, offset);
             }
-
+            // one thread per particle writes the result, used by calc_derivs
             if(threadIdx.x % 8 == 0 && p_valid){
                 out[PARTICLES_PER_BLOCK*zz + p] = local_val;
             }
@@ -259,10 +264,7 @@ __device__ void rhs_GC_BoozerVacuum(T* derivs, const T* __restrict__ x_temp, con
     derivs[(4*deriv_id + 1)*PARTICLES_PER_BLOCK] = sdot*x2*inv_s + x1*tdot;
     derivs[(4*deriv_id + 2)*PARTICLES_PER_BLOCK] = (v_par*modB_inv_G);
     derivs[(4*deriv_id + 3)*PARTICLES_PER_BLOCK] = -(iota*dmodBdtheta + dmodBdzeta)*mu_val*modB_inv_G;
-    // derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK] = modB; // modB for setting mu
-    // derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK] = G;
-    // derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = // no boundary dist fn
-    
+ 
 }
 
 
@@ -328,8 +330,6 @@ __device__ void rhs_GC_Boozer(T* derivs, const T* __restrict__ x_temp, const T* 
     derivs[(4*deriv_id + 1)*PARTICLES_PER_BLOCK] = sdot*sin(theta) + s*cos(theta)*tdot;
     derivs[(4*deriv_id + 2)*PARTICLES_PER_BLOCK] = zetadot;
     derivs[(4*deriv_id + 3)*PARTICLES_PER_BLOCK] = vpardot;
-    // derivs[(4*deriv_id + 4)*PARTICLES_PER_BLOCK] = modB; // modB for setting mu
-    // derivs[(4*deriv_id + 5)*PARTICLES_PER_BLOCK] = G;
 };
 
 // calc_derivs implementation for guiding center boozer vacuum tracing with Shear Alfven Waves
@@ -426,8 +426,6 @@ __device__ void rhs_GC_BoozerVacuumSAW(T* derivs, const T* __restrict__ x_temp, 
                 + dmodBdtheta*(iota - dalphadpsi*G)) + T(charge_d)*(alphadot*G \
                 + dalphadtheta*G*dphidpsi + (iota - dalphadpsi*G)*dphidtheta + dphidzeta)) \
                 + v_par/modB * (dmodBdtheta*dphidpsi - dmodBdpsi*dphidtheta);
-    // derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK] = modB; // modB for setting mu
-    // derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK] = G;
 
 };
 
@@ -537,10 +535,6 @@ __device__ void rhs_GC_BoozerNoKSAW(T* derivs, const T* __restrict__ x_temp, con
                     + dmodBdpsi*(I*dphidzeta - G*dphidtheta)) \
                     + v_par*(T(mass_d)*mu_val*(dmodBdtheta*dGdpsi - dmodBdzeta*dIdpsi) \
                     + T(charge_d)*(alphadot*(dGdpsi*I-G*dIdpsi) + dGdpsi*dphidtheta - dIdpsi*dphidzeta)))/denom;
-    // derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK] = modB; // modB for setting mu
-    // derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK] = G;
-    // derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = // no boundary dist fn
-    
 
 };
 
@@ -634,9 +628,7 @@ __device__ void map_to_grid_boozer(T* interp_pt, T* x_temp, bool* symmetry_explo
     T x2 = x_temp[2*PARTICLES_PER_BLOCK + threadIdx.x];
     T s = hypot(x1, x2);
     interp_pt[threadIdx.x] = s;
-
     symmetry_exploited[threadIdx.x] = x2 < 0;
-    // T theta = atan2(x2, x1);
 
     // we want to exploit periodicity in the B-field, but leave sin(theta) unchanged
     // compute the following without fmod atan2 in [-pi, pi]
@@ -678,7 +670,6 @@ __device__ void build_state(T* x_temp, bool* symmetry_exploited, int* cell_index
                             T* shape_fun_vals, const T* __restrict__ state, const T* __restrict__ derivs, 
                             const T* __restrict__ t, const T* __restrict__ dt, const bool* __restrict__ is_valid){
 
-    
     // store time
     if(threadIdx.x < PARTICLES_PER_BLOCK && is_valid[threadIdx.x]){
         x_temp[threadIdx.x] = t[threadIdx.x] + T(dp5_t_wgts[deriv_id])*dt[threadIdx.x];
@@ -698,13 +689,8 @@ __device__ void build_state(T* x_temp, bool* symmetry_exploited, int* cell_index
     }
     __syncthreads();
     
-    // if(threadIdx.x ==0){
-    //     printf("xtemp: %.15e, %.15e, %.15e, %.15e\n", x_temp[(1)*PARTICLES_PER_BLOCK ],x_temp[(2)*PARTICLES_PER_BLOCK ],
-    //                 x_temp[(3)*PARTICLES_PER_BLOCK ], x_temp[(4)*PARTICLES_PER_BLOCK ]);
-    // }
 
     // one thread per particle maps the position to the interpolant grid.
-
     __shared__ T interp_pt[3*PARTICLES_PER_BLOCK];
 
     if(threadIdx.x < PARTICLES_PER_BLOCK && is_valid[threadIdx.x]){
@@ -729,7 +715,7 @@ __device__ void build_state(T* x_temp, bool* symmetry_exploited, int* cell_index
 
         T value_rel = raw_offset - (T) index;
 
-         // compute 4 shape values for this coordinate and particle
+        // compute 4 shape values for this coordinate and particle
         T x_minus_1 = value_rel - (T)1.0;
         T x_minus_2 = value_rel - (T)2.0;
         T x_minus_3 = value_rel - (T)3.0;
@@ -748,17 +734,6 @@ __device__ void build_state(T* x_temp, bool* symmetry_exploited, int* cell_index
         shape_fun_vals[base_idx + 3*PARTICLES_PER_BLOCK] = one_sixth * prodx1 * x_minus_2;
 
         cell_index_start[3*particle_id + coord_id] = index/3;
-        
-        // if(particle_id == 0){
-        //     // printf("coord_id %d cell start: %d\n", coord_id, cell_index_start[3*particle_id + coord_id]);
-        //     printf("coord_id %d value: %f, inv_grid_size: %f, index: %d, value_rel: %f\n",
-        //             coord_id, value, inv_grid_size, index, value_rel);
-        //     printf("coord_id %d shape values : %f, %f, %f, %f\n",
-        //         coord_id, shape_fun_vals[base_idx + 0], shape_fun_vals[base_idx + 1*PARTICLES_PER_BLOCK], 
-        //         shape_fun_vals[base_idx + 2*PARTICLES_PER_BLOCK], shape_fun_vals[base_idx + 3*PARTICLES_PER_BLOCK]);
-        //     printf("coord_id %d x_minus_1: %f, x_minus_2: %f, x_minus_3: %f, prod23: %f, prodx1: %f\n",
-        //             coord_id, x_minus_1, x_minus_2, x_minus_3, prod23, prodx1);       
-        // }
     }
     __syncthreads();
 
@@ -805,9 +780,6 @@ template<typename T, RHS id, typename... Args>
 __device__ void setup_particle(T* mu, T* t, T* dt, T* dtmax, T* x_temp, bool* symmetry_exploited, int* cell_index_start,
                             const T* __restrict__ quad_pts, T* shape_fun_vals, T* state, T* derivs,
                             bool* is_valid, Args... args){
-    // if (threadIdx.x == 0 && blockIdx.x == 0) {
-    //     printf("particle_trace_kernel running with sizeof(T) = %llu\n", (unsigned long long)sizeof(T));
-    // }
 
     if(threadIdx.x < PARTICLES_PER_BLOCK && is_valid[threadIdx.x]){
         // t[threadIdx.x] = 0.0;
@@ -822,9 +794,6 @@ __device__ void setup_particle(T* mu, T* t, T* dt, T* dtmax, T* x_temp, bool* sy
     __shared__ T block_interpolants[n*PARTICLES_PER_BLOCK];
     interpolate<T, n>(block_interpolants, quad_pts, cell_index_start, shape_fun_vals, is_valid);
     __syncthreads();
-    // calc_derivs<T, id, 0>(derivs + threadIdx.x, quad_pts, x_temp + threadIdx.x, symmetry_exploited + threadIdx.x, cell_index_start,
-    //                  shape_fun_vals, mu + threadIdx.x, is_valid, args...);
-    // __syncthreads();
 
     if(threadIdx.x < PARTICLES_PER_BLOCK && is_valid[threadIdx.x]){
         T v_par = state[3*PARTICLES_PER_BLOCK + threadIdx.x];
@@ -939,7 +908,6 @@ __device__ void adjust_time(T* t, T* dt, T* state, T* __restrict__ derivs, const
 
     const bool active = is_valid[p] && !(has_left[p] || t[p] >= tmax_d);
     const T dt_p = dt[p];
-    // const T bhat1 = 71.0 / 57600.0, bhat3 = -71.0 / 16695.0, bhat4 = 71.0 / 1920.0, bhat5 = -17253.0 / 339200.0, bhat6 = 22.0 / 525.0, bhat7 = -1.0 / 40.0;
     
     // Compute  error
     // https://live.boost.org/doc/libs/1_82_0/libs/numeric/odeint/doc/html/boost_numeric_odeint/odeint_in_detail/steppers.html
@@ -1026,7 +994,6 @@ __global__ void  particle_trace_kernel(T* out, T* init_pos, const T* __restrict_
     int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
 
     __shared__ T x_temp[5 * PARTICLES_PER_BLOCK];
-    // __shared__ T derivs[42 * PARTICLES_PER_BLOCK];
     T* block_derivs = derivs + blockIdx.x*PARTICLES_PER_BLOCK*7*map_rhs_to_n_deriv_outputs<id>(); 
     __shared__ T block_dt[PARTICLES_PER_BLOCK];
     __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
@@ -1059,17 +1026,8 @@ __global__ void  particle_trace_kernel(T* out, T* init_pos, const T* __restrict_
     }
     __syncthreads();
 
-    // // calculate the particle's magnetic moment mu, dt, dtmax
-    // setup_particle<T, id>(block_mu, block_t, block_dt, block_dtmax, x_temp, symmetry_exploited, cell_index_start,
-    //                     quadpts_arr, shape_fun_vals, state, block_derivs, , args...);
-    // __syncthreads();
-
     // if there exists a particle which is real and hasn't not reached tmax or left, keep tracing
     while(__syncthreads_count(is_valid_arr[threadIdx.x % PARTICLES_PER_BLOCK] && !(block_t[threadIdx.x % PARTICLES_PER_BLOCK] >= tmax_d || has_left[threadIdx.x % PARTICLES_PER_BLOCK])) > 0){
-        // if (threadIdx.x == 0){
-        //     printf("particle time: %.15e, dt: %.15e, position: %f, %f, %f, %f\n", t[0], dt[threadIdx.x], state[threadIdx.x],
-        //     state[1*PARTICLES_PER_BLOCK + threadIdx.x], state[2*PARTICLES_PER_BLOCK + threadIdx.x], state[3*PARTICLES_PER_BLOCK + threadIdx.x]);
-        // }
         if(__syncthreads_count(is_valid_arr[threadIdx.x % PARTICLES_PER_BLOCK] && block_t[threadIdx.x % PARTICLES_PER_BLOCK] == 0.0) > 0){
             dp5_one_step<T, id, 0>(x_temp, block_derivs, quadpts_arr, cell_index_start, shape_fun_vals, block_t, block_dt,
                                 symmetry_exploited, state, block_mu, is_valid_arr, args...);
@@ -1164,8 +1122,6 @@ vector<T> gpu_tracing(py::array_t<T> quad_pts, py::array_t<double> x1_range, py:
     }
 
     gpuErrchk(cudaMemcpyToSymbol(grid_ranges_d, grid_ranges, 12*sizeof(double)) );
-    // gpuErrchk(cudaMemcpyToSymbol(x2_range_d, x2_range_ext, 4*sizeof(double)) );
-    // gpuErrchk(cudaMemcpyToSymbol(x3_range_d, x3_range_ext, 4*sizeof(double)) );
     gpuErrchk(cudaMemcpyToSymbol(tmax_d, &tmax, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(mass_d, &m, sizeof(double)));
     gpuErrchk(cudaMemcpyToSymbol(charge_d, &q, sizeof(double)));
@@ -1284,7 +1240,7 @@ vector<T> boozer_gpu_tracing(py::array_t<T> quad_pts, py::array_t<double> srange
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<T> stz_init, double m, double q, double vtotal, py::array_t<T> vtang, 
         double tmax, double tol, py::array_t<T> dt_in, double psi0, int nparticles, bool vacuum){
 
-    //  read data in from python
+    // read data in from python
     T* stz_init_arr = create_array(stz_init);
     
     for(int i=0; i<nparticles; ++i){
@@ -1444,7 +1400,6 @@ vector<T> boozer_saw_nok_gpu_tracing(py::array_t<T> quad_pts, py::array_t<double
         results[6*i+1] = sqrt(x1*x1 + x2*x2);
         results[6*i+2] = atan2(x2, x1);
     }
-
     return results;
 }
 
@@ -1522,7 +1477,6 @@ __global__ void test_gpu_interpolation_kernel(T* quad_pts, T* loc, T* out, T* de
     __shared__ int cell_index_start[3*PARTICLES_PER_BLOCK];
     __shared__ T shape_fun_vals[12*PARTICLES_PER_BLOCK];
     __shared__ T state[4 * PARTICLES_PER_BLOCK];
-    // __shared__ T derivs[42 * PARTICLES_PER_BLOCK];
     T* block_derivs = derivs + 7*map_rhs_to_n_deriv_outputs<id>()*blockIdx.x*PARTICLES_PER_BLOCK;
     T* block_dt = dt + blockIdx.x*PARTICLES_PER_BLOCK;
     T* block_t = t + blockIdx.x*PARTICLES_PER_BLOCK;
@@ -1701,7 +1655,6 @@ __global__ void test_gpu_derivs_kernel(T* quad_pts, T* init_pos, T* time, T* out
     T* out_arr  =  out + 4*idx;
 
     __shared__ T x_temp[5 * PARTICLES_PER_BLOCK];
-    // __shared__ T derivs[42 * PARTICLES_PER_BLOCK];
     T* block_derivs = derivs + 7*map_rhs_to_n_deriv_outputs<id>()*blockIdx.x*PARTICLES_PER_BLOCK;
     __shared__ bool symmetry_exploited[PARTICLES_PER_BLOCK];
     __shared__ int cell_index_start[3*PARTICLES_PER_BLOCK];
@@ -1724,15 +1677,6 @@ __global__ void test_gpu_derivs_kernel(T* quad_pts, T* init_pos, T* time, T* out
     }
     __syncthreads();
 
-    // setup_particle<T, id>(block_mu, block_t, block_dt, block_dtmax, x_temp, symmetry_exploited, cell_index_start,
-    //                     quad_pts, shape_fun_vals, state, block_derivs, , args...);
-
-    // __syncthreads();
-
-    // set non-zero time
-    // if(is_valid){
-    //     t[threadIdx.x] = time[idx];
-    // }
     build_state<T, id, 0>(x_temp, symmetry_exploited, cell_index_start,
             shape_fun_vals, state, block_derivs, block_t, block_dt, is_valid_arr);
     __syncthreads();
@@ -1761,8 +1705,6 @@ py::array_t<T> test_gpu_derivatives(py::array_t<T> quad_pts, py::array_t<double>
     T* vpar_arr = create_array<T>(vpar);
     T* time_arr = create_array<T>(time);
 
-
-    
     T init_pos[4*n_points];
     // load initial conditions
     for(int i=0; i<n_points; ++i){
@@ -2016,11 +1958,6 @@ __global__ void test_gpu_timestep_kernel(double* out, double* init_pos, double* 
     }
     __syncthreads();
 
-    // // calculate the particle's magnetic moment mu, dt, dtmax
-    // setup_particle<double, id>(block_mu, block_t, block_dt, block_dtmax, x_temp, symmetry_exploited, cell_index_start,
-    //                     quadpts_arr, shape_fun_vals, state, block_derivs, , args...);
-    // __syncthreads();
-
     // if there exists a particle at t=0, which is a real particle, then keep tracing
     while(__syncthreads_count(block_t[threadIdx.x % PARTICLES_PER_BLOCK] == 0.0  && is_valid_arr[threadIdx.x % PARTICLES_PER_BLOCK]) > 0){
         // calculate the 7 Dormand-Prince 5 derivatives
@@ -2142,8 +2079,6 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
     gpuErrchk( cudaMalloc((void**)&quadpts_d, quad_pts.size() * sizeof(double)) );
     gpuErrchk( cudaMemcpy(quadpts_d, quadpts_arr, quad_pts.size() * sizeof(double), cudaMemcpyHostToDevice) );
 
-
-
     double* mu_d;
     cudaMalloc((void**)&mu_d, nparticles*sizeof(double));
 
@@ -2152,7 +2087,6 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
     cudaMemset(t_d, 0, nparticles*sizeof(double)); 
 
     // scratch workspaces
-
     std::vector<double> dt_init(nparticles, double(-1.0));
     double* dt_d;
     cudaMalloc((void**)&dt_d, nparticles*sizeof(double));
@@ -2163,7 +2097,6 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
 
     double* out_d;
     gpuErrchk( cudaMalloc((void**)&out_d, 5 * nparticles * sizeof(double)) );
-
 
     // launch params
     int nthreads = THREADS_PER_BLOCK;
@@ -2185,7 +2118,6 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
     setup_kernel<double, id><<<setup_nblks, nthreads>>>(init_pos_d, quadpts_d, mu_d, dt_d, dtmax_d,
                                             t_d, derivs_d, nparticles, args...);
 
-
     // initialize global counter
     int n_total_threads = nblks*PARTICLES_PER_BLOCK;
     gpuErrchk(cudaMemcpyToSymbol(next_particle_d, &n_total_threads, sizeof(int)) );
@@ -2197,12 +2129,6 @@ vector<double> test_gpu_timestep(py::array_t<double> quad_pts, py::array_t<doubl
     double out[5*nparticles];
     gpuErrchk( cudaMemcpy(out, out_d, 5 * nparticles * sizeof(double), cudaMemcpyDeviceToHost) );
 
-    // cudaEventRecord(stop);
-    // cudaEventSynchronize(stop);
-    // float milliseconds = 0;
-    // cudaEventElapsedTime(&milliseconds, start, stop);
-    // std::cout << "tracing kernels time (ms): " << milliseconds<< "\n";
-    
     vector<double> particle_output(5*nparticles);
     for(int i=0; i<5*nparticles; ++i){
         particle_output[i] = out[i];
