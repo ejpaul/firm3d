@@ -424,20 +424,6 @@ class OrbitClassification:
             #   θ = (N*α − ι*χ) / (N − ι*M)
             #   ζ = (M*α − χ)   / (N − ι*M)
             _denom = self.helicity_N - iota_s * self.helicity_M
-            if np.abs(_denom) < 1e-10:
-                # Helicity vector is resonant with the field-line pitch on this
-                # segment (N - iota*M = 0), so chi cannot be swept at fixed
-                # alpha. Skip this segment rather than aborting the whole
-                # particle, so batch scans over many particles are not killed
-                # by one segment on a resonant surface.
-                warnings.warn(
-                    f"Skipping bounce segment {j}: helicity vector "
-                    f"(M={self.helicity_M}, N={self.helicity_N}) is aligned "
-                    f"with the field-line pitch (iota={iota_s:.6f}) on this "
-                    "segment.",
-                    stacklevel=2,
-                )
-                continue
 
             # Critical |B| for this segment, evaluated at the bounce point
             # (index_start), where vpar ~ 0 by construction. lam is conserved
@@ -566,7 +552,7 @@ class OrbitClassification:
             # Use a small floor on |dalpha| to avoid division by zero for
             # orbits that are exactly tangential (dalpha=0 → gammac=1).
             gammac = (2 / np.pi) * np.arctan(
-                np.abs(ds) / np.maximum(np.abs(dalpha), 1e-30)
+                np.abs(ds) / np.abs(dalpha)
             )
             gammacs.append(gammac)
 
