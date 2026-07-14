@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 from scipy.interpolate import PchipInterpolator
 
@@ -349,6 +351,12 @@ class OrbitClassification:
               dchi_total > barely_trapped_crit.
               When no classification is possible, returns zeros.
             - Requires at least 4 bounces for Jpar_var computation
+            - A bounce segment is skipped (with a warning) if the helicity
+              vector (M, N) is resonant with the local rotational transform
+              on that segment (N - iota*M = 0), since chi cannot be swept at
+              fixed alpha in that case. This shortens the per-segment arrays
+              rather than raising, so batch scans over many particles are not
+              aborted by one resonant segment.
         """
 
         # Compute all of the times when the particle bounces off vpar plane
@@ -364,17 +372,19 @@ class OrbitClassification:
 
         # Unwrap theta to handle periodic boundary crossings (prevents jumps at ±π)
         thetas = np.unwrap(res_ty[:, 2])
+        # zeta accumulates continuously along the trajectory (the tracer never
+        # wraps it mod 2*pi), so no unwrap is needed here.
         zetas = res_ty[:, 3]
 
         # Extract initial conditions
-        point = np.zeros((1, 3))
-        point[0, :] = res_ty[0, 1:4]  # Initial position [s, theta, zeta]
+        point0 = np.zeros((1, 3))
+        point0[0, :] = res_ty[0, 1:4]  # Initial position [s, theta, zeta]
         vpar_init = res_ty[0, 4]  # Initial parallel velocity [m/s]
 
         # Compute trapping parameter λ = v_perp^2 / (v^2 * B)
         # From energy conservation: v^2 = vpar^2 + vperp^2 = 2*Ekin/mass
         # At mirror point: vpar=0, so vperp^2 = v^2, giving B_mirror = v^2/(λ*v^2) = 1/λ
-        self.field.set_points(point)
+        self.field.set_points(point0)
         modB_0 = self.field.modB()[0, 0]
         lam = (2 * self.Ekin / self.mass - vpar_init**2) / (
             modB_0 * 2 * self.Ekin / self.mass
@@ -397,49 +407,72 @@ class OrbitClassification:
             index_start = np.argmin(np.abs(bounce_times[j] - res_ty[:, 0]))
             index_end = np.argmin(np.abs(bounce_times[j + 1] - res_ty[:, 0]))
 
-            res_ty_seg = res_ty[index_start : index_end + 1, :]
-            # --- Trajectory arrays (field evaluation on trajectory points only) ---
-            point = np.zeros((len(res_ty_seg), 3))
-            point[:, 0] = res_ty_seg[:, 1]  # s
-            point[:, 1] = res_ty_seg[:, 2]  # theta
-            point[:, 2] = res_ty_seg[:, 3]  # zeta
+            # Compute mean radial position and rotational transform up front:
+            # if the helicity vector is resonant with iota on this segment
+            # (checked below), the segment is skipped before any per-segment
+            # list is appended, so all per-segment arrays stay in sync without
+            # needing placeholder values.
+            mean_s = np.mean(res_ty[index_start : index_end + 1, 1])
+            point = np.zeros((1, 3))
+            point[0, 0] = mean_s
             self.field.set_points(point)
-            modB_traj = self.field.modB()[:, 0]
-            vpar_traj = res_ty[index_start : index_end + 1, 4]
+            iota_s = self.field.iota()[0, 0]
 
-            lam_traj = (2 * self.Ekin / self.mass - vpar_traj**2) / (
-                modB_traj * 2 * self.Ekin / self.mass
+            # Sample modB along the mean field line sweeping ±2π in χ at fixed α.
+            # Using χ as the sweep variable gives a grid uniform in χ and centred
+            # on the trajectory.  Inverting χ = M*θ − N*ζ and α = θ − ι*ζ gives:
+            #   θ = (N*α − ι*χ) / (N − ι*M)
+            #   ζ = (M*α − χ)   / (N − ι*M)
+            _denom = self.helicity_N - iota_s * self.helicity_M
+            if np.abs(_denom) < 1e-10:
+                # Helicity vector is resonant with the field-line pitch on this
+                # segment (N - iota*M = 0), so chi cannot be swept at fixed
+                # alpha. Skip this segment rather than aborting the whole
+                # particle, so batch scans over many particles are not killed
+                # by one segment on a resonant surface.
+                warnings.warn(
+                    f"Skipping bounce segment {j}: helicity vector "
+                    f"(M={self.helicity_M}, N={self.helicity_N}) is aligned "
+                    f"with the field-line pitch (iota={iota_s:.6f}) on this "
+                    "segment.",
+                    stacklevel=2,
+                )
+                continue
+
+            # Critical |B| for this segment, evaluated at the bounce point
+            # (index_start), where vpar ~ 0 by construction. lam is conserved
+            # along the trajectory only to numerical/integration precision, so
+            # evaluating at the segment's own mirror point avoids averaging
+            # 1/lam over interior samples, which can be noisy or ill-behaved.
+            point_bounce = np.zeros((1, 3))
+            point_bounce[0, :] = res_ty[index_start, 1:4]
+            self.field.set_points(point_bounce)
+            modB_bounce = self.field.modB()[0, 0]
+            vpar_bounce = res_ty[index_start, 4]
+            lam_bounce = (2 * self.Ekin / self.mass - vpar_bounce**2) / (
+                modB_bounce * 2 * self.Ekin / self.mass
             )
-            # Clip lam_traj to a small positive floor before inversion to guard
-            # against numerical noise pushing near-zero values to zero or negative.
-            lam_traj = np.maximum(lam_traj, 1e-30)
-            modB_crit_traj = np.mean(1 / lam_traj)
+            modB_crit_traj = 1 / lam_bounce
 
             # Compute radial excursion during this bounce
             ds = res_ty[index_end, 1] - res_ty[index_start, 1]
             dss.append(ds)
 
             # Compute change in helical angle chi = M*theta - N*zeta
-            # This is the primary quantity used for classification
+            # This is the primary quantity used for classification.
+            # thetas and zetas accumulate continuously along the trajectory
+            # (never wrapped mod 2*pi by the tracer), so chi is already
+            # continuous here and does not need a further np.unwrap.
             dtheta = thetas[index_end] - thetas[index_start]
             dzeta = zetas[index_end] - zetas[index_start]
-            thetas_unwrap = np.unwrap(thetas[index_start : index_end + 1])
-            zetas_unwrap = np.unwrap(zetas[index_start : index_end + 1])
-            chis_unwrap = np.unwrap(
-                self.helicity_M * thetas_unwrap - self.helicity_N * zetas_unwrap
+            chis_seg = (
+                self.helicity_M * thetas[index_start : index_end + 1]
+                - self.helicity_N * zetas[index_start : index_end + 1]
             )
-            dchi = np.abs(chis_unwrap[-1] - chis_unwrap[0])
+            dchi = np.abs(chis_seg[-1] - chis_seg[0])
             dchis.append(np.abs(dchi))
 
-            # Compute mean radial position during this bounce segment
-            mean_s = np.mean(res_ty[index_start : index_end + 1, 1])
             s_means.append(mean_s)
-
-            # Compute mean rotational transform during this bounce segment
-            point = np.zeros((1, 3))
-            point[0, 0] = mean_s
-            self.field.set_points(point)
-            iota_s = self.field.iota()[0, 0]
 
             # Compute mean field-line label alpha during this bounce segment
             theta_seg = res_ty[index_start : index_end + 1, 2]
@@ -449,20 +482,8 @@ class OrbitClassification:
 
             # Trajectory chi center: used to center the field-line sweep and to
             # locate the bounding peaks.
-            chi_traj_center = 0.5 * (np.max(chis_unwrap) + np.min(chis_unwrap))
+            chi_traj_center = 0.5 * (np.max(chis_seg) + np.min(chis_seg))
 
-            # Sample modB along the mean field line sweeping ±2π in χ at fixed α.
-            # Using χ as the sweep variable gives a grid uniform in χ and centred
-            # on the trajectory.  Inverting χ = M*θ − N*ζ and α = θ − ι*ζ gives:
-            #   θ = (N*α − ι*χ) / (N − ι*M)
-            #   ζ = (M*α − χ)   / (N − ι*M)
-            _denom = self.helicity_N - iota_s * self.helicity_M
-            if np.abs(_denom) < 1e-10:
-                raise ValueError(
-                    f"Helicity vector (M={self.helicity_M}, N={self.helicity_N}) "
-                    f"is aligned with the field-line pitch (iota={iota_s:.6f}): "
-                    "N - iota*M = 0.  Cannot sweep chi at fixed alpha."
-                )
             chi_grid_mean = np.linspace(
                 chi_traj_center - 2 * np.pi,
                 chi_traj_center + 2 * np.pi,
@@ -650,6 +671,17 @@ class OrbitClassification:
             Jpar_var = 0.0
             gammac_mean = 0.0
             ntransitions = 0
+        elif len(dchis) == 0:
+            # Every bounce segment was skipped (e.g. each one was resonant
+            # with the helicity vector; see per-segment skip above). Fall
+            # back to the same "cannot classify" defaults as nbounce == 0.
+            status = np.array([])
+            banana_frac = 0.0
+            barely_trapped_frac = 0.0
+            ripple_trapped_frac = 0.0
+            Jpar_var = 0.0
+            gammac_mean = 0.0
+            ntransitions = 0
         else:
             # Classification logic:
             # - Start with all segments as banana trapped (status=0)
@@ -714,7 +746,7 @@ class OrbitClassification:
             "nbounce": nbounce,
             "bounce_times": bounce_times,
             "lam": lam,
-            "point0": point,
+            "point0": point0,
             "vpar0": vpar_init,
             "status": status,
             "dss": dss,
