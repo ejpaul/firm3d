@@ -1,5 +1,3 @@
-import warnings
-
 import numpy as np
 from scipy.interpolate import PchipInterpolator
 
@@ -549,11 +547,7 @@ class OrbitClassification:
             # Classification quantities derived from already-available variables.
             dalpha = dtheta - iota_s * dzeta
             dalphas.append(dalpha)
-            # Use a small floor on |dalpha| to avoid division by zero for
-            # orbits that are exactly tangential (dalpha=0 → gammac=1).
-            gammac = (2 / np.pi) * np.arctan(
-                np.abs(ds) / np.abs(dalpha)
-            )
+            gammac = (2 / np.pi) * np.arctan(np.abs(ds) / np.abs(dalpha))
             gammacs.append(gammac)
 
             # Predicted dchi: 2× distance from chi_min to the nearer mirror point.
