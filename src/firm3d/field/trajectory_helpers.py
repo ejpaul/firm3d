@@ -2802,7 +2802,12 @@ class MapEquilibrium:
         self.savedata = savedata
         if savepath != "":
             savepath += "_"
-
+        if savedata:
+            self.res_filepaths = {
+                "tys": savepath + "DA_data.txt",
+                "ICs": savepath + "initial_conditions.txt"
+            }
+    
         self.savepath = savepath
         load_ics = False
         load_files = False
@@ -3420,36 +3425,36 @@ class MapEquilibrium:
                     pa_tp += [normalized_pitch_i] * len(rad_like)
                     trapped_vals += [trapped] * len(rad_like)
 
-        rad_like_tp = np.array(rad_like_tp)
-        pa_tp = np.array(pa_tp)
-        trapped_vals = np.array(trapped_vals)
-
         if self.plot_s:
             ax.set_ylabel(r"$s$")
         else:
             ax.set_ylabel(r"$P_\eta$")
             pa_tp, rad_like_tp = make_boundary(rad_like_tp, pa_tp, trapped_vals)
 
-        coeffs = np.polyfit(pa_tp, rad_like_tp, 2)
-        poly = np.poly1d(coeffs)
-        pa_fit = np.linspace(min(pa_tp), max(pa_tp), 100)
-        s_fit = poly(pa_fit)
-        min_idx = np.argmin(s_fit)
-        if self.sign == 1:
-            s_fit = s_fit[: min_idx + 1]
-            pa_fit = pa_fit[: min_idx + 1]
-        else:
-            s_fit = s_fit[min_idx:]
-            pa_fit = pa_fit[min_idx:]
+        if len(pa_tp) > 3:
+            rad_like_tp = np.array(rad_like_tp)
+            pa_tp = np.array(pa_tp)
+            trapped_vals = np.array(trapped_vals)
+            coeffs = np.polyfit(pa_tp, rad_like_tp, 2)
+            poly = np.poly1d(coeffs)
+            pa_fit = np.linspace(min(pa_tp), max(pa_tp), 100)
+            s_fit = poly(pa_fit)
+            min_idx = np.argmin(s_fit)
+            if self.sign == 1:
+                s_fit = s_fit[: min_idx + 1]
+                pa_fit = pa_fit[: min_idx + 1]
+            else:
+                s_fit = s_fit[min_idx:]
+                pa_fit = pa_fit[min_idx:]
 
-        ax.plot(
-            pa_fit,
-            s_fit,
-            color="grey",
-            linewidth=5,
-            label="Trapped-passing boundary",
-            zorder=20,
-        )
+            ax.plot(
+                pa_fit,
+                s_fit,
+                color="grey",
+                linewidth=5,
+                label="Trapped-passing boundary",
+                zorder=20,
+            )
 
         if peta_exp is not None:
             import matplotlib.ticker as mticker
