@@ -12,18 +12,8 @@ from firm3d.util.constants import (
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
-
-try:
-    from mpi4py import MPI
-
-    comm = MPI.COMM_WORLD
-    comm_size = comm.size
-    verbose = comm.rank == 0
-except ImportError:
-    comm = None
-    comm_size = 1
-    verbose = True
-
+from firm3d.util.functions import in_github_actions, proc0_print, setup_logging
+from firm3d.util.mpi import comm_size, comm_world, verbose
 
 folder = "DATA/"
 fname = ""
@@ -39,10 +29,14 @@ mpl.rcParams["figure.titlesize"] = 14
 
 order = 3
 degree = 3
-resolution = 10
+resolution = 10 if in_github_actions else 48  # Resolution for field interpolation
 ns_interp = resolution  # number of radial grid points for interpolation
 ntheta_interp = resolution  # number of poloidal grid points for interpolation
 nzeta_interp = resolution  # number of toroidal grid points for interpolation
+
+ns_points = 5 if in_github_actions else 30  # number of radial grid points for heatmap
+particles_per_surface = 2 if in_github_actions else 20  # number of particles per radial grid point for heatmap
+nlambda_points = 5 if in_github_actions else 30  # number of lambda points for heatmap
 
 helicity_M = 1  # field strength helicity (QA)
 helicity_N = 0  # field strength helicity (QA)
@@ -53,7 +47,7 @@ bri = BoozerRadialInterpolant(
     boozmn_filename,
     order,
     no_K=True,
-    comm=comm,
+    comm=comm_world,
 )
 field = InterpolatedBoozerField(
     bri,
@@ -79,10 +73,10 @@ heat_map = MapEquilibrium(
     helicity_M=helicity_M,
     helicity_Mp=helicity_Mp,
     helicity_Np=helicity_Np,
-    ns_points=30,
-    particles_per_surface=20,
-    nlambda_points=30,
-    comm=comm,
+    ns_points=ns_points,
+    particles_per_surface=particles_per_surface,
+    nlambda_points=nlambda_points,
+    comm=comm_world,
     savedata=True,
     savepath="",
 )

@@ -21,16 +21,8 @@ from firm3d.util.constants import (
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
 
-try:
-    from mpi4py import MPI
-
-    comm = MPI.COMM_WORLD
-    comm_size = comm.size
-    verbose = comm.rank == 0
-except ImportError:
-    comm = None
-    comm_size = 1
-    verbose = True
+from firm3d.util.functions import in_github_actions, proc0_print, setup_logging
+from firm3d.util.mpi import comm_size, comm_world, verbose
 
 
 # harmonic to isolate for this case
@@ -54,9 +46,13 @@ AE_filename = "QH_10harmonics_scale0_00464159.npy"
 plot_losses = False
 
 # poincare parameters
-nchi_poinc = 5
-ns_poinc = 500
-Nmaps = 1500
+nchi_poinc = 1 if in_github_actions else 5
+ns_poinc = 10 if in_github_actions else 100
+ns_points = 5 if in_github_actions else 30  # number of radial grid points for heatmap
+particles_per_surface = 2 if in_github_actions else 20  # number of particles per radial grid point for heatmap
+nlambda_points = 5 if in_github_actions else 30  # number of lambda points for heatmap
+
+Nmaps = 3 if in_github_actions else 1000  # number of maps to compute for poincare plot
 
 # Eprime parameters
 lam = 0.0
@@ -64,9 +60,9 @@ p0_int = 0.1
 
 order = 3
 degree = 3
-resolution = 45
+resolution = 10 if in_github_actions else 48
 # resolution for perfect QS enforced if needed
-res_p = 40
+res_p = 10 if in_github_actions else 48
 
 mpl.rcParams["font.size"] = 25  # base font size
 mpl.rcParams["axes.labelsize"] = 25  # x/y labels
@@ -90,10 +86,10 @@ if perfect:
         no_K=True,
         helicity_M=helicity_M,
         helicity_N=helicity_N,
-        comm=comm,
+        comm=comm_world,
     )
 else:
-    bri = BoozerRadialInterpolant(boozmn_filename, order, no_K=True, comm=comm)
+    bri = BoozerRadialInterpolant(boozmn_filename, order, no_K=True, comm=comm_world)
 field = InterpolatedBoozerField(
     bri,
     degree,
@@ -111,7 +107,7 @@ else:
         no_K=True,
         helicity_M=helicity_M,
         helicity_N=helicity_N,
-        comm=comm,
+        comm=comm_world,
     )
     field_p = InterpolatedBoozerField(
         bri_p,
@@ -179,7 +175,7 @@ heat_map = MapPhaseSpace(
     Eprime=Eprime,
     sign_vpar=sign_vpar,
     tmax=1e-2,
-    comm=comm,
+    comm=comm_world,
     savedata=True,
     file_name=filepath,
     convergence_points=5,
@@ -374,8 +370,8 @@ if len(hlist) > 1:
 else:
     norm = mpl.colors.Normalize(vmin=hlist[0], vmax=hlist[0] + 1)
 
-if comm is not None:
-    comm.Barrier()
+if comm_world is not None:
+    comm_world.Barrier()
 
 if verbose:
     # make a list of line colors for each harmonic
@@ -536,5 +532,5 @@ if verbose:
 
     plt.clf()
 
-if comm is not None:
-    comm.Barrier()
+if comm_world is not None:
+    comm_world.Barrier()
