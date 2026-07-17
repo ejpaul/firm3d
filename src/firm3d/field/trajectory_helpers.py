@@ -5166,7 +5166,7 @@ class WBAPerturbedParticles:
 
             particle_out = [start_state, end_state, mean_state, convergence_data]
             DA_data.append(final_DA)
-            wall_lost.append(points_trajectory[-1:3])
+            wall_lost.append(points_trajectory[-1,3])
             dense_output.append(particle_out)
             if self.save_gc_trajectories:
                 res_tys.append(points_trajectory)
