@@ -21,9 +21,7 @@ from firm3d.util.constants import (
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
 
-from firm3d.util.functions import in_github_actions, proc0_print, setup_logging
-from firm3d.util.mpi import comm_size, comm_world, verbose
-
+from firm3d.util.mpi import comm_world, verbose
 
 # harmonic to isolate for this case
 harmonic = 1
@@ -46,13 +44,9 @@ AE_filename = "QH_10harmonics_scale0_00464159.npy"
 plot_losses = False
 
 # poincare parameters
-nchi_poinc = 1 if in_github_actions else 5
-ns_poinc = 10 if in_github_actions else 100
-ns_points = 5 if in_github_actions else 30  # number of radial grid points for heatmap
-particles_per_surface = 2 if in_github_actions else 20  # number of particles per radial grid point for heatmap
-nlambda_points = 5 if in_github_actions else 30  # number of lambda points for heatmap
-
-Nmaps = 3 if in_github_actions else 1000  # number of maps to compute for poincare plot
+nchi_poinc = 5
+ns_poinc = 500
+Nmaps = 1500
 
 # Eprime parameters
 lam = 0.0
@@ -60,9 +54,9 @@ p0_int = 0.1
 
 order = 3
 degree = 3
-resolution = 10 if in_github_actions else 48
+resolution = 45
 # resolution for perfect QS enforced if needed
-res_p = 10 if in_github_actions else 48
+res_p = 40
 
 mpl.rcParams["font.size"] = 25  # base font size
 mpl.rcParams["axes.labelsize"] = 25  # x/y labels
@@ -199,7 +193,7 @@ map = PassingPerturbedPoincare(
     nchi_poinc=nchi_poinc,
     Nmaps=Nmaps,
     chaos_detection=True,
-    comm=comm,
+    comm=comm_world,
     nconvergence_points=5,
 )
 if verbose:
@@ -271,7 +265,7 @@ mpl.rcParams["ytick.labelsize"] = 12
 
 for plot_counter, mu_h in enumerate(mu_harmonics):
     # compute rotational profile for given pitch angle
-    profile = compute_rotational_profile(mu_h / Ekin, sign_vpar, False, comm=comm)
+    profile = compute_rotational_profile(mu_h / Ekin, sign_vpar, False, comm=comm_world)
     if profile.shape[0] < 2:
         continue  # skip if not enough points to compute resonance:
     pitch_angle_h = (sign_vpar * np.abs(mu_h) / Ekin) * min_volmodB
@@ -307,14 +301,7 @@ for plot_counter, mu_h in enumerate(mu_harmonics):
                 ell=ell,
             )
             crossings = calculate_crossings(drift_helicity, h_res, radial_position)
-            if verbose:
-                plt.plot(
-                    [min(radial_position), max(radial_position)],
-                    [h_res, h_res],
-                    linestyle=possible_linestyles[ell + max_ell],
-                    color="gray",
-                    alpha=0.5,
-                )
+
             if len(crossings) != 0:
                 for crossing_index, radius in enumerate(crossings):
                     if ell in harmonics[h]:
@@ -329,14 +316,6 @@ for plot_counter, mu_h in enumerate(mu_harmonics):
                     else:
                         harmonics[h][ell] = [[[pitch_angle_h], [radius]]]
 
-    if verbose:
-        # plot the rotational profile
-        plt.tight_layout()
-        plt.legend(fontsize=14, markerscale=1.5)
-        plt.savefig(filepath + "harmonic_profile.png", dpi=400)
-    if comm is not None:
-        comm.Barrier()
-
 
 plt.clf()
 
@@ -348,7 +327,7 @@ mpl.rcParams["ytick.labelsize"] = 25
 ell_list = []
 rad_list = []
 lines_modes = []
-profile = compute_rotational_profile(lam, sign_vpar, True, comm)
+profile = compute_rotational_profile(lam, sign_vpar, True, comm_world)
 for ell in range(-max_ell, max_ell + 1):
     h_res = calculate_QS_resonance(
         Phim, Phin, helicity_M, helicity_N, omega, np.mean(profile[:, 2]), ell=ell
@@ -486,10 +465,10 @@ if verbose:
                 trapped_passing_line_rad = heat_map.trapped_boundary_fit_radial
                 trapped_passing_line_pitch = heat_map.trapped_boundary_fit_pitch
 
-                # ignore resonance lines which start near the trapped-passing boundary 
+                # ignore resonance lines which start near the trapped-passing boundary
                 # in the region where the fit is inaccurate due to numerical noise
-                if trapped_passing_line_pitch[0] < resonance_pitch[0]: continue
-
+                if trapped_passing_line_pitch[0] < resonance_pitch[0]:
+                    continue
 
                 diff = trapped_passing_fit - s_fit
                 sign_changes = np.where(np.sign(diff[:-1]) != np.sign(diff[1:]))[0]

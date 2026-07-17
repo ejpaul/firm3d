@@ -12,8 +12,8 @@ from firm3d.util.constants import (
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
-from firm3d.util.functions import in_github_actions, proc0_print, setup_logging
-from firm3d.util.mpi import comm_size, comm_world, verbose
+from firm3d.util.functions import in_github_actions
+from firm3d.util.mpi import comm_world, verbose
 
 folder = "DATA/"
 fname = ""
@@ -34,8 +34,11 @@ ns_interp = resolution  # number of radial grid points for interpolation
 ntheta_interp = resolution  # number of poloidal grid points for interpolation
 nzeta_interp = resolution  # number of toroidal grid points for interpolation
 
+tmax = 1e-4 if in_github_actions else 1e-2  # maximum time for trajectory integration
 ns_points = 5 if in_github_actions else 30  # number of radial grid points for heatmap
-particles_per_surface = 2 if in_github_actions else 20  # number of particles per radial grid point for heatmap
+particles_per_surface = (
+    2 if in_github_actions else 20
+)  # number of particles per radial grid point for heatmap
 nlambda_points = 5 if in_github_actions else 30  # number of lambda points for heatmap
 
 helicity_M = 1  # field strength helicity (QA)
@@ -76,10 +79,11 @@ heat_map = MapEquilibrium(
     ns_points=ns_points,
     particles_per_surface=particles_per_surface,
     nlambda_points=nlambda_points,
+    tmax=tmax,
     comm=comm_world,
-    savedata=True,
+    savedata=not in_github_actions,
     savepath="",
 )
 
-if verbose:
-    heat_map.plot_heatmap(plot_at_loss=False)
+if verbose and not in_github_actions:
+    heat_map.plot_heatmap(DA_at_loss=False)

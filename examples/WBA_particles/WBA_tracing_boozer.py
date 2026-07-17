@@ -16,28 +16,19 @@ from firm3d.util.constants import (
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
-
-try:
-    from mpi4py import MPI
-
-    comm = MPI.COMM_WORLD
-    verbose = comm.rank == 0
-    comm_size = comm.size
-except ImportError:
-    comm = None
-    verbose = True
-    comm_size = 1
+from firm3d.util.functions import in_github_actions
+from firm3d.util.mpi import comm_world
 
 time1 = time.time()
 
-resolution = 48  # Resolution for field interpolation
-nParticles = 5000  # Number of particles to trace
+resolution = 10 if in_github_actions else 48  # Resolution for field interpolation
+nParticles = 10 if in_github_actions else 48  # Number of particles to trace
 reltol = 1e-10  # Relative tolerance for the ODE solver
 abstol = 1e-10  # Absolute tolerance for the ODE solver
 order = 3  # Order for radial interpolation
 degree = 3  # Degree for 3d interpolation
 boozmn_filename = "../inputs/boozmn_beta2.5_QA.nc"
-tmax = 1e-2  # Time for integration
+tmax = 1e-4 if in_github_actions else 1e-2  # Maximum integration time
 ns_interp = resolution
 ntheta_interp = resolution
 nzeta_interp = resolution
@@ -48,7 +39,7 @@ dt_save = 1e-7  # Time interval for saving trajectory points
 
 
 ## Setup radial interpolation
-bri = BoozerRadialInterpolant(boozmn_filename, order, no_K=True, comm=comm)
+bri = BoozerRadialInterpolant(boozmn_filename, order, no_K=True, comm=comm_world)
 
 ## Setup 3d interpolation
 field = InterpolatedBoozerField(
@@ -62,7 +53,7 @@ field = InterpolatedBoozerField(
 tracing_points = initialize_position_uniform_vol(
     field,
     nParticles,
-    comm=comm,
+    comm=comm_world,
     seed=None,
 )
 
@@ -71,7 +62,7 @@ mass = ALPHA_PARTICLE_MASS
 charge = ALPHA_PARTICLE_CHARGE
 # Initialize uniformly distributed parallel velocities
 vpar0 = np.sqrt(2 * Ekin / mass)
-vpar_init = initialize_velocity_uniform(vpar0, nParticles, comm=comm, seed=0)
+vpar_init = initialize_velocity_uniform(vpar0, nParticles, comm=comm_world, seed=0)
 
 ### Alternatively: one could provide the traced trajectories to the WBAParticles class,
 # which will then compute the DA for those trajectories.
@@ -85,11 +76,10 @@ object_WBA = WBAParticles(
     helicity_M,
     points=tracing_points,
     v_pars=vpar_init,
-    tmax=1e-2,
+    tmax=tmax,
     min_timestep=1e-7,
-    savedata=True,
-    comm=comm,
-    DA_cutoff=3,
+    savedata=not in_github_actions,
+    comm=comm_world,
     tol=abstol,
     convergence_points=10,
 )

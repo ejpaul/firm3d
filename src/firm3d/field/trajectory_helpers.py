@@ -11,7 +11,7 @@ from ..field.boozermagneticfield import (
     ShearAlfvenHarmonic,
     ShearAlfvenWave,
     ShearAlfvenWavesSuperposition,
-    InterpolatedShearAlfvenWave
+    InterpolatedShearAlfvenWave,
 )
 from ..field.tracing import (
     MaxToroidalFluxStoppingCriterion,
@@ -101,25 +101,29 @@ def compute_trajectory_cylindrical(res_ty, field):
     return R_traj, phi_traj, Z_traj
 
 
-def min_volumemodB(B0):
+def min_volumemodB(B0, NFP=None):
     r"""
     Estimate minimum magnetic-field magnitude over sampled surfaces
     by evaluating |B| on a uniform grid of flux surfaces.
 
     Args:
-        B0 : The :class:`BoozerMagneticField` instance to evaluate.
+        B0  : The :class:`BoozerMagneticField` instance to evaluate.
+        NFP : Number of field periods. If None, defaults to 1.
 
     Returns:
         min_modB : Approximate minimum value of |B| in the sampled volume.
     """
-    resolution = 1000
+    if NFP is None:
+        NFP = 1
 
-    for surface in np.linspace(0.01, 0.99, resolution):
-        if surface == 0.01:
-            points = initialize_position_uniform_surf(B0, resolution, surface)
-        else:
-            sampled_surface = initialize_position_uniform_surf(B0, resolution, surface)
-            points = np.concatenate((points, sampled_surface), axis=0)
+    s_grid = np.linspace(0, 1, 100)
+    theta_grid = np.linspace(0, 2 * np.pi, 100, endpoint=False)
+    zeta_grid = np.linspace(0, 2 * np.pi / NFP, 100, endpoint=False)
+    [zeta_grid, theta_grid, s_grid] = np.meshgrid(zeta_grid, theta_grid, s_grid)
+    points = np.zeros((len(theta_grid.flatten()), 3))
+    points[:, 0] = s_grid.flatten()
+    points[:, 1] = theta_grid.flatten()
+    points[:, 2] = zeta_grid.flatten()
 
     B0.set_points(points)
     modB = B0.modB()[:, 0]
@@ -127,11 +131,6 @@ def min_volumemodB(B0):
 
 
 class PassingPoincare:
-    """
-    Class to compute and store passing Poincare maps and related quantities
-    for a given BoozerMagneticField.
-    """
-
     def __init__(
         self,
         field,
@@ -295,9 +294,9 @@ class PassingPoincare:
         variable, :math:`\lambda = v_\perp^2/(v^2 B)`.
 
         Returns:
+            vpars_init : List of initial parallel velocities for the Poincare map.
             s_init : List of initial s coordinates for the Poincare map.
             thetas_init : List of initial theta coordinates for the Poincare map.
-            vpars_init : List of initial parallel velocities for the Poincare map.
         """
         vtotal = np.sqrt(
             2 * self.Ekin / self.mass
@@ -420,6 +419,16 @@ class PassingPoincare:
         r"""
         Evaluates the passing Poincare return map for the initialized particle
         positions.
+
+        Returns:
+            s_all : List of s coordinate lists, one per trajectory.
+            thetas_all : List of theta coordinate lists, one per trajectory.
+            vpars_all : List of parallel velocity lists, one per trajectory.
+            t_all : List of cumulative transit time lists, one per trajectory.
+            peta_all : List of canonical momentum lists (empty if peta_profile
+                is False).
+            DA_all : List of WBA digit-accuracy lists, one per trajectory.
+            DA_times : List of transit indices at which DA was evaluated.
         """
         Ntrj = len(self.s_init)
 
@@ -519,14 +528,24 @@ class PassingPoincare:
         enforced quasisymmetry (i.e., initialize BoozerRadialInterpolant with N
         prescribed).
 
-        Inputs:
-            s_profile : If true, return frequencies as a function of p_eta rather
-                than field line label.
+        Args:
+            s_profile : If True, return frequencies as a function of field-line
+                label s (averaging over trajectories with the same initial s).
+                If False, return frequencies as a function of canonical momentum
+                p_eta.
 
         Returns:
-            omega_theta : List of poloidal transit frequencies.
-            omega_zeta : List of toroidal transit frequencies.
-            init_s : List of initial s values for each trajectory.
+            When s_profile is True:
+                omega_theta_prof : Array of mean poloidal transit frequencies
+                    per surface.
+                omega_zeta_prof : Array of mean toroidal transit frequencies
+                    per surface.
+                s_prof : Array of unique flux-surface labels.
+            When s_profile is False:
+                omega_theta_prof : Array of mean poloidal transit frequencies per p_eta.
+                omega_zeta_prof : Array of mean toroidal transit frequencies per p_eta.
+                peta_prof : Array of unique canonical-momentum values.
+                s_prof : Array of mean s values corresponding to each p_eta.
         """
         if "axis" in self.solver_options and self.solver_options["axis"] != 0:
             raise ValueError(
@@ -541,26 +560,48 @@ class PassingPoincare:
         omega_zeta = []
         init_s = []
         init_peta = []
-        for s_traj, theta_traj, _vpar_traj, t_traj, peta_traj in zip(
-            self.s_all, self.thetas_all, self.vpars_all, self.t_all, self.peta_all
-        ):
-            if (
-                len(peta_traj) < 2
-            ):  # Need at least one full Poincare return maps to compute frequency
-                continue
-            delta_theta = np.array(theta_traj[1:]) - np.array(theta_traj[0:-1])
 
-            delta_t = t_traj[1::]
-            delta_zeta = 2 * np.pi * self.sign_vpar * sign_G
+        if not s_profile:
+            for s_traj, theta_traj, _vpar_traj, t_traj, peta_traj in zip(
+                self.s_all, self.thetas_all, self.vpars_all, self.t_all, self.peta_all
+            ):
+                if (
+                    len(s_traj) < 2
+                ):  # Need at least one full Poincare return maps to compute frequency
+                    continue
+                delta_theta = np.array(theta_traj[1:]) - np.array(theta_traj[0:-1])
 
-            # Average over wells along one field line
-            freq_theta = np.mean(delta_theta) / np.mean(delta_t)
-            freq_zeta = delta_zeta / np.mean(delta_t)
+                delta_t = t_traj[1::]
+                delta_zeta = 2 * np.pi * self.sign_vpar * sign_G
 
-            omega_theta.append(freq_theta)
-            omega_zeta.append(freq_zeta)
-            init_s.append(np.mean(s_traj))
-            init_peta.append(np.mean(peta_traj))
+                # Average over wells along one field line
+                freq_theta = np.mean(delta_theta) / np.mean(delta_t)
+                freq_zeta = delta_zeta / np.mean(delta_t)
+
+                omega_theta.append(freq_theta)
+                omega_zeta.append(freq_zeta)
+                init_s.append(np.mean(s_traj))
+                init_peta.append(np.mean(peta_traj))
+        else:
+            for s_traj, theta_traj, _vpar_traj, t_traj in zip(
+                self.s_all, self.thetas_all, self.vpars_all, self.t_all
+            ):
+                if (
+                    len(s_traj) < 2
+                ):  # Need at least one full Poincare return maps to compute frequency
+                    continue
+                delta_theta = np.array(theta_traj[1:]) - np.array(theta_traj[0:-1])
+
+                delta_t = t_traj[1::]
+                delta_zeta = 2 * np.pi * self.sign_vpar * sign_G
+
+                # Average over wells along one field line
+                freq_theta = np.mean(delta_theta) / np.mean(delta_t)
+                freq_zeta = delta_zeta / np.mean(delta_t)
+
+                omega_theta.append(freq_theta)
+                omega_zeta.append(freq_zeta)
+                init_s.append(np.mean(s_traj))
 
         omega_theta = np.array(omega_theta)
         omega_zeta = np.array(omega_zeta)
@@ -607,7 +648,7 @@ class PassingPoincare:
     def plot_poincare(
         self,
         ax=None,
-        y_axis_flux=True,
+        plot_fluxsurface=True,
         filename="passing_poincare.pdf",
         colorbar=True,
         DA_max=7,
@@ -620,6 +661,9 @@ class PassingPoincare:
         Args:
             ax : Matplotlib axis to plot on. If None, a new figure and axis are
                  created.
+            plot_fluxsurface : If True (default), plot s on the y axis. If False, plot
+                          p_eta on the y axis (requires helicity_M and helicity_N
+                          to have been provided at construction).
             filename : Name of the file to save the plot
                        (default: 'passing_poincare.pdf').
             colorbar : If True, include a colorbar indicating the digit accuracy of the
@@ -648,7 +692,7 @@ class PassingPoincare:
         else:
             fig = ax.get_figure()
 
-        if not y_axis_flux and not self.peta_profile:
+        if not plot_fluxsurface and not self.peta_profile:
             raise ValueError(
                 "To plot with p_eta as y axis, the Poincare map "
                 "must be initialized with helicity_M and helicity_N "
@@ -662,7 +706,7 @@ class PassingPoincare:
             normalized_numbers = [(x - min_val) / (max_val - min_val) for x in numbers]
             return normalized_numbers
 
-        y_coordinate = self.s_all if y_axis_flux else self.peta_all
+        y_coordinate = self.s_all if plot_fluxsurface else self.peta_all
 
         convergence_test_indicies = list(range(len(y_coordinate)))
         if self.DA_poinc and self.nconvergence_points > 1:
@@ -677,12 +721,12 @@ class PassingPoincare:
             cmap_radial = mpl.colormaps["copper"].resampled(color_space)
 
         ax.set_xlabel(r"$\theta$")
-        if y_axis_flux:
+        if plot_fluxsurface:
             ax.set_ylabel(r"$s$")
         else:
             ax.set_ylabel(r"$p_\eta$")
         ax.set_xlim([0, 2 * np.pi])
-        if y_axis_flux:
+        if plot_fluxsurface:
             ax.set_ylim([0, 1])
 
         if self.DA_poinc:
@@ -702,7 +746,7 @@ class PassingPoincare:
             for i in range(len(self.thetas_all)):
                 ax.scatter(
                     np.mod(self.thetas_all[i], 2 * np.pi),
-                    self.s_all[i] if y_axis_flux else self.peta_all[i],
+                    self.s_all[i] if plot_fluxsurface else self.peta_all[i],
                     marker="o",
                     s=0.5,
                     c=cmap_object(DA_norm_all[i]),
@@ -721,7 +765,7 @@ class PassingPoincare:
             for i in range(len(self.thetas_all)):
                 ax.scatter(
                     np.mod(self.thetas_all[i], 2 * np.pi),
-                    self.s_all[i] if y_axis_flux else self.peta_all[i],
+                    self.s_all[i] if plot_fluxsurface else self.peta_all[i],
                     marker="o",
                     s=0.5,
                     edgecolors="none",
@@ -751,7 +795,7 @@ class PassingPoincare:
                 ScalarMappable(norm=norm, cmap=cmap_radial),
                 ax=ax2,
                 orientation="vertical",
-                label=r"$s$" if y_axis_flux else r"$p_\eta$",
+                label=r"$s$" if plot_fluxsurface else r"$p_\eta$",
             )
 
             fig_convergence.tight_layout()
@@ -842,9 +886,20 @@ class TrappedPoincare:
             comm : MPI communicator for parallel execution (default: None).
             tmax : Maximum integration time for each segment of the Poincare
                    map (default: 1e-2 s).
+            helicity_Mp : Poloidal helicity of the mapping coordinate eta.
+                          If None, determined automatically from helicity_M.
+            helicity_Np : Toroidal helicity of the mapping coordinate eta.
+                          If None, determined automatically from helicity_N.
             solver_options : Dictionary of options to pass to the ODE solver
                              (default: {}).
-            chaos_detection : Whether to perform chaos detection (default: False).
+            chaos_detection : If True, compute the Weighted Birkhoff Average
+                              (WBA) digit accuracy along each trajectory
+                              (default: False).
+            nconvergence_points : Number of WBA evaluations per trajectory used
+                                  to assess convergence of the chaos detection
+                                  metric. If None and chaos_detection=True, a
+                                  single evaluation at the end of the trajectory
+                                  is used.
         """
         if solver_options is None:
             solver_options = {}
@@ -1014,7 +1069,7 @@ class TrappedPoincare:
             vpars=[0],
             stopping_criteria=[
                 MinToroidalFluxStoppingCriterion(0.01),
-                MaxToroidalFluxStoppingCriterion(1.0),
+                MaxToroidalFluxStoppingCriterion(0.99),
             ],
             forget_exact_path=False,
             vpars_stop=True,
@@ -1167,6 +1222,14 @@ class TrappedPoincare:
         r"""
         Evaluates the trapped Poincare return map for the initialized particle
         positions.
+
+        Returns:
+            s_all : List of s coordinate lists, one per trajectory.
+            chis_all : List of helical angle chi lists, one per trajectory.
+            etas_all : List of mapping angle eta lists, one per trajectory.
+            t_all : List of cumulative bounce-period time lists, one per trajectory.
+            DA_all : List of WBA digit-accuracy lists, one per trajectory.
+            DA_times : List of bounce indices at which DA was evaluated.
         """
         self.s_init, self.chis_init, self.etas_init = self.initialize_trapped_map()
         Ntrj = len(self.s_init)
@@ -1257,6 +1320,10 @@ class TrappedPoincare:
                  created.
             filename : Name of the file to save the plot
                        (default: 'trapped_poincare.pdf').
+            convergence_test_indicies : List of trajectory indices to include in
+                the plot. If None, all trajectories are plotted.
+            DA_max : Maximum digit accuracy to display on the colorbar. If None
+                     and chaos_detection=True, defaults to 7.
         Returns:
             ax : The Matplotlib axis containing the plot.
         """
@@ -1292,7 +1359,7 @@ class TrappedPoincare:
                     final_DAs.append(np.nan)
             # normalized DA values for colormap
             if DA_max is None:
-                DA_max = 7 #np.nanmax(final_DAs)
+                DA_max = 7  # np.nanmax(final_DAs)
 
         def normalize(numbers):
             if not numbers:
@@ -1467,7 +1534,10 @@ def compute_peta(
         "vpar must have the same number of points as points"
     )
 
-    if isinstance(field_or_saw, (ShearAlfvenWave, ShearAlfvenWavesSuperposition,InterpolatedShearAlfvenWave)):
+    if isinstance(
+        field_or_saw,
+        (ShearAlfvenWave, ShearAlfvenWavesSuperposition, InterpolatedShearAlfvenWave),
+    ):
         field = field_or_saw.B0
         field_or_saw.set_points(points)
         alpha = field_or_saw.alpha()[:, 0]
@@ -1510,9 +1580,7 @@ def compute_peta(
     return peta
 
 
-def compute_Eprime(
-    saw, points, vpar, mu, mass, charge, helicity_M, helicity_N, nprime=None
-):
+def compute_Eprime(saw, points, vpar, mu, mass, charge, helicity_M, helicity_N):
     r"""
     Compute the invariant Eprime for a ShearAlfvenHarmonic instance given
     points in Boozer coordinates.
@@ -1527,6 +1595,10 @@ def compute_Eprime(
         charge : Charge of the particle.
         helicity_M : Poloidal helicity of the magnetic field strength.
         helicity_N : Toroidal helicity of the magnetic field strength.
+
+    Returns:
+        Eprime : A numpy array of shape (npoints,) containing the shifted energy
+            invariant :math:`E' = n' E - \omega p_\eta` at each point.
     """
     if points.shape[1] != 4:
         raise ValueError("Points must have shape (npoints, 4) for (s, theta, zeta, t)")
@@ -1739,8 +1811,8 @@ class PassingPerturbedPoincare:
                 (default: 2).
             Nmaps : Number of Poincare return maps to compute for each initial
                 condition (default: 500).
-            DA_poinc : Boolean value indicating whether chaos detection is desired
-                (default: False)
+            chaos_detection : If True, compute the Weighted Birkhoff Average
+                (WBA) digit accuracy along each trajectory (default: False).
             nconvergence_points : Integer value indicating the number of Weighted
                 Birkhoff Average evaluations to assess convergence.
             comm : MPI communicator for parallel execution (default: None).
@@ -1915,6 +1987,22 @@ class PassingPerturbedPoincare:
         )
 
     def vpar_func_perturbed(self, s, chi):
+        r"""
+        Solve for the parallel velocity at (s, chi) on the eta = 0 plane such
+        that the shifted energy invariant equals self.Eprime.
+
+        Args:
+            s : Flux-surface label (scalar).
+            chi : Helical angle chi = M*theta - N*zeta (scalar).
+
+        Returns:
+            vpar : Parallel velocity consistent with self.Eprime at the given
+                   (s, chi) on the eta = 0 plane.
+
+        Raises:
+            RuntimeError : If no real solution for vpar exists (negative
+                           discriminant).
+        """
         # Choose initial conditions on the eta = 0 plane
         theta, zeta = self.chi_eta_to_theta_zeta(chi, 0)
         point = np.zeros((1, 4))  # initialize with t = 0
@@ -1961,7 +2049,13 @@ class PassingPerturbedPoincare:
 
     def initialize_passing_map(self):
         """
-        Compute vpar given (s,chi) such that Eprime = Eprime0
+        Generate initial conditions (s, chi, vpar) on the eta = 0 plane such
+        that the shifted energy invariant equals self.Eprime.
+
+        Returns:
+            s_init : List of initial s coordinates.
+            chis_init : List of initial chi = M*theta - N*zeta coordinates.
+            vpars_init : List of initial parallel velocities.
         """
 
         # Create mesh grid if not provided directly
@@ -2149,6 +2243,15 @@ class PassingPerturbedPoincare:
         r"""
         Evaluates the passing Poincare return map for the initialized particle
         positions.
+
+        Returns:
+            s_all : List of s coordinate lists, one per trajectory.
+            chis_all : List of chi coordinate lists, one per trajectory.
+            etas_all : List of eta coordinate lists, one per trajectory.
+            vpars_all : List of parallel velocity lists, one per trajectory.
+            t_all : List of cumulative transit time lists, one per trajectory.
+            DA_all : List of WBA digit-accuracy lists, one per trajectory.
+            DA_times : List of transit indices at which DA was evaluated.
         """
         Ntrj = len(self.s_init)
 
@@ -2583,6 +2686,51 @@ class MapEquilibrium:
             - randomly throughout the plasma volume, or
             - on a structured grid in surface label and pitch coordinate, with multiple
               particles sampled on each surface.
+
+        Args:
+            B0 : The :class:`BoozerMagneticField` instance.
+            mass : Particle mass.
+            charge : Particle charge.
+            Ekin : Total kinetic energy.
+            helicity_N : Toroidal helicity of the field-strength contours.
+            helicity_M : Poloidal helicity of the field-strength contours.
+            plot_s : If True, use flux-surface label s as the radial plot
+                coordinate; otherwise use p_eta (default: True).
+            helicity_Mp : Poloidal helicity of the mapping coordinate eta.
+                If None, determined automatically from helicity_M.
+            helicity_Np : Toroidal helicity of the mapping coordinate eta.
+                If None, determined automatically from helicity_N.
+            mu_lims : Two-element list [mu_min, mu_max] bounding the sampled
+                magnetic moments. If None, limits are set from Ekin and the
+                minimum |B| in the volume.
+            sign : Sign of the parallel velocity (+1 or -1, default: 1).
+            ns_points : Number of flux surfaces in the structured grid
+                (default: 25).
+            particles_per_surface : Number of particles per flux surface
+                (default: 25).
+            nlambda_points : Number of magnetic-moment values in the structured
+                grid (default: 25).
+            savedata : If True, save initial conditions and tracing results to
+                disk (default: True).
+            savepath : Prefix for output file names (default: '').
+            randomize_particles : If True, sample initial conditions uniformly
+                at random rather than on a structured grid (default: False).
+            number_of_particles : Total number of particles when
+                randomize_particles is True (default: 10000).
+            min_timestep : ODE save interval and minimum time step for computing
+                the expected trajectory length (default: 1e-7 s).
+            nconvergence_points : Number of intermediate WBA evaluations per
+                trajectory (default: 100).
+            s_lims : Two-element list [s_min, s_max] bounding the sampled flux
+                surfaces (default: [0.05, 0.95]).
+            min_DA_time : Minimum trajectory time required before a DA value is
+                recorded; trajectories shorter than this receive NaN
+                (default: 0).
+            comm : MPI communicator for parallel execution (default: None).
+            tmax : Maximum integration time per particle (default: 1e-2 s).
+            tol : Absolute and relative ODE solver tolerance (default: 1e-10).
+            solver_options : Dictionary of additional options passed to the ODE
+                solver (default: {}).
         """
         if solver_options is None:
             solver_options = {}
@@ -2647,9 +2795,7 @@ class MapEquilibrium:
         if min_DA_time is None:
             min_DA_time = 0
         if min_DA_time > self.tmax:
-            raise ValueError(
-                "min_DA_time must be less than or equal to tmax."
-            )
+            raise ValueError("min_DA_time must be less than or equal to tmax.")
         self.min_DA_time = min_DA_time
 
         # plotting settings
@@ -2659,13 +2805,17 @@ class MapEquilibrium:
         if savedata:
             self.res_filepaths = {
                 "tys": savepath + "DA_data.txt",
-                "ICs": savepath + "initial_conditions.txt"
+                "ICs": savepath + "initial_conditions.txt",
             }
-    
+
         self.savepath = savepath
         load_ics = False
         load_files = False
         if savedata:
+            self.res_filepaths = {
+                "tys": savepath + "DA_data.txt",
+                "ICs": savepath + "initial_conditions.txt",
+            }
             if exists(self.res_filepaths["ICs"]):
                 load_ics = True
             if exists(self.res_filepaths["tys"]):
@@ -2684,7 +2834,7 @@ class MapEquilibrium:
             self.nlambda_points = xy_pts
 
         if load_ics:
-            initial_conditions = np.loadtxt(self.res_filepaths['ICs'])
+            initial_conditions = np.loadtxt(self.res_filepaths["ICs"])
             s, thetas, zetas, vpar, mu = (
                 initial_conditions[:, 0],
                 initial_conditions[:, 1],
@@ -2793,12 +2943,17 @@ class MapEquilibrium:
 
     def trace_particles(self, load_files=False):
         """
-        Trace particles in the equilibrium field and compute diagnostics.
-        Initialises build_lists for data processing.
+        Trace particles in the equilibrium field and compute per-particle
+        diagnostics. Results are passed to build_lists for storage.
+
+        Args:
+            load_files : If True and the data file exists at
+                self.res_filepaths["tys"], load previously traced results from
+                disk instead of re-tracing (default: False).
         """
         import pickle
 
-        if load_files:
+        if load_files:  # noqa: SIM102
             if self.verbose:
                 proc0_print("Reading File")
             with open(self.res_filepaths["tys"], "rb") as f:
@@ -2872,9 +3027,9 @@ class MapEquilibrium:
 
             # start_state = [s, theta, zeta, vpar, p_eta_0, mu]
             start_state = [
-                points_trajectory[-1, 0],
-                points_trajectory[-1, 1],
-                points_trajectory[-1, 2],
+                points_trajectory[0, 0],
+                points_trajectory[0, 1],
+                points_trajectory[0, 2],
                 vpar[0],
                 Peta_values[0],
                 mu,
@@ -2933,14 +3088,12 @@ class MapEquilibrium:
             ]
 
             gc_tys.append([start_state, end_state, convergence_data])
-            
+
         if self.comm is not None:
             proc0_print(f"{self.comm.rank=} done tracing particles")
             gc_tys = [i for o in self.comm.allgather(gc_tys) for i in o]
 
-        if self.verbose:
-            import pickle
-
+        if self.verbose and self.savedata:
             with open(self.res_filepaths["tys"], "wb") as f:
                 pickle.dump(gc_tys, f)
 
@@ -2953,10 +3106,9 @@ class MapEquilibrium:
         suitable for plotting and aggregation.
 
         Populates self.DAs_at_loss, self.DA_at_tfinal, self.bounces, self.passes,
-        self.pitch, self.lost_total, self.final_times, self.trapped,
-        self.Peta_start, self.s0, self.mu0, and the convergence_* arrays from
-        the list produced by trace_particles. If self.verbose, initial conditions
-        are written to disk.
+        self.pitch, self.lost_total, self.final_times, self.radial_coordinate_start,
+        self.s0, self.mu0, and the convergence_* arrays from the list produced by
+        trace_particles. If self.verbose, initial conditions are written to disk.
 
         Args:
             res_tys : List of per-particle summaries, each of the form
@@ -2970,7 +3122,6 @@ class MapEquilibrium:
 
         lost_total = []
         final_times = []
-        trapped = []
         radial_coordinate_start = []
         pitch = []
 
@@ -3006,8 +3157,8 @@ class MapEquilibrium:
 
             if final_time < self.min_DA_time:
                 DAs_at_loss.append(np.nan)
-            else: DAs_at_loss.append(end_state[8])
-            trapped.append(end_state[6])
+            else:
+                DAs_at_loss.append(end_state[8])
 
             s0.append(start_state[0])
             theta0.append(start_state[1])
@@ -3039,7 +3190,6 @@ class MapEquilibrium:
 
         self.lost_total = lost_total
         self.final_times = final_times
-        self.trapped = trapped
         self.radial_coordinate_start = radial_coordinate_start
 
         self.s0 = s0
@@ -3051,7 +3201,7 @@ class MapEquilibrium:
         self.convergence_petas = convergence_petas
         self.convergence_DAs = convergence_DAs
 
-        if self.verbose:
+        if self.savedata and self.verbose:
             np.savetxt(
                 self.savepath + "initial_conditions.txt",
                 np.column_stack((s0, theta0, zeta0, vpar0, mu0)),
@@ -3120,7 +3270,7 @@ class MapEquilibrium:
             plot_losses : Currently unused (default: False).
             peta_exp : Exponent to apply to the p_eta values axis for plotting.
                 Should be the integer of magnitude (eg. -19)
-        
+
         Returns:
             None
         """
@@ -3151,6 +3301,7 @@ class MapEquilibrium:
             ny = int(self.nlambda_points - 1)
 
         def trapped_passing_function(s, pitch):
+            # pitch not weighted by modB
             resolution = 500
             points_temp = initialize_position_uniform_surf(
                 self.B0,
@@ -3262,7 +3413,7 @@ class MapEquilibrium:
                 trapped, rad_like = trapped_passing_function(s, pa)
                 if trapped == 1 and self.plot_s:
                     rad_like_tp.append(s)
-                    pa_tp.append(normalized_pitch_i)
+                    pa_tp.append(normalized_pitch_i * self.min_volmodB)
                     break
                 if not self.plot_s:
                     if rad_like[0] is None:
@@ -3312,15 +3463,20 @@ class MapEquilibrium:
                     self.oom = order
                     self.fformat = fformat
                     super().__init__(useMathText=mathText)
+
                 def _set_order_of_magnitude(self):
                     self.orderOfMagnitude = self.oom
+
                 def _set_format(self):
                     self.format = self.fformat
                     if self._useMathText:
-                        self.format = r'$\mathdefault{%s}$' % self.format
+                        self.format = f"$\\mathdefault{{{self.format}}}$"
 
             ax.yaxis.set_major_formatter(FixedOrderFormatter(peta_exp))
-            ax.ticklabel_format(axis='y', scilimits=(0, 0))  # ensure sci notation is used
+            ax.ticklabel_format(
+                axis="y",
+                scilimits=(0, 0),  # ensure sci notation is used
+            )
 
         if plot_losses:
             lost_frac, x_edges, y_edges, _ = binned_statistic_2d(
@@ -3517,7 +3673,7 @@ class MapPhaseSpace:
                                 trajectory used to assess convergence
                                 (default: 1).
         """
-        
+
         # set field parameters
         self.saw = saw
         self.B0 = saw.B0
@@ -3590,9 +3746,7 @@ class MapPhaseSpace:
         if min_DA_time is None:
             min_DA_time = 0
         if min_DA_time > self.tmax:
-            raise ValueError(
-                "min_DA_time must be less than or equal to tmax."
-            )
+            raise ValueError("min_DA_time must be less than or equal to tmax.")
         self.min_DA_time = min_DA_time
 
         # plotting settings
@@ -3619,10 +3773,9 @@ class MapPhaseSpace:
         self.randomize = randomize_particles
 
         load_files = False
-        if savedata:
-            if exists(self.final_filepaths["ICs"]):
-                load_files=True
-        
+        if savedata and exists(self.final_filepaths["ICs"]):
+            load_files = True
+
         if load_files:
             initial_conditions = np.loadtxt(self.final_filepaths["ICs"])
             self.s, self.thetas, self.zetas, self.vpar, self.mus_per_mass = (
@@ -3646,7 +3799,7 @@ class MapPhaseSpace:
             self.particles_per_surface = particles_per_surface
 
             s, thetas, zetas, vpar, mu_per_mass = None, None, None, None, None
-            if self.verbose: 
+            if self.verbose:
                 s, thetas, zetas, vpar, mu_per_mass = self.initialize_particles()
             if comm is not None:
                 s, thetas, zetas, vpar, mu_per_mass = comm.bcast(
@@ -3678,6 +3831,23 @@ class MapPhaseSpace:
         return
 
     def initialize_particles(self):
+        r"""
+        Generate initial particle positions, parallel velocities, and magnetic
+        moments for tracing in the perturbed field.
+
+        Initial flux surfaces and magnetic moments are sampled either on a
+        structured (s, mu) grid or uniformly at random, depending on
+        self.randomize. On each surface, particles are distributed uniformly
+        using initialize_position_uniform_surf. Points with no valid vpar
+        solution are dropped.
+
+        Returns:
+            s : List of initial s coordinates.
+            thetas : List of initial theta coordinates.
+            zetas : List of initial zeta coordinates.
+            vpars : List of initial parallel velocities (signed by self.sign).
+            mus_per_mass : List of initial magnetic moments divided by mass.
+        """
         if self.randomize:
             mus = np.random.uniform(self.mu_min, self.mu_max, self.nlambda_points)
 
@@ -3748,6 +3918,14 @@ class MapPhaseSpace:
         )
 
     def check_filepaths(self, filepaths):
+        r"""
+        Check whether all provided output file paths exist.
+
+        Args:
+            filepaths : Dictionary of file labels to filesystem paths.
+        Returns:
+            exists_all : True if every path exists, otherwise False.
+        """
         return all(exists(fp) for fp in filepaths.values())
 
     def chi(self, theta, zeta):
@@ -3792,6 +3970,20 @@ class MapPhaseSpace:
         return theta, zeta
 
     def vpar_func(self, s, theta, zeta, mu, sgn):
+        r"""
+        Compute the parallel velocity at (s, theta, zeta) from energy conservation.
+
+        Args:
+            s : Flux-surface label (array-like).
+            theta : Boozer poloidal angle (array-like).
+            zeta : Boozer toroidal angle (array-like).
+            mu : Magnetic moment (array-like).
+            sgn : Desired sign of the parallel velocity (+1 or -1).
+
+        Returns:
+            vpar : Parallel velocity consistent with self.Ekin. Returns NaN for
+                points where the perpendicular energy exceeds the total energy.
+        """
         point = np.zeros((len(s), 3))
         point[:, 0] = s
         point[:, 1] = theta
@@ -3807,6 +3999,21 @@ class MapPhaseSpace:
         return np.where(energy_par > 0, vpar, np.nan)
 
     def vpar_func_perturbed(self, s, theta, zeta, mu, sgn):
+        r"""
+        Solve for the parallel velocity at (s, theta, zeta) on the eta = 0 plane
+        such that the shifted energy invariant equals self.Eprime.
+
+        Args:
+            s : Flux-surface label (array-like).
+            theta : Boozer poloidal angle (array-like).
+            zeta : Boozer toroidal angle (array-like).
+            mu : Magnetic moment divided by mass (array-like).
+            sgn : Desired sign of the parallel velocity (+1 or -1).
+
+        Returns:
+            vpar : Parallel velocity consistent with self.Eprime. Returns NaN
+                for points where no real solution exists.
+        """
         point = np.zeros((len(s), 4)) if hasattr(s, "__len__") else np.zeros((1, 4))
         point[:, 0] = s
         point[:, 1] = theta
@@ -3883,9 +4090,9 @@ class MapPhaseSpace:
             mode="gc_noK",
             **self.solver_options,
         )
-        
+
         lost_tolerance = 5 * self.min_timestep
-        #assert len(gc_tys) == len(points)
+        # assert len(gc_tys) == len(points)
         assert len(gc_tys) == len(points)
 
         # check if any particles were lost to the wall
@@ -3914,13 +4121,14 @@ class MapPhaseSpace:
         """
         import pickle
 
-        if self.check_filepaths(self.res_filepaths):
-            if self.verbose:
-                proc0_print("Reading File")
-            with open(self.res_filepaths["tys"], "rb") as f:
-                res_tys = pickle.load(f)
-            self.build_lists(res_tys)
-            return
+        if self.savedata:  # noqa: SIM102
+            if self.check_filepaths(self.res_filepaths):  # noqa: SIM102
+                if self.verbose:
+                    proc0_print("Reading File")
+                with open(self.res_filepaths["tys"], "rb") as f:
+                    res_tys = pickle.load(f)
+                self.build_lists(res_tys)
+                return
 
         if self.verbose:
             proc0_print("Tracing particles in perturbed field...")
@@ -4090,7 +4298,7 @@ class MapPhaseSpace:
             proc0_print(f"{self.comm.rank=} done tracing particles")
             res_tys = [i for o in self.comm.allgather(res_tys) for i in o]
 
-        if self.verbose:
+        if self.verbose and self.savedata:
             with open(self.res_filepaths["tys"], "wb") as f:
                 pickle.dump(res_tys, f)
 
@@ -4189,7 +4397,8 @@ class MapPhaseSpace:
 
             if final_time < self.min_DA_time:
                 DAs_at_loss.append(np.nan)
-            else: DAs_at_loss.append(end_state[11])
+            else:
+                DAs_at_loss.append(end_state[11])
 
             bounces.append(end_state[9])
             passes.append(end_state[10])
@@ -4233,16 +4442,17 @@ class MapPhaseSpace:
 
         if self.verbose:
             mu_per_mass0 = np.array(mus0) / self.mass
-            if not exists(self.final_filepaths["ICs"]):
-                np.savetxt(
-                    self.final_filepaths["ICs"],
-                    np.column_stack((s0, theta0, zeta0, vpar0, mu_per_mass0)),
-                )
-            if not exists(self.final_filepaths["DA"]):
-                np.savetxt(
-                    self.final_filepaths["DA"],
-                    np.column_stack((DAs_at_loss, final_times)),
-                )
+            if self.savedata:
+                if not exists(self.final_filepaths["ICs"]):
+                    np.savetxt(
+                        self.final_filepaths["ICs"],
+                        np.column_stack((s0, theta0, zeta0, vpar0, mu_per_mass0)),
+                    )
+                if not exists(self.final_filepaths["DA"]):
+                    np.savetxt(
+                        self.final_filepaths["DA"],
+                        np.column_stack((DAs_at_loss, final_times)),
+                    )
         return
 
     def surface_trapped_func_Eprime(self, mu, surface):
@@ -4324,7 +4534,7 @@ class MapPhaseSpace:
         fit with a quadratic polynomial.
 
         Args:
-            negate_peta : If True, flip the sign of the y axis 
+            negate_peta : If True, flip the sign of the y axis.
 
         Returns:
             poly : numpy.poly1d quadratic fit of the boundary.
@@ -4373,9 +4583,6 @@ class MapPhaseSpace:
             bins=[int(pa_space * 0.80), int(radial_space * 0.80)],
         )
 
-        pitch_c = 0.5 * (pitch_edges[:-1] + pitch_edges[1:])
-        radlike_c = 0.5 * (radlike_edges[:-1] + radlike_edges[1:])
-
         T = np.nan_to_num(trapped_vals, nan=0.0).T
         # x, y -> (pitch, peta) dimensions
 
@@ -4394,7 +4601,7 @@ class MapPhaseSpace:
             return None, None, None
         boundary_pitch = np.array(boundary_pitch)
         boundary_radlike = np.array(boundary_radlike)
-        
+
         order = np.argsort(boundary_pitch)
         boundary_pitch = boundary_pitch[order]
         boundary_radlike = boundary_radlike[order]
@@ -4408,11 +4615,13 @@ class MapPhaseSpace:
             # enforce that the trapped fit is larger than the smallest
             # sampled particle in peta and smaller than the
             # largest simulated particle in peta
-            condition = (boundary_radlike > real_data.min()) & (boundary_radlike < real_data.max())
+            condition = (boundary_radlike > real_data.min()) & (
+                boundary_radlike < real_data.max()
+            )
             boundary_radlike = boundary_radlike[condition]
             boundary_pitch = boundary_pitch[condition]
             return None, boundary_pitch, boundary_radlike
-        # make a linear fit 
+        # make a linear fit
         coeffs = np.polyfit(boundary_pitch, boundary_radlike, 1)
         poly = np.poly1d(coeffs)
 
@@ -4422,148 +4631,145 @@ class MapPhaseSpace:
         return poly, pitch_fit, radlike_fit
 
     def plot_heatmap(
-            self,
-            nx=None,
-            ny=None,
-            savepath="heatmap_digit_accuracy.pdf",
-            ax=None,
-            DA_max=7,
-            statistic="mean",
-            DA_at_loss=True,
-            plot_losses=False,
-            negate_peta=False,
-            lost_fraction=False,
-        ):
-            r"""
-            Plot a 2D heatmap of digit accuracy in the (pitch, radial-like) plane and
-            overlay the fitted trapped-passing boundary. Optionally overlay loss
-            fractions as triangle markers per bin.
+        self,
+        nx=None,
+        ny=None,
+        savepath="heatmap_digit_accuracy.pdf",
+        ax=None,
+        DA_max=7,
+        statistic="mean",
+        DA_at_loss=True,
+        plot_losses=False,
+        negate_peta=False,
+        lost_fraction=False,
+    ):
+        r"""
+        Plot a 2D heatmap of digit accuracy in the (pitch, radial-like) plane and
+        overlay the fitted trapped-passing boundary. Optionally overlay loss
+        fractions as triangle markers per bin.
 
-            Args:
-                nx : Number of pitch bins.
-                ny : Number of radial bins.
-                savepath : Output file path for the heatmap.
-                ax : Matplotlib axis. If None, a new figure and axis are created.
-                DA_max : Maximum DA value shown on the colorbar.
-                statistic : Aggregation statistic passed to binned_statistic_2d.
-                DA_at_loss : If True, use the DA value at loss; otherwise the final
-                    integration DA.
-                plot_losses : If True, overlay loss-fraction markers per bin.
-                negate_peta : If True, flip the sign of the y axis (useful when
-                    plotting against -p_eta).
+        Args:
+            nx : Number of pitch bins.
+            ny : Number of radial bins.
+            savepath : Output file path for the heatmap.
+            ax : Matplotlib axis. If None, a new figure and axis are created.
+            DA_max : Maximum DA value shown on the colorbar.
+            statistic : Aggregation statistic passed to binned_statistic_2d.
+            DA_at_loss : If True, use the DA value at loss; otherwise the final
+                integration DA.
+            plot_losses : If True, overlay loss-fraction markers per bin.
+            negate_peta : If True, flip the sign of the y axis (useful when
+                plotting against -p_eta).
 
-            Returns:
-                ax : The Matplotlib axis containing the plot.
-            """
-            import matplotlib as mpl
-            import matplotlib.pyplot as plt
+        Returns:
+            ax : The Matplotlib axis containing the plot.
+        """
+        import matplotlib as mpl
+        import matplotlib.pyplot as plt
 
-            if self.verbose:
-                proc0_print("Plotting...")
+        if self.verbose:
+            proc0_print("Plotting...")
 
-            if ax is None:
-                fig, ax = plt.subplots(figsize=(16, 12))
-            else:
-                fig = ax.get_figure()
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(16, 12))
+        else:
+            fig = ax.get_figure()
 
-            try:
-                import cmcrameri.cm as cmc  # noqa: F401
+        try:
+            import cmcrameri.cm as cmc  # noqa: F401
 
-                cmap = "cmc.managua"
+            cmap = "cmc.managua"
 
-            except ImportError:
-                cmap = "viridis"
+        except ImportError:
+            cmap = "viridis"
 
-            if nx is None:
-                nx = int(np.cbrt(len(self.pitch)))
-            if ny is None:
-                ny = int(np.cbrt(len(self.pitch)))
+        if nx is None:
+            nx = int(np.cbrt(len(self.pitch)))
+        if ny is None:
+            ny = int(np.cbrt(len(self.pitch)))
 
-            DA_values = self.DAs_at_loss if DA_at_loss else self.DA_at_tfinal
+        DA_values = self.DAs_at_loss if DA_at_loss else self.DA_at_tfinal
 
-            norm = mpl.colors.Normalize(vmin=0, vmax=DA_max)
+        norm = mpl.colors.Normalize(vmin=0, vmax=DA_max)
 
-            plotting_pitch_normalized = np.array(self.pitch) * self.min_volmodB
+        plotting_pitch_normalized = np.array(self.pitch) * self.min_volmodB
 
-            DA_stats, x_edges, y_edges, binnumber = binned_statistic_2d(
+        DA_stats, x_edges, y_edges, binnumber = binned_statistic_2d(
+            plotting_pitch_normalized,
+            np.array(self.Plot_Radial),
+            np.array(DA_values),
+            statistic=statistic,
+            bins=[nx, ny],
+        )
+
+        X, Y = np.meshgrid(x_edges, y_edges)
+        if negate_peta:
+            Y *= -1
+        im2 = ax.pcolormesh(X, Y, DA_stats.T, shading="auto", cmap=cmap, norm=norm)
+
+        poly, pa_fit, rad_fit = self.return_peta_trapped_contoured_boundary(
+            negate_peta=negate_peta
+        )
+        self.trapped_boundary_fit = poly
+        self.trapped_boundary_fit_pitch = pa_fit
+        self.trapped_boundary_fit_radial = rad_fit
+
+        if pa_fit is not None and rad_fit is not None:
+            ax.plot(pa_fit, rad_fit, color="gray", linewidth=10)
+        else:
+            proc0_print("Fitting Trapped Passing Boundary Failed")
+
+        colorlabel = "Digit Accuracy"
+
+        if plot_losses:
+            from matplotlib.cm import ScalarMappable
+            from matplotlib.colors import Normalize
+
+            lost_stat = "mean" if lost_fraction else "max"
+            lost_frac, x_edges, y_edges, _ = binned_statistic_2d(
                 plotting_pitch_normalized,
                 np.array(self.Plot_Radial),
-                np.array(DA_values),
-                statistic=statistic,
+                np.array(self.lost_total),
+                statistic=lost_stat,
                 bins=[nx, ny],
             )
-
-            X, Y = np.meshgrid(x_edges, y_edges)
+            x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
+            y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
+            Xc, Yc = np.meshgrid(x_centers, y_centers)
+            xf = Xc.ravel()
+            yf = Yc.ravel()
+            lost_frac = np.nan_to_num(lost_frac, nan=0.0)
+            af = lost_frac.T.ravel()
             if negate_peta:
-                Y *= -1
-            im2 = ax.pcolormesh(X, Y, DA_stats.T, shading="auto", cmap=cmap, norm=norm)
+                yf = yf * -1
+            sm = ScalarMappable(cmap="Reds", norm=Normalize(vmin=0, vmax=1))
+            sm.set_array([])  # avoids warnings on older matplotlib
+            ax.scatter(
+                xf,
+                yf,
+                marker="s",
+                s=100,
+                c="red",
+                alpha=af,
+                zorder=10,
+            )
+            if lost_fraction:
+                fig.colorbar(sm, ax=ax, label="Particle Loss Fraction")
 
-            poly, pa_fit, rad_fit = self.return_peta_trapped_contoured_boundary(negate_peta=negate_peta)
-            self.trapped_boundary_fit = poly
-            self.trapped_boundary_fit_pitch = pa_fit
-            self.trapped_boundary_fit_radial = rad_fit
+        ax.set_xlabel(r"$\lambda = \frac{\mu}{E} \text{sign}(v_{\|})$")
 
-            if pa_fit is not None and rad_fit is not None:
-                ax.plot(
-                    pa_fit,
-                    rad_fit,
-                    color="gray",
-                    linewidth=10
-                )
+        if self.plot_s:
+            ax.set_ylabel(r"$s$")
+        else:
+            if negate_peta:
+                ax.set_ylabel(r"$-P_\eta$")
             else:
-                proc0_print("Fitting Trapped Passing Boundary Failed")
+                ax.set_ylabel(r"$P_\eta$")
 
-            colorlabel = "Digit Accuracy"
-
-            if plot_losses:
-                from matplotlib.cm import ScalarMappable
-                from matplotlib.colors import Normalize
-                lost_stat = "mean" if lost_fraction else "max"
-                lost_frac, x_edges, y_edges, _ = binned_statistic_2d(
-                    plotting_pitch_normalized,
-                    np.array(self.Plot_Radial),
-                    np.array(self.lost_total),
-                    statistic=lost_stat,
-                    bins=[nx, ny],
-                )
-                x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
-                y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
-                Xc, Yc = np.meshgrid(x_centers, y_centers)
-                xf = Xc.ravel()
-                yf = Yc.ravel()
-                lost_frac = np.nan_to_num(lost_frac, nan=0.0)
-                af = lost_frac.T.ravel()
-                if negate_peta:
-                    yf = yf * -1
-                sm = ScalarMappable(cmap='Reds', norm=Normalize(vmin=0, vmax=1))
-                sm.set_array([])  # avoids warnings on older matplotlib
-                sc = ax.scatter(
-                    xf,
-                    yf,
-                    marker="s",
-                    s=100,
-                    c ='red',
-                    alpha=af,
-                    #cmap=loss_cmap,
-                    #norm=loss_norm,
-                    zorder=10,
-                )
-                if lost_fraction: fig.colorbar(sm, ax=ax, label="Particle Loss Fraction")
-
-            ax.set_xlabel(r"$\lambda = \frac{\mu}{E} \text{sign}(v_{\|})$")
-
-            if self.plot_s:
-                ax.set_ylabel(r"$s$")
-            else:
-                if negate_peta:
-                    ax.set_ylabel(r"$-P_\eta$")
-                else:
-                    ax.set_ylabel(r"$P_\eta$")
-
-            fig.tight_layout()
-            fig.colorbar(im2, ax=ax, label=colorlabel)
-            plt.savefig(savepath, dpi=400)
-            return ax
+        fig.tight_layout()
+        fig.colorbar(im2, ax=ax, label=colorlabel)
+        plt.savefig(savepath, dpi=400)
+        return ax
 
 
 class WBAPerturbedParticles:
@@ -4609,15 +4815,20 @@ class WBAPerturbedParticles:
             mass                 : Particle mass.
             charge               : Particle charge.
             Ekin                 : Total kinetic energy.
+            Phin                 : Toroidal mode number of the wave harmonic,
+                                used to compute nprime = (Phim*N - Phin*M)/denom.
+            Phim                 : Poloidal mode number of the wave harmonic,
+                                used to compute nprime.
+            omega                : Wave frequency.
             helicity_N           : Toroidal helicity of the field-strength contours.
             helicity_M           : Poloidal helicity of the field-strength contours.
             helicity_Mp          : Poloidal helicity of the mapping coordinate eta.
                                 If None, determined automatically from helicity_M.
             helicity_Np          : Toroidal helicity of the mapping coordinate eta.
                                 If None, determined automatically from helicity_N.
-            points               : Array of shape (N, 4) containing initial
-                                coordinates (s, theta, zeta, t). Required if
-                                gc_tys is None.
+            points               : Array of shape (N, 3) or (N, 4) containing
+                                initial coordinates (s, theta, zeta[, t]).
+                                Required if gc_tys is None.
             v_pars               : Array of initial parallel velocities. Required
                                 if gc_tys is None.
             mu_per_mass          : Array of initial magnetic moments divided by
@@ -4626,9 +4837,6 @@ class WBAPerturbedParticles:
                                 (default: 1e-2 s).
             min_timestep         : Minimum time-step size used as the save
                                 interval (default: 1e-7 s).
-            DA_cutoff            : Digit accuracy threshold below which a
-                                trajectory is classified as chaotic
-                                (default: 3).
             tol                  : ODE solver tolerance (default: 1e-9).
             gc_tys               : List of pre-traced trajectory arrays. If
                                 provided, tracing is skipped (default: None).
@@ -4958,7 +5166,7 @@ class WBAPerturbedParticles:
 
             particle_out = [start_state, end_state, mean_state, convergence_data]
             DA_data.append(final_DA)
-            wall_lost.append(points_trajectory[-1,3])
+            wall_lost.append(points_trajectory[-1:3])
             dense_output.append(particle_out)
             if self.save_gc_trajectories:
                 res_tys.append(points_trajectory)
@@ -5380,7 +5588,6 @@ class WBAParticles:
                 pt[0, 0] = self.points0[itrj, 0]
                 pt[0, 1] = self.points0[itrj, 1]
                 pt[0, 2] = self.points0[itrj, 2]
-                self.vtotal = np.sqrt(2 * self.Ekin / self.mass)
                 gc_tys, gc_zeta_hits = trace_particles_boozer(
                     self.B0,
                     stz_inits=pt,
@@ -5529,13 +5736,13 @@ class WBAParticles:
         across many particles.
 
         Populates self.DAs_at_loss, self.DA_at_tfinal, self.lost_total,
-        self.final_times, self.trapped, self.Peta_start, self.pitch, and the
-        convergence_* arrays from the list of per-particle state tuples produced
-        by trace_particles.
+        self.final_times, self.bounces, self.passes, self.s0, self.theta0,
+        self.zeta0, self.vpar0, self.mus, and the convergence_* arrays from
+        the list of per-particle state tuples produced by trace_particles.
 
         Args:
-            res_tys : List of per-particle trajectory summaries, each a list of
-                    the form [start_state, end_state, convergence_data].
+            dense_output : List of per-particle trajectory summaries, each a
+                list of the form [start_state, end_state, convergence_data].
         """
 
         DAs_at_loss = []
