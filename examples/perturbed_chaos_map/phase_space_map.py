@@ -21,17 +21,7 @@ from firm3d.util.constants import (
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
 
-try:
-    from mpi4py import MPI
-
-    comm = MPI.COMM_WORLD
-    comm_size = comm.size
-    verbose = comm.rank == 0
-except ImportError:
-    comm = None
-    comm_size = 1
-    verbose = True
-
+from firm3d.util.mpi import comm_world, verbose
 
 # harmonic to isolate for this case
 harmonic = 1
@@ -90,10 +80,10 @@ if perfect:
         no_K=True,
         helicity_M=helicity_M,
         helicity_N=helicity_N,
-        comm=comm,
+        comm=comm_world,
     )
 else:
-    bri = BoozerRadialInterpolant(boozmn_filename, order, no_K=True, comm=comm)
+    bri = BoozerRadialInterpolant(boozmn_filename, order, no_K=True, comm=comm_world)
 field = InterpolatedBoozerField(
     bri,
     degree,
@@ -111,7 +101,7 @@ else:
         no_K=True,
         helicity_M=helicity_M,
         helicity_N=helicity_N,
-        comm=comm,
+        comm=comm_world,
     )
     field_p = InterpolatedBoozerField(
         bri_p,
@@ -179,7 +169,7 @@ heat_map = MapPhaseSpace(
     Eprime=Eprime,
     sign_vpar=sign_vpar,
     tmax=1e-2,
-    comm=comm,
+    comm=comm_world,
     savedata=True,
     file_name=filepath,
     convergence_points=5,
@@ -203,7 +193,7 @@ map = PassingPerturbedPoincare(
     nchi_poinc=nchi_poinc,
     Nmaps=Nmaps,
     chaos_detection=True,
-    comm=comm,
+    comm=comm_world,
     nconvergence_points=5,
 )
 if verbose:
@@ -275,7 +265,7 @@ mpl.rcParams["ytick.labelsize"] = 12
 
 for plot_counter, mu_h in enumerate(mu_harmonics):
     # compute rotational profile for given pitch angle
-    profile = compute_rotational_profile(mu_h / Ekin, sign_vpar, False, comm=comm)
+    profile = compute_rotational_profile(mu_h / Ekin, sign_vpar, False, comm=comm_world)
     if profile.shape[0] < 2:
         continue  # skip if not enough points to compute resonance:
     pitch_angle_h = (sign_vpar * np.abs(mu_h) / Ekin) * min_volmodB
@@ -311,14 +301,7 @@ for plot_counter, mu_h in enumerate(mu_harmonics):
                 ell=ell,
             )
             crossings = calculate_crossings(drift_helicity, h_res, radial_position)
-            if verbose:
-                plt.plot(
-                    [min(radial_position), max(radial_position)],
-                    [h_res, h_res],
-                    linestyle=possible_linestyles[ell + max_ell],
-                    color="gray",
-                    alpha=0.5,
-                )
+
             if len(crossings) != 0:
                 for crossing_index, radius in enumerate(crossings):
                     if ell in harmonics[h]:
@@ -333,14 +316,6 @@ for plot_counter, mu_h in enumerate(mu_harmonics):
                     else:
                         harmonics[h][ell] = [[[pitch_angle_h], [radius]]]
 
-    if verbose:
-        # plot the rotational profile
-        plt.tight_layout()
-        plt.legend(fontsize=14, markerscale=1.5)
-        plt.savefig(filepath + "harmonic_profile.png", dpi=400)
-    if comm is not None:
-        comm.Barrier()
-
 
 plt.clf()
 
@@ -352,7 +327,7 @@ mpl.rcParams["ytick.labelsize"] = 25
 ell_list = []
 rad_list = []
 lines_modes = []
-profile = compute_rotational_profile(lam, sign_vpar, True, comm)
+profile = compute_rotational_profile(lam, sign_vpar, True, comm_world)
 for ell in range(-max_ell, max_ell + 1):
     h_res = calculate_QS_resonance(
         Phim, Phin, helicity_M, helicity_N, omega, np.mean(profile[:, 2]), ell=ell
@@ -374,8 +349,8 @@ if len(hlist) > 1:
 else:
     norm = mpl.colors.Normalize(vmin=hlist[0], vmax=hlist[0] + 1)
 
-if comm is not None:
-    comm.Barrier()
+if comm_world is not None:
+    comm_world.Barrier()
 
 if verbose:
     # make a list of line colors for each harmonic
@@ -536,5 +511,5 @@ if verbose:
 
     plt.clf()
 
-if comm is not None:
-    comm.Barrier()
+if comm_world is not None:
+    comm_world.Barrier()

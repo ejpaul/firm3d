@@ -20,27 +20,18 @@ from firm3d.util.constants import (
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
 
-try:
-    from mpi4py import MPI
-
-    comm = MPI.COMM_WORLD
-    comm_size = comm.size
-    verbose = comm.rank == 0
-except ImportError:
-    comm = None
-    comm_size = 1
-    verbose = True
-
+from firm3d.util.functions import in_github_actions
+from firm3d.util.mpi import comm_world, verbose
 
 # harmonic to isolate for this case
 harmonic = 1
 sign_vpar = 1
 harmonics = {harmonic: {}}
-max_ell = 2
+max_ell = 1
 # list of possible line styles for the resonance lines, indexed by ell value
 # (shifted by max_ell to avoid negative indices)
-#  ell =                 -2           -1      0           1           2
-possible_linestyles = [(0, (1, 5)), "dotted", "solid", "dashed", (0, (5, 5))]
+#  ell =                 -1      0           1
+possible_linestyles = ["dotted", "solid", "dashed"]
 
 helicity_M = 1
 helicity_N = -4
@@ -53,8 +44,16 @@ AE_filename = "QH_10harmonics_scale0_00464159.npy"
 plot_losses = False
 
 # poincare parameters
-nchi_poinc = 5
-ns_poinc = 500
+nchi_poinc = 5 if in_github_actions else 5
+ns_poinc = 5 if in_github_actions else 100
+Nmaps = 5 if in_github_actions else 1000  # number of maps for poincare
+
+ns_points = 5 if in_github_actions else 30  # number of radial grid points for heatmap
+particles_per_surface = (
+    2 if in_github_actions else 20
+)  # number of particles per radial grid point for heatmap
+nlambda_points = 5 if in_github_actions else 30  # number of lambda points for heatmap
+tmax = 1e-4 if in_github_actions else 1e-2  # maximum time for trajectory integration
 
 # Eprime parameters
 lam = 0.0
@@ -62,9 +61,9 @@ p0_int = 0.1
 
 order = 3
 degree = 3
-resolution = 48
+resolution = 10 if in_github_actions else 48
 # resolution for perfect QS enforced if needed
-res_p = 40
+res_p = 10 if in_github_actions else 48
 
 mpl.rcParams["font.size"] = 25  # base font size
 mpl.rcParams["axes.labelsize"] = 25  # x/y labels
@@ -88,10 +87,10 @@ if perfect:
         no_K=True,
         helicity_M=helicity_M,
         helicity_N=helicity_N,
-        comm=comm,
+        comm=comm_world,
     )
 else:
-    bri = BoozerRadialInterpolant(boozmn_filename, order, no_K=True, comm=comm)
+    bri = BoozerRadialInterpolant(boozmn_filename, order, no_K=True, comm=comm_world)
 field = InterpolatedBoozerField(
     bri,
     degree,
@@ -109,7 +108,7 @@ else:
         no_K=True,
         helicity_M=helicity_M,
         helicity_N=helicity_N,
-        comm=comm,
+        comm=comm_world,
     )
     field_p = InterpolatedBoozerField(
         bri_p,
@@ -175,12 +174,14 @@ heat_map = MapPhaseSpace(
     helicity_Mp,
     helicity_Np,
     Eprime=Eprime,
+    ns_points=ns_points,
+    particles_per_surface=particles_per_surface,
+    nlambda_points=nlambda_points,
     sign_vpar=sign_vpar,
-    tmax=1e-2,
-    comm=comm,
-    savedata=True,
+    tmax=tmax,
+    comm=comm_world,
+    savedata=not in_github_actions,
     file_name=filepath,
-    convergence_points=5,
 )
 
 
@@ -192,11 +193,10 @@ def compute_rotational_profile(pitch, sgn, s_profile, comm):
         mass,
         charge,
         Ekin,
-        ns_poinc=100,
+        ns_poinc=resolution * 2,
         ntheta_poinc=1,
-        Nmaps=75,
+        Nmaps=resolution,
         comm=comm,
-        tmax=1e-2,
         solver_options={"axis": 0},
         helicity_M=helicity_M,
         helicity_N=helicity_N,
@@ -236,20 +236,13 @@ def calculate_QS_resonance(Phim, Phin, M, N, omega, drift_omega_zeta, ell):
 
 max_mu = Ekin / min_volmodB
 # iterate through pitch angles
-mu_harmonics = np.linspace(0, max_mu, 50)
+mu_harmonics = np.linspace(0, max_mu, resolution)
 perturbed_pitch_angle = []
 resonance_loc = []
 
-
-plt.clf()
-plt.xlabel("s", fontsize=12)
-plt.ylabel("h", fontsize=12)
-mpl.rcParams["xtick.labelsize"] = 12
-mpl.rcParams["ytick.labelsize"] = 12
-
 for plot_counter, mu_h in enumerate(mu_harmonics):
     # compute rotational profile for given pitch angle
-    profile = compute_rotational_profile(mu_h / Ekin, sign_vpar, False, comm=comm)
+    profile = compute_rotational_profile(mu_h / Ekin, sign_vpar, False, comm=comm_world)
     if profile.shape[0] < 2:
         continue  # skip if not enough points to compute resonance:
     pitch_angle_h = (sign_vpar * np.abs(mu_h) / Ekin) * min_volmodB
@@ -285,14 +278,6 @@ for plot_counter, mu_h in enumerate(mu_harmonics):
                 ell=ell,
             )
             crossings = calculate_crossings(drift_helicity, h_res, radial_position)
-            if verbose:
-                plt.plot(
-                    [min(radial_position), max(radial_position)],
-                    [h_res, h_res],
-                    linestyle=possible_linestyles[ell + max_ell],
-                    color="gray",
-                    alpha=0.5,
-                )
             if len(crossings) != 0:
                 for crossing_index, radius in enumerate(crossings):
                     if ell in harmonics[h]:
@@ -306,14 +291,8 @@ for plot_counter, mu_h in enumerate(mu_harmonics):
                         harmonics[h][ell][crossing_index][1].append(radius)
                     else:
                         harmonics[h][ell] = [[[pitch_angle_h], [radius]]]
-
-    if verbose:
-        # plot the rotational profile
-        plt.tight_layout()
-        plt.legend(fontsize=14, markerscale=1.5)
-        plt.savefig(filepath + "harmonic_profile.png", dpi=400)
-    if comm is not None:
-        comm.Barrier()
+    if comm_world is not None:
+        comm_world.Barrier()
 
 
 plt.clf()
@@ -333,10 +312,10 @@ if len(hlist) > 1:
 else:
     norm = mpl.colors.Normalize(vmin=hlist[0], vmax=hlist[0] + 1)
 
-if comm is not None:
-    comm.Barrier()
+if comm_world is not None:
+    comm_world.Barrier()
 
-if verbose:
+if verbose and not in_github_actions:
     # make a list of line colors for each harmonic
     linecolors = [harmonic_cmap(norm(h)) for h in lines_modes]
 
@@ -349,7 +328,7 @@ if verbose:
         ax=ax,
         savepath=filepath + "heatmap.png",
         plot_losses=plot_losses,
-        plot_at_loss=plot_losses,
+        DA_at_loss=plot_losses,
     )
 
     fig = ax.get_figure()
@@ -367,13 +346,15 @@ if verbose:
                 resonance_peta = np.asarray(crossing_line[1])
                 resonance_pitch = np.asarray(crossing_line[0])
 
-                if len(crossing_line[1]) < 2:
+                if len(crossing_line[1]) < 3:
                     continue  # skip if not enough points to fit a curve:
 
                 # smooth resonance lines with a polynomial fit
-                coeffs = np.polyfit(resonance_pitch, resonance_peta, 2)
+                coeffs = np.polyfit(resonance_pitch, resonance_peta, 1)
                 poly = np.poly1d(coeffs)
-                pa_fit = np.linspace(min(resonance_pitch), max(resonance_pitch), 100)
+                pa_fit = np.linspace(
+                    min(resonance_pitch), max(resonance_pitch), resolution * 2
+                )
                 s_fit = poly(pa_fit)
 
                 color = harmonic_cmap(norm(h))
@@ -428,5 +409,5 @@ if verbose:
 
     plt.clf()
 
-if comm is not None:
-    comm.Barrier()
+if comm_world is not None:
+    comm_world.Barrier()

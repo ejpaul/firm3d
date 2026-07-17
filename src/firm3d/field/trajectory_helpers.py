@@ -2805,9 +2805,9 @@ class MapEquilibrium:
         if savedata:
             self.res_filepaths = {
                 "tys": savepath + "DA_data.txt",
-                "ICs": savepath + "initial_conditions.txt"
+                "ICs": savepath + "initial_conditions.txt",
             }
-    
+
         self.savepath = savepath
         load_ics = False
         load_files = False
@@ -2953,7 +2953,7 @@ class MapEquilibrium:
         """
         import pickle
 
-        if load_files:
+        if load_files:  # noqa: SIM102
             if self.verbose:
                 proc0_print("Reading File")
             with open(self.res_filepaths["tys"], "rb") as f:
@@ -3093,9 +3093,7 @@ class MapEquilibrium:
             proc0_print(f"{self.comm.rank=} done tracing particles")
             gc_tys = [i for o in self.comm.allgather(gc_tys) for i in o]
 
-        if self.verbose:
-            import pickle
-
+        if self.verbose and self.savedata:
             with open(self.res_filepaths["tys"], "wb") as f:
                 pickle.dump(gc_tys, f)
 
@@ -3203,7 +3201,7 @@ class MapEquilibrium:
         self.convergence_petas = convergence_petas
         self.convergence_DAs = convergence_DAs
 
-        if self.verbose:
+        if self.savedata and self.verbose:
             np.savetxt(
                 self.savepath + "initial_conditions.txt",
                 np.column_stack((s0, theta0, zeta0, vpar0, mu0)),
@@ -3303,6 +3301,7 @@ class MapEquilibrium:
             ny = int(self.nlambda_points - 1)
 
         def trapped_passing_function(s, pitch):
+            # pitch not weighted by modB
             resolution = 500
             points_temp = initialize_position_uniform_surf(
                 self.B0,
@@ -3414,7 +3413,7 @@ class MapEquilibrium:
                 trapped, rad_like = trapped_passing_function(s, pa)
                 if trapped == 1 and self.plot_s:
                     rad_like_tp.append(s)
-                    pa_tp.append(normalized_pitch_i)
+                    pa_tp.append(normalized_pitch_i * self.min_volmodB)
                     break
                 if not self.plot_s:
                     if rad_like[0] is None:
@@ -4122,13 +4121,14 @@ class MapPhaseSpace:
         """
         import pickle
 
-        if self.check_filepaths(self.res_filepaths):
-            if self.verbose:
-                proc0_print("Reading File")
-            with open(self.res_filepaths["tys"], "rb") as f:
-                res_tys = pickle.load(f)
-            self.build_lists(res_tys)
-            return
+        if self.savedata:  # noqa: SIM102
+            if self.check_filepaths(self.res_filepaths):  # noqa: SIM102
+                if self.verbose:
+                    proc0_print("Reading File")
+                with open(self.res_filepaths["tys"], "rb") as f:
+                    res_tys = pickle.load(f)
+                self.build_lists(res_tys)
+                return
 
         if self.verbose:
             proc0_print("Tracing particles in perturbed field...")
@@ -4298,7 +4298,7 @@ class MapPhaseSpace:
             proc0_print(f"{self.comm.rank=} done tracing particles")
             res_tys = [i for o in self.comm.allgather(res_tys) for i in o]
 
-        if self.verbose:
+        if self.verbose and self.savedata:
             with open(self.res_filepaths["tys"], "wb") as f:
                 pickle.dump(res_tys, f)
 
@@ -4442,16 +4442,17 @@ class MapPhaseSpace:
 
         if self.verbose:
             mu_per_mass0 = np.array(mus0) / self.mass
-            if not exists(self.final_filepaths["ICs"]):
-                np.savetxt(
-                    self.final_filepaths["ICs"],
-                    np.column_stack((s0, theta0, zeta0, vpar0, mu_per_mass0)),
-                )
-            if not exists(self.final_filepaths["DA"]):
-                np.savetxt(
-                    self.final_filepaths["DA"],
-                    np.column_stack((DAs_at_loss, final_times)),
-                )
+            if self.savedata:
+                if not exists(self.final_filepaths["ICs"]):
+                    np.savetxt(
+                        self.final_filepaths["ICs"],
+                        np.column_stack((s0, theta0, zeta0, vpar0, mu_per_mass0)),
+                    )
+                if not exists(self.final_filepaths["DA"]):
+                    np.savetxt(
+                        self.final_filepaths["DA"],
+                        np.column_stack((DAs_at_loss, final_times)),
+                    )
         return
 
     def surface_trapped_func_Eprime(self, mu, surface):
