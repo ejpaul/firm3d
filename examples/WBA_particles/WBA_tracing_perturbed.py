@@ -17,14 +17,13 @@ from firm3d.util.constants import (
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
-
-from firm3d.util.functions import in_github_actions
+from firm3d.util.functions import in_github_actions, proc0_print
 from firm3d.util.mpi import comm_world
 
 time1 = time.time()
 
 resolution = 10 if in_github_actions else 48  # Resolution for field interpolation
-nParticles = 10 if in_github_actions else 48  # Number of particles to trace
+nParticles = 10 if in_github_actions else 5000  # Number of particles to trace
 reltol = 1e-10  # Relative tolerance for the ODE solver
 abstol = 1e-10  # Absolute tolerance for the ODE solver
 order = 3  # Order for radial interpolation
@@ -103,4 +102,4 @@ convergence_times = object_WBA.convergence_times
 
 chaotic_percentage = object_WBA.return_chaotic_percentage()
 
-print("Percent of space that is chaotic: ", chaotic_percentage, "%")
+proc0_print("Percent of space that is chaotic: ", chaotic_percentage, "%")
