@@ -1833,9 +1833,10 @@ class PassingPerturbedPoincare:
 
         if not isinstance(saw, ShearAlfvenHarmonic):
             dominant_saw = saw[0]
-            raise Warning(
+            warn(
                 "Expected saw to be an instance of ShearAlfvenHarmonic - "
-                "Perturbed Energy Invariant may not be valid."
+                "Perturbed Energy Invariant may not be valid.",
+                stacklevel=2,
             )
         else:
             dominant_saw = None
@@ -4969,10 +4970,11 @@ class WBAPerturbedParticles:
                 points[:, 2] = zeta_ic
 
             if mu_per_mass is None:
-                raise Warning(
-                    "Expected mu_per_mass to be provided with gc_tys",
+                warn(
+                    "Expected mu_per_mass to be provided with gc_tys. "
                     "Computing mu_per_mass from gc_tys with reference energy, this"
                     " may be inaccurate if not provided directly.",
+                    stacklevel=2,
                 )
                 mu_per_mass = []
                 for i in range(len(gc_tys)):

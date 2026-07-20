@@ -5,3 +5,8 @@ spec*.sp
 spec*.sp.end
 spec*.sp.h5
 .out
+__pycache__/
+*.pdf
+*.png
+*.txt
+!README.txt
