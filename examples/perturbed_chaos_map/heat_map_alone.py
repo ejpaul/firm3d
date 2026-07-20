@@ -44,7 +44,7 @@ AE_filename = "QH_10harmonics_scale0_00464159.npy"
 plot_losses = False
 
 # poincare parameters
-nchi_poinc = 5 if in_github_actions else 5
+nchi_poinc = 5
 ns_poinc = 5 if in_github_actions else 100
 Nmaps = 5 if in_github_actions else 1000  # number of maps for poincare
 

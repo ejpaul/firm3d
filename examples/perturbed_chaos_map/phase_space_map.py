@@ -20,7 +20,7 @@ from firm3d.util.constants import (
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
-
+from firm3d.util.functions import proc0_print
 from firm3d.util.mpi import comm_world, verbose
 
 # harmonic to isolate for this case
@@ -174,8 +174,7 @@ heat_map = MapPhaseSpace(
     file_name=filepath,
     convergence_points=5,
 )
-if verbose:
-    print("Finished computing heatmap ", flush=True)
+proc0_print("Finished computing heatmap ")
 
 map = PassingPerturbedPoincare(
     saw,
@@ -196,8 +195,7 @@ map = PassingPerturbedPoincare(
     comm=comm_world,
     nconvergence_points=5,
 )
-if verbose:
-    print("Finished computing poincare ", flush=True)
+proc0_print("Finished computing poincare ")
 
 
 def compute_rotational_profile(pitch, sgn, s_profile, comm):
@@ -398,7 +396,7 @@ if verbose:
     # plot the resonance lines on the pertubation magnitude plot
     for i, radius in enumerate(rad_list):
         ell = ell_list[i]
-        print(f"{i}: ell={ell}, arr={radius}")
+        proc0_print(f"{i}: ell={ell}, arr={radius}")
         ax_left.plot(
             [min(Phihat[1]), max(Phihat[1])],
             [radius, radius],
@@ -427,7 +425,7 @@ if verbose:
     ax_center.set_title(rf"$\lambda$ = {lam * sign_vpar}")
     ax_center.sharey(ax_left)
 
-    print("Finished plotting poincare ", flush=True)
+    proc0_print("Finished plotting poincare ")
 
     # plot heatmap
     ax_right = heat_map.plot_heatmap(

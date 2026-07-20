@@ -60,7 +60,7 @@ tracing_points = initialize_position_uniform_vol(
     field,
     nParticles,
     comm=comm_world,
-    seed=None,
+    seed=0,
 )
 
 Ekin = FUSION_ALPHA_PARTICLE_ENERGY
