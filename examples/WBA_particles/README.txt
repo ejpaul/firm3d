@@ -9,10 +9,9 @@ metric (Digit Accuracy) of chaos, implemented as described in:
 
 N. Duignan and J. D. Meiss. "Distinguishing between regular and chaotic orbits of flows by the weighted birkhoff average." Physical Nonlinear Phenomena. (2023): 449:133749.
 
-The class can be used one of two ways: tracing the particles using trace_particles_boozer_perturbed or 
-trace_particles_boozer, and providing the trajectory output from this function, or by providing the initial 
-conditions for tracing, and the tracing occurring inside the WBAParticles class. The latter is 
-less memory intensive, as the full trajectories are never shared accross all communicators, unless 
-they are saved with the flag save_gc_trajectories. The first method of using the class is performed in 
-WBA_trajectories_boozer, the second in WBA_tracing_boozer.py. The same applies to the perturbed case. 
-An example is shown in WBA_trajectories_perturbed.py. 
+The class can be used one of two ways: tracing the particles using trace_particles_boozer_perturbed or
+trace_particles_boozer, and providing the trajectory output from this function, or by providing the initial
+conditions for tracing, and the tracing occurring inside the WBAParticles class. The latter is
+less memory intensive, as the full trajectories are never shared accross all communicators, unless
+they are saved with the flag save_gc_trajectories. The second method of using the class is performed in
+WBA_tracing_boozer.py. The same applies to the perturbed case, shown in WBA_tracing_perturbed.py.
