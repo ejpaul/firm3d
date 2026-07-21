@@ -5346,8 +5346,6 @@ class WBAPerturbedParticles:
             chaotic_indices : Boolean array of shape (N,) where True indicates
                 a chaotic particle.
         """
-        if cutoff is None:
-            cutoff = self.DA_cutoff
         return np.array(self.DA_at_tfinal) < cutoff
 
     def return_chaotic_percentage(self, cutoff=3):
@@ -5356,8 +5354,7 @@ class WBAPerturbedParticles:
         final WBA digit accuracy.
 
         Args:
-            cutoff : Digit accuracy threshold for classifying chaos. If None,
-                uses self.DA_cutoff.
+            cutoff : Digit accuracy threshold for classifying chaos.
 
         Returns:
             chaotic_percentage : Percentage of particles classified as chaotic.
@@ -5446,7 +5443,6 @@ class WBAParticles:
             save_gc_trajectories : If True, persist raw trajectories.
             savepath : Prefix for output filenames.
             comm : MPI communicator for parallel execution.
-            DA_cutoff : Digit accuracy threshold for classifying chaos.
             solver_options : Extra options passed to the ODE solver.
             tol : Absolute and relative ODE tolerance.
             convergence_points : Number of intermediate WBA evaluations per
