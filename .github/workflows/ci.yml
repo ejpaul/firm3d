@@ -114,7 +114,7 @@ jobs:
         (cd examples/uniform_vol_distribution && python uniform_vol_distribution.py)
         (cd examples/plot_trajectory && python plot_trajectory.py)
         (cd examples/orbit_classification && python fusion_distribution_classification.py)
-        (cd examples/passing_map_unperturbed && python passing_map.py && python passing_map_WBA.py)
+        (cd examples/passing_map_unperturbed && python passing_map.py)
         (cd examples/perturbed_chaos_map && python heat_map_alone.py)
         (cd examples/passing_map_perturbed_QA && python passing_map_perturbed.py)
         (cd examples/passing_map_perturbed_QH && python passing_map_perturbed.py)

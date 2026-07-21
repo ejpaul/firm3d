@@ -56,7 +56,10 @@ poinc = PassingPoincare(
     ntheta_poinc=ntheta_poinc,
     Nmaps=Nmaps,
     comm=comm_world,
+    helicity_N=1 * field.nfp,
+    helicity_M=1,
     solver_options={"reltol": tol, "abstol": tol},
+    chaos_detection=True,
 )
 
 if verbose and not in_github_actions:

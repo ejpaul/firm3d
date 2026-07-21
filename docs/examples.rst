@@ -47,7 +47,7 @@ Passing Map Analysis
 
 **Location**: ``examples/passing_map_perturbed_QA/``, ``examples/passing_map_perturbed_QH/``, and ``examples/passing_map_unperturbed/``
 
-Computes the passing Poincaré map in various configurations. The perturbed examples use the Landreman & Buller 2.5% beta QA and QH configurations with shear Alfvén waves (m = 1, n = 1 for QA; m = 1, n = 2 for QH). The unperturbed example uses the Wistell-A configuration scaled to the size and field strength of ARIES-CS with co-passing alpha particles. The unperturbed example also includes passing_map_WBA.py, which colors the Poincaré map by the Weighted Birkhoff Average digit accuracy (chaos_detection=True) instead of by trajectory.
+Computes the passing Poincaré map in various configurations. The perturbed examples use the Landreman & Buller 2.5% beta QA and QH configurations with shear Alfvén waves (m = 1, n = 1 for QA; m = 1, n = 2 for QH). The unperturbed example uses the Wistell-A configuration scaled to the size and field strength of ARIES-CS with co-passing alpha particles, with chaos_detection=True enabled to color the Poincaré map by the Weighted Birkhoff Average digit accuracy.
 
 .. code-block:: bash
 
@@ -59,7 +59,6 @@ Computes the passing Poincaré map in various configurations. The perturbed exam
 
    cd examples/passing_map_unperturbed/
    python passing_map.py
-   python passing_map_WBA.py
 
 Trapped Particle Analysis
 ~~~~~~~~~~~~~~~~~~~~~~~~~
