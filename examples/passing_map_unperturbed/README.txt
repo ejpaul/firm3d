@@ -3,10 +3,8 @@ to the size and field strength of ARIES-CS. Co-passing alpha particles (mu = 0, 
 the alpha particle birth energy are assumed. 
 
 The example in the file passing_map_WBA.py performs the passing map, but with the chaos_detection parameter
-enabled, meaning the Poincare is colored by Digit Accuracy of the WBA. The lower the DA, the more
-chaotic the particle trajectory.
-Weighted Birkhoff Averaging is added as a setting to the passing map and applied to a helical particle momentum 
-to create a numerical metric (Digit Accuracy) of chaos, implemented as described in:
+enabled. Weighted Birkhoff Averaging is added as a setting to the passing map and applied to a particle canonical momentum 
+to create a numerical metric (digit accuracy) of chaos, implemented as described in:
 
 N. Duignan and J. D. Meiss. "Distinguishing between regular and chaotic orbits of flows by the weighted birkhoff average." Physical Nonlinear Phenomena. (2023): 449:133749.
 
