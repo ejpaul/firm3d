@@ -8,7 +8,7 @@ Paul, Elizabeth J., Harry E. Mynick, and Amitava Bhattacharjee. "Fast-ion transp
 
 On macOS (06.29.25), the wallclock time is about 3 minutes using the command "mpiexec -n 8 python passing_map_perturbed.py".
 
-Weighted Birkhoff Averaging is added as a setting to the Perturbed Passing map with the flag chaos_detection=True and applied to particle momentum to create a numerical 
+Weighted Birkhoff Averaging is added as a setting to the perturbed passing map with the flag chaos_detection=True. Averaging is applied to particle canonical momentum to create a numerical 
 metric (Digit Accuracy) of chaos, implemented as described in:
 
 N. Duignan and J. D. Meiss. "Distinguishing between regular and chaotic orbits of flows by the weighted birkhoff average." Physical Nonlinear Phenomena. (2023): 449:133749.
