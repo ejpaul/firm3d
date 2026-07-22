@@ -401,22 +401,21 @@ def compute_reference_Eprime(
     return Eprime[0]
 
 
-def calculate_crossings(drift_helicity, h_res, radial_position):
+def calculate_crossings(h, h_res, radial_position):
     r"""
     Find radial locations where a drift-helicity profile crosses a resonant
     value.
 
     Args:
-        drift_helicity : Array of drift-helicity values along a profile.
+        h : Array of drift-helicity values along a profile.
         h_res : Resonant drift-helicity value to find crossings of.
         radial_position : Array of radial-coordinate values corresponding to
-                           drift_helicity.
+                           h.
 
     Returns:
-        crossings : List of radial positions at which drift_helicity crosses
-                    h_res.
+        crossings : List of radial positions at which h crosses h_res.
     """
-    diff = drift_helicity - h_res
+    diff = h - h_res
     sign_changes = np.where(np.sign(diff[:-1]) != np.sign(diff[1:]))[0]
     crossings = []
     for i in sign_changes:
