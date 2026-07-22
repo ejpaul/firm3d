@@ -1718,6 +1718,137 @@ def return_DA(array):
     return T, max(da_relative, da_absolute)
 
 
+def _solve_vpar_energy(B0, point, mass, Ekin, mu, sgn):
+    r"""
+    Solve for the parallel velocity at the given (s, theta, zeta) position(s)
+    from energy conservation, Ekin = 0.5 * mass * vpar**2 + mu * modB. Works
+    for a single point or an array of points.
+
+    Args:
+        B0 : Magnetic field instance used to evaluate modB at the given
+             points.
+        point : Position(s) at which to evaluate vpar, as (s, theta, zeta)
+                coordinates. Array of shape (3,) for a single point, or
+                (npoints, 3) for multiple points.
+        mass : Particle mass.
+        Ekin : Total kinetic energy.
+        mu : Magnetic moment (scalar, or array-like matching point).
+        sgn : Desired sign of the parallel velocity (+1 or -1).
+
+    Returns:
+        vpar : Parallel velocity consistent with Ekin, or NaN where the
+               perpendicular energy exceeds the total energy. Scalar if
+               point is 1D, otherwise an array of length npoints.
+    """
+    scalar_input = point.ndim == 1
+    points = point[None, :] if scalar_input else point
+    B0.set_points(points)
+    modB = B0.modB()[:, 0]
+
+    energy_par = Ekin - mu * modB
+    vpar = sgn * np.sqrt(np.maximum(2 * energy_par / mass, 0))
+    vpar = np.where(energy_par > 0, vpar, np.nan)
+    return vpar[0] if scalar_input else vpar
+
+
+def _solve_vpar_perturbed(
+    B0,
+    saw,
+    point,
+    helicity_M,
+    helicity_N,
+    helicity_Np,
+    helicity_Mp,
+    mass,
+    nprime,
+    omega,
+    charge,
+    Eprime,
+    mu,
+    sgn,
+):
+    r"""
+    Solve the perturbed-orbit quadratic for vpar at the given (s, theta, zeta)
+    position(s) such that the shifted energy invariant equals Eprime. Works
+    for a single point or an array of points.
+
+    Args:
+        B0 : Unperturbed magnetic field instance used to evaluate modB, G, I,
+             psi0, and psip at the given points.
+        saw : Perturbed field instance (wrapping B0) used to evaluate Phi and
+              alpha at the given points, and to set the evaluation points
+              shared with B0.
+        point : Position(s) at which to evaluate vpar, as (s, theta, zeta)
+                coordinates. Array of shape (3,) for a single point, or
+                (npoints, 3) for multiple points.
+        helicity_M : Poloidal helicity number defining chi = M*theta - N*zeta.
+        helicity_N : Toroidal helicity number defining chi = M*theta - N*zeta.
+        helicity_Np : Toroidal helicity number defining
+                      eta = Mp*theta - Np*zeta.
+        helicity_Mp : Poloidal helicity number defining
+                      eta = Mp*theta - Np*zeta.
+        mass : Particle mass.
+        nprime : Coefficient n' in the shifted-energy invariant
+                 Eprime = n' * E - omega * p_eta.
+        omega : Coefficient omega in the shifted-energy invariant
+                Eprime = n' * E - omega * p_eta.
+        charge : Particle charge.
+        Eprime : Prescribed value of the shifted-energy invariant.
+        mu : Magnetic moment divided by mass (scalar, or array-like matching
+             point).
+        sgn : Desired sign of the parallel velocity (+1 or -1).
+
+    Returns:
+        vpar : Solution(s) for vpar, or NaN where no real root exists.
+               Scalar if point is 1D, otherwise an array of length npoints.
+    """
+    scalar_input = point.ndim == 1
+    points = point[None, :] if scalar_input else point
+    s = points[:, 0]
+    points4 = np.zeros((points.shape[0], 4))  # 4th column initialized as t = 0
+    points4[:, :3] = points
+    saw.set_points(points4)
+    modB = B0.modB()[:, 0]
+    G = B0.G()[:, 0]
+    I = B0.I()[:, 0]
+    psi = B0.psi0 * s
+    psip = B0.psip()[:, 0]
+    Phi = saw.Phi()[:, 0]
+    alpha = saw.alpha()[:, 0]
+
+    denom = helicity_Np * helicity_M - helicity_N * helicity_Mp  # - 1 in QA
+    d_peta_d_vpar = (
+        -((helicity_M * G + helicity_N * I) * (mass / modB)) / denom
+    )  # G m/ modB in QA
+    d_E_d_vpar2 = 0.5 * mass
+    a = nprime * d_E_d_vpar2  # Coefficient of vpar^2
+    b = -omega * d_peta_d_vpar  # Coefficient of vpar
+    # Constant term
+    c = (
+        nprime * (mass * mu * modB + charge * Phi)
+        + omega
+        * (
+            (helicity_M * G + helicity_N * I) * charge * alpha
+            + charge * (helicity_N * psi - helicity_M * psip)
+        )
+        / denom
+        - Eprime
+    )
+    discriminant = b**2 - 4 * a * c
+    valid = discriminant >= 0
+
+    if a != 0:
+        # mask negatives before sqrt so we don't get warnings
+        safe_disc = np.where(valid, discriminant, 0.0)
+        result = (-b + sgn * np.sqrt(safe_disc)) / (2 * a)
+    else:
+        # discriminant = b**2 >= 0 always
+        result = (-c / b) * sgn
+
+    vpar = np.where(valid, result, np.nan)
+    return vpar[0] if scalar_input else vpar
+
+
 class PassingPerturbedPoincare:
     def __init__(
         self,
@@ -1987,67 +2118,6 @@ class PassingPerturbedPoincare:
             f"of them None. Currently {helicity_Np=} while {helicity_Mp=}."
         )
 
-    def vpar_func_perturbed(self, s, chi):
-        r"""
-        Solve for the parallel velocity at (s, chi) on the eta = 0 plane such
-        that the shifted energy invariant equals self.Eprime.
-
-        Args:
-            s : Flux-surface label (scalar).
-            chi : Helical angle chi = M*theta - N*zeta (scalar).
-
-        Returns:
-            vpar : Parallel velocity consistent with self.Eprime at the given
-                   (s, chi) on the eta = 0 plane.
-
-        Raises:
-            RuntimeError : If no real solution for vpar exists (negative
-                           discriminant).
-        """
-        # Choose initial conditions on the eta = 0 plane
-        theta, zeta = self.chi_eta_to_theta_zeta(chi, 0)
-        point = np.zeros((1, 4))  # initialize with t = 0
-        point[0, 0] = s
-        point[0, 1] = theta
-        point[0, 2] = zeta
-        self.saw.set_points(point)
-        modB = self.B0.modB()[0, 0]
-        G = self.B0.G()[0, 0]
-        I = self.B0.I()[0, 0]
-        psi = self.B0.psi0 * s
-        psip = self.B0.psip()[0, 0]
-        Phi = self.saw.Phi()[0, 0]
-        alpha = self.saw.alpha()[0, 0]
-        denom = (
-            self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
-        )  # - 1 in QA
-        d_peta_d_vpar = (
-            -((self.helicity_M * G + self.helicity_N * I) * (self.mass / modB)) / denom
-        )  # G m/ modB in QA
-        d_E_d_vpar2 = 0.5 * self.mass
-        a = self.nprime * d_E_d_vpar2  # Coefficient of vpar^2
-        b = -self.omega * d_peta_d_vpar  # Coefficient of vpar
-        # Constant term
-        c = (
-            self.nprime * (self.mass * self.mu * modB + self.charge * Phi)
-            + self.omega
-            * (
-                (self.helicity_M * G + self.helicity_N * I) * self.charge * alpha
-                + self.charge * (self.helicity_N * psi - self.helicity_M * psip)
-            )
-            / denom
-            - self.Eprime
-        )
-        if (b**2 - 4 * a * c) < 0:
-            raise RuntimeError(
-                "No solution for vpar found! Check the parameters and "
-                "initial conditions."
-            )
-        elif a != 0:
-            return (-b + self.sign_vpar * np.sqrt(b**2 - 4 * a * c)) / (2 * a)
-        else:
-            return (-c / b) * self.sign_vpar
-
     def initialize_passing_map(self):
         """
         Generate initial conditions (s, chi, vpar) on the eta = 0 plane such
@@ -2076,13 +2146,29 @@ class PassingPerturbedPoincare:
         chis_init = []
         vpars_init = []
         for i in range(first, last):
-            try:
-                vpar = self.vpar_func_perturbed(s[i], chis[i])
-                s_init.append(s[i])
-                chis_init.append(chis[i])
-                vpars_init.append(vpar)
-            except RuntimeError:
+            theta, zeta = self.chi_eta_to_theta_zeta(chis[i], 0)
+            point = np.array([s[i], theta, zeta])
+            vpar = _solve_vpar_perturbed(
+                self.B0,
+                self.saw,
+                point,
+                self.helicity_M,
+                self.helicity_N,
+                self.helicity_Np,
+                self.helicity_Mp,
+                self.mass,
+                self.nprime,
+                self.omega,
+                self.charge,
+                self.Eprime,
+                self.mu,
+                self.sign_vpar,
+            )
+            if np.isnan(vpar):
                 continue
+            s_init.append(s[i])
+            chis_init.append(chis[i])
+            vpars_init.append(float(vpar))
 
         if self.comm is not None:
             s_init = [i for o in self.comm.allgather(s_init) for i in o]
@@ -2562,7 +2648,31 @@ class PassingPerturbedPoincare:
                 lines_2.append((arr, line_plotting_kwargs[i]["color"]))
                 theta = np.pi / 2
 
-                vp = self.vpar_func_perturbed(arr, self.chi(theta, 0))
+                chi_val = self.chi(theta, 0)
+                theta_vp, zeta_vp = self.chi_eta_to_theta_zeta(chi_val, 0)
+                point = np.array([arr, theta_vp, zeta_vp])
+                vp = _solve_vpar_perturbed(
+                    self.B0,
+                    self.saw,
+                    point,
+                    self.helicity_M,
+                    self.helicity_N,
+                    self.helicity_Np,
+                    self.helicity_Mp,
+                    self.mass,
+                    self.nprime,
+                    self.omega,
+                    self.charge,
+                    self.Eprime,
+                    self.mu,
+                    self.sign_vpar,
+                )
+                if np.isnan(vp):
+                    raise RuntimeError(
+                        "No solution for vpar found! Check the parameters and "
+                        "initial conditions."
+                    )
+                vp = float(vp)
                 point = np.zeros((1, 3))
                 point[:, 0] = arr
                 point[:, 1] = theta
@@ -3210,33 +3320,6 @@ class MapEquilibrium:
 
         return
 
-    def vpar_func(self, s, theta, zeta, mu, sgn):
-        r"""
-        Solve for the parallel velocity at (s, theta, zeta).
-
-        Args:
-            s : Flux-surface label (scalar or array-like).
-            theta : Boozer poloidal angle.
-            zeta : Boozer toroidal angle.
-            mu : Magnetic moment.
-            sgn : Desired sign of the parallel velocity.
-
-        Returns:
-            vpar : Parallel velocity consistent with self.Eprime, or NaN.
-        """
-        point = np.zeros((len(s), 3)) if hasattr(s, "__len__") else np.zeros((1, 3))
-        point[:, 0] = s
-        point[:, 1] = theta
-        point[:, 2] = zeta
-        self.B0.set_points(point)
-        modB = self.B0.modB()[:, 0]
-
-        rhs = 2 * (self.Ekin - mu * modB) / self.mass
-        vpar = sgn * np.sqrt(np.maximum(rhs, 0))
-        # condtion, x, y
-        # returns x (vpar) if energy > 0, else nan
-        return np.where(rhs > 0, vpar, np.nan)
-
     def plot_heatmap(
         self,
         nx=25,
@@ -3315,8 +3398,13 @@ class MapEquilibrium:
             max_modB = np.max(modB)
             mu = pitch * self.Ekin
 
-            vp_temp = self.vpar_func(
-                points_temp[:, 0], points_temp[:, 1], points_temp[:, 2], mu, self.sign
+            vp_temp = _solve_vpar_energy(
+                self.B0,
+                points_temp,
+                self.mass,
+                self.Ekin,
+                mu,
+                self.sign,
             )
 
             mask = ~np.isnan(vp_temp)
@@ -3883,18 +3971,28 @@ class MapPhaseSpace:
             mu_per_mass = mu / self.mass
 
             if self.Eprime_slice:
-                vpar_temp = self.vpar_func_perturbed(
-                    points_temp[:, 0],
-                    points_temp[:, 1],
-                    points_temp[:, 2],
+                vpar_temp = _solve_vpar_perturbed(
+                    self.B0,
+                    self.saw,
+                    points_temp,
+                    self.helicity_M,
+                    self.helicity_N,
+                    self.helicity_Np,
+                    self.helicity_Mp,
+                    self.mass,
+                    self.nprime,
+                    self.omega,
+                    self.charge,
+                    self.Eprime,
                     mu_per_mass,
                     self.sign,
                 )
             else:
-                vpar_temp = self.vpar_func(
-                    points_temp[:, 0],
-                    points_temp[:, 1],
-                    points_temp[:, 2],
+                vpar_temp = _solve_vpar_energy(
+                    self.B0,
+                    points_temp,
+                    self.mass,
+                    self.Ekin,
                     mu,
                     self.sign,
                 )
@@ -3969,96 +4067,6 @@ class MapPhaseSpace:
         zeta = (self.helicity_Mp * chi - self.helicity_M * eta) / denom
 
         return theta, zeta
-
-    def vpar_func(self, s, theta, zeta, mu, sgn):
-        r"""
-        Compute the parallel velocity at (s, theta, zeta) from energy conservation.
-
-        Args:
-            s : Flux-surface label (array-like).
-            theta : Boozer poloidal angle (array-like).
-            zeta : Boozer toroidal angle (array-like).
-            mu : Magnetic moment (array-like).
-            sgn : Desired sign of the parallel velocity (+1 or -1).
-
-        Returns:
-            vpar : Parallel velocity consistent with self.Ekin. Returns NaN for
-                points where the perpendicular energy exceeds the total energy.
-        """
-        point = np.zeros((len(s), 3))
-        point[:, 0] = s
-        point[:, 1] = theta
-        point[:, 2] = zeta
-        self.B0.set_points(point)
-        modB = self.B0.modB()[:, 0]
-
-        energy_par = self.Ekin - mu * modB
-        energy_par_norm = np.maximum(energy_par, 0)
-        vpar = sgn * np.sqrt(2 * energy_par_norm / self.mass)
-        # condtion, x, y
-        # returns x (vpar) if energy > 0, else nan
-        return np.where(energy_par > 0, vpar, np.nan)
-
-    def vpar_func_perturbed(self, s, theta, zeta, mu, sgn):
-        r"""
-        Solve for the parallel velocity at (s, theta, zeta) on the eta = 0 plane
-        such that the shifted energy invariant equals self.Eprime.
-
-        Args:
-            s : Flux-surface label (array-like).
-            theta : Boozer poloidal angle (array-like).
-            zeta : Boozer toroidal angle (array-like).
-            mu : Magnetic moment divided by mass (array-like).
-            sgn : Desired sign of the parallel velocity (+1 or -1).
-
-        Returns:
-            vpar : Parallel velocity consistent with self.Eprime. Returns NaN
-                for points where no real solution exists.
-        """
-        point = np.zeros((len(s), 4)) if hasattr(s, "__len__") else np.zeros((1, 4))
-        point[:, 0] = s
-        point[:, 1] = theta
-        point[:, 2] = zeta
-        self.saw.set_points(point)
-        modB = self.B0.modB()[:, 0]
-        G = self.B0.G()[:, 0]
-        I = self.B0.I()[:, 0]
-        psi = self.B0.psi0 * s
-        psip = self.B0.psip()[:, 0]
-        Phi = self.saw.Phi()[:, 0]
-        alpha = self.saw.alpha()[:, 0]
-        denom = (
-            self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
-        )  # - 1 in QA
-        d_peta_d_vpar = (
-            -((self.helicity_M * G + self.helicity_N * I) * (self.mass / modB)) / denom
-        )  # G m/ modB in QA
-        d_E_d_vpar2 = 0.5 * self.mass
-        a = self.nprime * d_E_d_vpar2  # Coefficient of vpar^2
-        b = -self.omega * d_peta_d_vpar  # Coefficient of vpar
-        # Constant term
-        c = (
-            self.nprime * (self.mass * mu * modB + self.charge * Phi)
-            + self.omega
-            * (
-                (self.helicity_M * G + self.helicity_N * I) * self.charge * alpha
-                + self.charge * (self.helicity_N * psi - self.helicity_M * psip)
-            )
-            / denom
-            - self.Eprime
-        )
-        discriminant = b**2 - 4 * a * c
-        valid = discriminant >= 0
-
-        if a != 0:
-            # mask negatives before sqrt so we don't get warnings
-            safe_disc = np.where(valid, discriminant, 0.0)
-            result = (-b + sgn * np.sqrt(safe_disc)) / (2 * a)
-        else:
-            # discriminant = b**2 >= 0 always
-            result = (-c / b) * sgn
-
-        return np.where(valid, result, np.nan)
 
     def remove_equilibrium_lost_particles(self, points, vpars_init, mus_per_mass):
         r"""
@@ -4490,8 +4498,21 @@ class MapPhaseSpace:
 
         mu_pm = mu / self.mass
 
-        vp_temp = self.vpar_func_perturbed(
-            points[:, 0], points[:, 1], points[:, 2], mu_pm, sign_arrs
+        vp_temp = _solve_vpar_perturbed(
+            self.B0,
+            self.saw,
+            points,
+            self.helicity_M,
+            self.helicity_N,
+            self.helicity_Np,
+            self.helicity_Mp,
+            self.mass,
+            self.nprime,
+            self.omega,
+            self.charge,
+            self.Eprime,
+            mu_pm,
+            sign_arrs,
         )
 
         mask = ~np.isnan(vp_temp)
