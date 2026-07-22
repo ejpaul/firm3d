@@ -697,7 +697,7 @@ def return_bounces_and_passes(vpar_path, zeta_path):
 
     # find large negative jump, this is where mod
     # brings factors of 2pi back to zero, and pass
-    wrap_idx = np.where(dzeta < -np.pi)[0]
+    wrap_idx = np.where(dzeta > 1.5 * np.pi)[0]
 
     # isolate transits across zeta of 2pi
     true_passes = []
