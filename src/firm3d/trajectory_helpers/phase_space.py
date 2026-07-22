@@ -1385,7 +1385,7 @@ class MapPhaseSpace:
             )
             Eprime = self.nprime * E - self.omega * Peta_values
 
-            if points_trajectory.shape[0] > 8:
+            if points_trajectory.shape[0] > 10:
                 stack_data = np.column_stack((points_trajectory[:, -1], Peta_values))
                 time_eval, DA_eval = return_DA(stack_data)
                 final_DA = DA_eval
@@ -1550,7 +1550,6 @@ class MapPhaseSpace:
             final_times.append(final_time)
 
             pitch_val = float(start_state[6]) / self.Ekin
-            pitch_val *= self.sign
             pitch.append(pitch_val)
 
             if self.plot_s:
@@ -1883,6 +1882,7 @@ class MapPhaseSpace:
         norm = mpl.colors.Normalize(vmin=0, vmax=DA_max)
 
         plotting_pitch_normalized = np.array(self.pitch) * self.min_volmodB
+        plotting_pitch_normalized *= self.sign
 
         DA_stats, x_edges, y_edges, binnumber = binned_statistic_2d(
             plotting_pitch_normalized,
