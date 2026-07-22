@@ -10,7 +10,7 @@ from firm3d.field.tracing_helpers import (
     initialize_position_uniform_vol,
     initialize_velocity_uniform,
 )
-from firm3d.field.trajectory_helpers import WBAParticles
+from firm3d.field.trajectory_helpers import WBAParticles, return_chaotic_percentage
 from firm3d.util.constants import (
     ALPHA_PARTICLE_CHARGE,
     ALPHA_PARTICLE_MASS,
@@ -88,6 +88,6 @@ DAs_all = np.array(object_WBA.DAs)
 convergence_DAs = object_WBA.convergence_DAs
 convergence_times = object_WBA.convergence_times
 
-chaotic_percentage = object_WBA.return_chaotic_percentage()
+chaotic_percentage = return_chaotic_percentage(object_WBA.DA_at_tfinal)
 
 proc0_print("Percent of space that is chaotic: ", chaotic_percentage, "%")

@@ -24,6 +24,9 @@ from ..field.tracing_helpers import (
 )
 
 __all__ = [
+    "chi",
+    "eta",
+    "chi_eta_to_theta_zeta",
     "compute_loss_fraction",
     "compute_trajectory_cylindrical",
     "PassingPoincare",
@@ -805,6 +808,60 @@ class PassingPoincare:
         return ax
 
 
+def chi(theta, zeta, helicity_M, helicity_N):
+    r"""
+    Compute the helical angle chi = M*theta - N*zeta.
+
+    Args:
+        theta : Poloidal angle.
+        zeta : Toroidal angle.
+        helicity_M : Poloidal helicity number.
+        helicity_N : Toroidal helicity number.
+    Returns:
+        chi : The helical angle.
+    """
+    return helicity_M * theta - helicity_N * zeta
+
+
+def eta(theta, zeta, helicity_Mp, helicity_Np):
+    r"""
+    Compute the mapping angle eta = Mp*theta - Np*zeta.
+
+    Args:
+        theta : Poloidal angle.
+        zeta : Toroidal angle.
+        helicity_Mp : Poloidal helicity number.
+        helicity_Np : Toroidal helicity number.
+    Returns:
+        eta : The mapping angle.
+    """
+    return helicity_Mp * theta - helicity_Np * zeta
+
+
+def chi_eta_to_theta_zeta(chi, eta, helicity_M, helicity_N, helicity_Mp, helicity_Np):
+    r"""
+    Convert helical angles (chi, eta) to (theta, zeta).
+
+    Args:
+        chi : Helical angle chi.
+        eta : Mapping angle eta.
+        helicity_M : Poloidal helicity number defining chi = M*theta - N*zeta.
+        helicity_N : Toroidal helicity number defining chi = M*theta - N*zeta.
+        helicity_Mp : Poloidal helicity number defining
+                      eta = Mp*theta - Np*zeta.
+        helicity_Np : Toroidal helicity number defining
+                      eta = Mp*theta - Np*zeta.
+    Returns:
+        theta : Poloidal angle.
+        zeta : Toroidal angle.
+    """
+    denom = helicity_Np * helicity_M - helicity_N * helicity_Mp
+    theta = (helicity_Np * chi - helicity_N * eta) / denom
+    zeta = (helicity_Mp * chi - helicity_M * eta) / denom
+
+    return theta, zeta
+
+
 class TrappedPoincare:
     """
     Class to compute and store trapped Poincare maps and related quantities
@@ -933,7 +990,9 @@ class TrappedPoincare:
                 # Default value for mirror point initial guess
                 self.chi_mirror = np.pi / 2
             else:
-                self.chi_mirror = self.chi(theta_mirror, zeta_mirror)
+                self.chi_mirror = chi(
+                    theta_mirror, zeta_mirror, self.helicity_M, self.helicity_N
+                )
         elif (
             s_mirror is not None
             and theta_mirror is not None
@@ -942,7 +1001,9 @@ class TrappedPoincare:
             field.set_points(np.array([[s_mirror], [theta_mirror], [zeta_mirror]]).T)
             self.modBcrit = field.modB()[0, 0]  # Magnetic field at mirror point
             self.lam = 1 / self.modBcrit  # lambda = v_perp^2/(v^2 B) = 1/modBcrit
-            self.chi_mirror = self.chi(theta_mirror, zeta_mirror)
+            self.chi_mirror = chi(
+                theta_mirror, zeta_mirror, self.helicity_M, self.helicity_N
+            )
         else:
             raise ValueError(
                 "Either lam or s_mirror, theta_mirror, zeta_mirror must be provided."
@@ -995,47 +1056,6 @@ class TrappedPoincare:
             self.DA_times,
         ) = self.compute_trapped_map()
 
-    def chi(self, theta, zeta):
-        r"""
-        Compute the helical angle chi = M*theta - N*zeta.
-
-        Args:
-            theta : Poloidal angle.
-            zeta : Toroidal angle.
-        Returns:
-            chi : The helical angle.
-        """
-        return self.helicity_M * theta - self.helicity_N * zeta
-
-    def eta(self, theta, zeta):
-        r"""
-        Compute the mapping angle eta = Mp*theta - Np*zeta.
-
-        Args:
-            theta : Poloidal angle.
-            zeta : Toroidal angle.
-        Returns:
-            eta : The mapping angle.
-        """
-        return self.helicity_Mp * theta - self.helicity_Np * zeta
-
-    def chi_eta_to_theta_zeta(self, chi, eta):
-        r"""
-        Convert helical angles (chi, eta) to (theta, zeta).
-
-        Args:
-            chi : Helical angle chi.
-            eta : Mapping angle eta.
-        Returns:
-            theta : Poloidal angle.
-            zeta : Toroidal angle.
-        """
-        denom = self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
-        theta = (self.helicity_Np * chi - self.helicity_N * eta) / denom
-        zeta = (self.helicity_Mp * chi - self.helicity_M * eta) / denom
-
-        return theta, zeta
-
     def trapped_map(self, point):
         r"""
         Integrates the gc equations from one mirror point to the next mirror point.
@@ -1051,7 +1071,14 @@ class TrappedPoincare:
             time : The time taken to return to the vpar = 0 plane.
             peta : A numpy array of shape (N, 2) containing trajectory time and peta.
         """
-        theta, zeta = self.chi_eta_to_theta_zeta(point[1], point[2])
+        theta, zeta = chi_eta_to_theta_zeta(
+            point[1],
+            point[2],
+            self.helicity_M,
+            self.helicity_N,
+            self.helicity_Mp,
+            self.helicity_Np,
+        )
         points = np.zeros((1, 3))
         points[:, 0] = point[0]
         points[:, 1] = theta
@@ -1083,8 +1110,8 @@ class TrappedPoincare:
 
         if res_hit[1] == 0:  # Check that the vpars=[0] plane was hit
             point[0] = res_hit[2]
-            point[1] = self.chi(res_hit[3], res_hit[4])
-            point[2] = self.eta(res_hit[3], res_hit[4])
+            point[1] = chi(res_hit[3], res_hit[4], self.helicity_M, self.helicity_N)
+            point[2] = eta(res_hit[3], res_hit[4], self.helicity_Mp, self.helicity_Np)
             time = res_hit[0]
         else:
             raise RuntimeError("Alternative stopping criterion reached in passing_map.")
@@ -1146,7 +1173,14 @@ class TrappedPoincare:
                 return modB_func(chi) - self.modBcrit
 
             def graddiffmodB(chi):
-                theta, zeta = self.chi_eta_to_theta_zeta(chi, eta)
+                theta, zeta = chi_eta_to_theta_zeta(
+                    chi,
+                    eta,
+                    self.helicity_M,
+                    self.helicity_N,
+                    self.helicity_Mp,
+                    self.helicity_Np,
+                )
                 point[:, 1] = theta
                 point[:, 2] = zeta
                 self.field.set_points(point)
@@ -1156,7 +1190,14 @@ class TrappedPoincare:
                 )
 
             def modB_func(chi):
-                theta, zeta = self.chi_eta_to_theta_zeta(chi, eta)
+                theta, zeta = chi_eta_to_theta_zeta(
+                    chi,
+                    eta,
+                    self.helicity_M,
+                    self.helicity_N,
+                    self.helicity_Mp,
+                    self.helicity_Np,
+                )
                 point[:, 1] = theta
                 point[:, 2] = zeta
                 self.field.set_points(point)
@@ -2146,7 +2187,14 @@ class PassingPerturbedPoincare:
         chis_init = []
         vpars_init = []
         for i in range(first, last):
-            theta, zeta = self.chi_eta_to_theta_zeta(chis[i], 0)
+            theta, zeta = chi_eta_to_theta_zeta(
+                chis[i],
+                0,
+                self.helicity_M,
+                self.helicity_N,
+                self.helicity_Mp,
+                self.helicity_Np,
+            )
             point = np.array([s[i], theta, zeta])
             vpar = _solve_vpar_perturbed(
                 self.B0,
@@ -2177,47 +2225,6 @@ class PassingPerturbedPoincare:
 
         return s_init, chis_init, vpars_init
 
-    def chi(self, theta, zeta):
-        r"""
-        Compute the helical angle chi = M*theta - N*zeta.
-
-        Args:
-            theta : Poloidal angle.
-            zeta : Toroidal angle.
-        Returns:
-            chi : The helical angle.
-        """
-        return self.helicity_M * theta - self.helicity_N * zeta
-
-    def eta(self, theta, zeta):
-        r"""
-        Compute the mapping angle eta = Mp*theta - Np*zeta.
-
-        Args:
-            theta : Poloidal angle.
-            zeta : Toroidal angle.
-        Returns:
-            eta : The mapping angle.
-        """
-        return self.helicity_Mp * theta - self.helicity_Np * zeta
-
-    def chi_eta_to_theta_zeta(self, chi, eta):
-        r"""
-        Convert helical angles (chi, eta) to (theta, zeta).
-
-        Args:
-            chi : Helical angle chi.
-            eta : Mapping angle eta.
-        Returns:
-            theta : Poloidal angle.
-            zeta : Toroidal angle.
-        """
-        denom = self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
-        theta = (self.helicity_Np * chi - self.helicity_N * eta) / denom
-        zeta = (self.helicity_Mp * chi - self.helicity_M * eta) / denom
-
-        return theta, zeta
-
     def passing_map(self, point, t, eta):
         r"""
         Integrates the GC equations from the provided point on the eta -
@@ -2241,7 +2248,14 @@ class PassingPerturbedPoincare:
         """
         phase = self.omega * t
         self.saw.phase = phase
-        theta, zeta = self.chi_eta_to_theta_zeta(point[1], eta)
+        theta, zeta = chi_eta_to_theta_zeta(
+            point[1],
+            eta,
+            self.helicity_M,
+            self.helicity_N,
+            self.helicity_Mp,
+            self.helicity_Np,
+        )
         points = np.zeros((1, 3))
         points[:, 0] = point[0]
         points[:, 1] = theta
@@ -2290,13 +2304,17 @@ class PassingPerturbedPoincare:
         # Check that the phases plane was hit (index 0 for first phase)
         if res_hit[1] == 0:
             point[0] = res_hit[2]
-            point[1] = self.chi(res_hit[3], res_hit[4])
+            point[1] = chi(res_hit[3], res_hit[4], self.helicity_M, self.helicity_N)
             point[2] = res_hit[5]
         else:
             raise RuntimeError("Alternative stopping criterion reached in passing_map.")
 
         if not self.chaos_detection:
-            return point, res_hit[0] + t, self.eta(res_hit[3], res_hit[4])
+            return (
+                point,
+                res_hit[0] + t,
+                eta(res_hit[3], res_hit[4], self.helicity_Mp, self.helicity_Np),
+            )
         else:
             # define trajectories
             time_momentum = res_tys[0][:, 0]
@@ -2324,7 +2342,12 @@ class PassingPerturbedPoincare:
                 helicity_Np=self.helicity_Np,
             )
             Peta = np.column_stack((time_momentum, Peta))
-            return point, res_hit[0] + t, self.eta(res_hit[3], res_hit[4]), Peta
+            return (
+                point,
+                res_hit[0] + t,
+                eta(res_hit[3], res_hit[4], self.helicity_Mp, self.helicity_Np),
+                Peta,
+            )
 
     def compute_passing_map(self):
         r"""
@@ -2648,8 +2671,15 @@ class PassingPerturbedPoincare:
                 lines_2.append((arr, line_plotting_kwargs[i]["color"]))
                 theta = np.pi / 2
 
-                chi_val = self.chi(theta, 0)
-                theta_vp, zeta_vp = self.chi_eta_to_theta_zeta(chi_val, 0)
+                chi_val = chi(theta, 0, self.helicity_M, self.helicity_N)
+                theta_vp, zeta_vp = chi_eta_to_theta_zeta(
+                    chi_val,
+                    0,
+                    self.helicity_M,
+                    self.helicity_N,
+                    self.helicity_Mp,
+                    self.helicity_Np,
+                )
                 point = np.array([arr, theta_vp, zeta_vp])
                 vp = _solve_vpar_perturbed(
                     self.B0,
@@ -2700,9 +2730,11 @@ class PassingPerturbedPoincare:
                 s_upt, theta_upt, vpar_upt, t_upt = (
                     unperturbed_path_map.get_poincare_data()
                 )
-                chis = self.chi(
+                chis = chi(
                     np.array(theta_upt[0]),
                     np.array([2 * np.pi * i for i in range(len(theta_upt[0]))]),
+                    self.helicity_M,
+                    self.helicity_N,
                 )
                 s_upt = np.array(s_upt[0])
                 pa_data = np.column_stack((chis, s_upt))
@@ -2742,6 +2774,18 @@ class PassingPerturbedPoincare:
             self.DA_all,
             self.DA_times,
         )
+
+
+def _check_filepaths(filepaths):
+    r"""
+    Check whether all provided output file paths exist.
+
+    Args:
+        filepaths : Dictionary of file labels to filesystem paths.
+    Returns:
+        exists_all : True if every path exists, otherwise False.
+    """
+    return all(exists(fp) for fp in filepaths.values())
 
 
 class MapEquilibrium:
@@ -3040,17 +3084,6 @@ class MapEquilibrium:
             mus_tot += mu.tolist()
 
         return s, thetas, zetas, vpars, mus_tot
-
-    def check_filepaths(self, filepaths):
-        r"""
-        Check whether all provided output file paths exist.
-
-        Args:
-            filepaths : Dictionary of file labels to filesystem paths.
-        Returns:
-            exists_all : True if every path exists, otherwise False.
-        """
-        return all(exists(fp) for fp in filepaths.values())
 
     def trace_particles(self, load_files=False):
         """
@@ -4016,58 +4049,6 @@ class MapPhaseSpace:
             mus_per_mass,
         )
 
-    def check_filepaths(self, filepaths):
-        r"""
-        Check whether all provided output file paths exist.
-
-        Args:
-            filepaths : Dictionary of file labels to filesystem paths.
-        Returns:
-            exists_all : True if every path exists, otherwise False.
-        """
-        return all(exists(fp) for fp in filepaths.values())
-
-    def chi(self, theta, zeta):
-        r"""
-        Compute the helical angle chi = M*theta - N*zeta.
-
-        Args:
-            theta : Poloidal angle.
-            zeta : Toroidal angle.
-        Returns:
-            chi : The helical angle.
-        """
-        return self.helicity_M * theta - self.helicity_N * zeta
-
-    def eta(self, theta, zeta):
-        r"""
-        Compute the mapping angle eta = Mp*theta - Np*zeta.
-
-        Args:
-            theta : Poloidal angle.
-            zeta : Toroidal angle.
-        Returns:
-            eta : The mapping angle.
-        """
-        return self.helicity_Mp * theta - self.helicity_Np * zeta
-
-    def chi_eta_to_theta_zeta(self, chi, eta):
-        r"""
-        Convert helical angles (chi, eta) to (theta, zeta).
-
-        Args:
-            chi : Helical angle chi.
-            eta : Mapping angle eta.
-        Returns:
-            theta : Poloidal angle.
-            zeta : Toroidal angle.
-        """
-        denom = self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
-        theta = (self.helicity_Np * chi - self.helicity_N * eta) / denom
-        zeta = (self.helicity_Mp * chi - self.helicity_M * eta) / denom
-
-        return theta, zeta
-
     def remove_equilibrium_lost_particles(self, points, vpars_init, mus_per_mass):
         r"""
         Trace particles briefly in the unperturbed equilibrium field and drop any
@@ -4131,7 +4112,7 @@ class MapPhaseSpace:
         import pickle
 
         if self.savedata:  # noqa: SIM102
-            if self.check_filepaths(self.res_filepaths):  # noqa: SIM102
+            if _check_filepaths(self.res_filepaths):  # noqa: SIM102
                 if self.verbose:
                     proc0_print("Reading File")
                 with open(self.res_filepaths["tys"], "rb") as f:
@@ -4794,6 +4775,70 @@ class MapPhaseSpace:
         return ax
 
 
+def return_chaotic_boolean_array(DA_at_tfinal, cutoff=3):
+    r"""
+    Return a boolean array classifying particles as chaotic or regular based
+    on their final WBA digit accuracy.
+
+    Args:
+        DA_at_tfinal : Array-like of final WBA digit accuracy values.
+        cutoff : Digit accuracy threshold for classifying chaos (default: 3).
+
+    Returns:
+        chaotic_indices : Boolean array of shape (N,) where True indicates
+            a chaotic particle.
+    """
+    return np.array(DA_at_tfinal) < cutoff
+
+
+def return_chaotic_percentage(DA_at_tfinal, cutoff=3):
+    r"""
+    Return the percentage of particles classified as chaotic based on their
+    final WBA digit accuracy.
+
+    Args:
+        DA_at_tfinal : Array-like of final WBA digit accuracy values.
+        cutoff : Digit accuracy threshold for classifying chaos (default: 3).
+
+    Returns:
+        chaotic_percentage : Percentage of particles classified as chaotic.
+    """
+    chaotic_indices = return_chaotic_boolean_array(DA_at_tfinal, cutoff)
+    return np.mean(chaotic_indices) * 100
+
+
+def return_chaotic_initial_conditions(DA_at_tfinal, s0, theta0, zeta0, vpar0, mus):
+    r"""
+    Return the initial conditions of particles classified as chaotic based on
+    their final WBA digit accuracy.
+
+    Args:
+        DA_at_tfinal : Array-like of final WBA digit accuracy values.
+        s0 : Array of initial flux-surface labels.
+        theta0 : Array of initial poloidal angles.
+        zeta0 : Array of initial toroidal angles.
+        vpar0 : Array of initial parallel velocities.
+        mus : Array of initial magnetic moments divided by mass.
+
+    Returns:
+        chaotic_points : Array of shape (N_chaotic, 3) of (s, theta, zeta)
+            initial conditions for chaotic particles.
+        chaotic_vpars : Array of shape (N_chaotic,) of initial parallel
+            velocities for chaotic particles.
+        chaotic_mus : Array of shape (N_chaotic,) of initial magnetic moments
+            divided by mass for chaotic particles.
+    """
+    chaotic_indices = return_chaotic_boolean_array(DA_at_tfinal)
+
+    chaotic_s0s = s0[chaotic_indices]
+    chaotic_theta0s = theta0[chaotic_indices]
+    chaotic_zeta0s = zeta0[chaotic_indices]
+    chaotic_points = np.stack((chaotic_s0s, chaotic_theta0s, chaotic_zeta0s), axis=-1)
+    chaotic_vpars = vpar0[chaotic_indices]
+    chaotic_mus = mus[chaotic_indices]
+    return chaotic_points, chaotic_vpars, chaotic_mus
+
+
 class WBAPerturbedParticles:
     def __init__(
         self,
@@ -5013,17 +5058,6 @@ class WBAPerturbedParticles:
             self.trace_particles()
         )
         return
-
-    def check_filepaths(self, filepaths):
-        r"""
-        Check whether all provided output file paths exist.
-
-        Args:
-            filepaths : Dictionary of file labels to filesystem paths.
-        Returns:
-            exists_all : True if every path exists, otherwise False.
-        """
-        return all(exists(fp) for fp in filepaths.values())
 
     def trace_particles(self):
         r"""
@@ -5354,60 +5388,6 @@ class WBAPerturbedParticles:
         self.convergence_energies = convergence_energies
         return
 
-    def return_chaotic_boolean_array(self, cutoff=3):
-        r"""
-        Return a boolean array classifying particles as chaotic or regular based
-        on their final WBA digit accuracy.
-
-        Args:
-            cutoff : Digit accuracy threshold for classifying chaos. If None,
-                uses self.DA_cutoff.
-
-        Returns:
-            chaotic_indices : Boolean array of shape (N,) where True indicates
-                a chaotic particle.
-        """
-        return np.array(self.DA_at_tfinal) < cutoff
-
-    def return_chaotic_percentage(self, cutoff=3):
-        r"""
-        Return the percentage of particles classified as chaotic based on their
-        final WBA digit accuracy.
-
-        Args:
-            cutoff : Digit accuracy threshold for classifying chaos.
-
-        Returns:
-            chaotic_percentage : Percentage of particles classified as chaotic.
-        """
-        chaotic_indices = self.return_chaotic_boolean_array(cutoff)
-        return np.mean(chaotic_indices) * 100
-
-    def return_chaotic_initial_conditions(self):
-        r"""
-        Return the initial conditions of particles classified as chaotic based on
-        their final WBA digit accuracy.
-
-        Returns:
-            chaotic_points : Array of shape (N_chaotic, 3) of (s, theta, zeta)
-                initial conditions for chaotic particles.
-            chaotic_vpars : Array of shape (N_chaotic,) of initial parallel
-                velocities for chaotic particles.
-            chaotic_mus : Array of shape (N_chaotic,) of initial magnetic moments
-                divided by mass for chaotic particles.
-        """
-        chaotic_indices = self.return_chaotic_boolean_array()
-
-        chaotic_s0s = self.s0[chaotic_indices]
-        chaotic_theta0s = self.theta0[chaotic_indices]
-        chaotic_zeta0s = self.zeta0[chaotic_indices]
-        chaotic_points = np.stack(
-            (chaotic_s0s, chaotic_theta0s, chaotic_zeta0s), axis=-1
-        )
-        chaotic_vpars = self.vpar0[chaotic_indices]
-        chaotic_mus = self.mus[chaotic_indices]
-        return chaotic_points, chaotic_vpars, chaotic_mus
-
 
 class WBAParticles:
     def __init__(
@@ -5550,17 +5530,6 @@ class WBAParticles:
             self.trace_particles()
         )
         self.build_lists(self.dense_output)
-
-    def check_filepaths(self, filepaths):
-        r"""
-        Check whether all provided output file paths exist.
-
-        Args:
-            filepaths : Dictionary of file labels to filesystem paths.
-        Returns:
-            exists_all : True if every path exists, otherwise False.
-        """
-        return all(exists(fp) for fp in filepaths.values())
 
     def trace_particles(self):
         r"""
@@ -5844,59 +5813,6 @@ class WBAParticles:
         self.convergence_DAs = convergence_DAs
 
         return
-
-    def return_chaotic_boolean_array(self, cutoff=3):
-        r"""
-        Return a boolean array classifying particles as chaotic or regular based
-        on their final WBA digit accuracy.
-
-        Args:
-            cutoff : Digit accuracy threshold for classifying chaos.
-
-        Returns:
-            chaotic_indices : Boolean array of shape (N,) where True indicates
-                a chaotic particle.
-        """
-        return np.array(self.DA_at_tfinal) < cutoff
-
-    def return_chaotic_percentage(self, cutoff=3):
-        r"""
-        Return the percentage of particles classified as chaotic based on their
-        final WBA digit accuracy.
-
-        Args:
-            cutoff : Digit accuracy threshold for classifying chaos.
-
-        Returns:
-            chaotic_percentage : Percentage of particles classified as chaotic.
-        """
-        chaotic_indices = self.return_chaotic_boolean_array(cutoff)
-        return np.mean(chaotic_indices) * 100
-
-    def return_chaotic_initial_conditions(self):
-        r"""
-        Return the initial conditions of particles classified as chaotic based on
-        their final WBA digit accuracy.
-
-        Returns:
-            chaotic_points : Array of shape (N_chaotic, 3) of (s, theta, zeta)
-                initial conditions for chaotic particles.
-            chaotic_vpars : Array of shape (N_chaotic,) of initial parallel
-                velocities for chaotic particles.
-            chaotic_mus : Array of shape (N_chaotic,) of initial magnetic moments
-                divided by mass for chaotic particles.
-        """
-        chaotic_indices = self.return_chaotic_boolean_array()
-
-        chaotic_s0s = self.s0[chaotic_indices]
-        chaotic_theta0s = self.theta0[chaotic_indices]
-        chaotic_zeta0s = self.zeta0[chaotic_indices]
-        chaotic_points = np.stack(
-            (chaotic_s0s, chaotic_theta0s, chaotic_zeta0s), axis=-1
-        )
-        chaotic_vpars = self.vpar0[chaotic_indices]
-        chaotic_mus = self.mus[chaotic_indices]
-        return chaotic_points, chaotic_vpars, chaotic_mus
 
 
 def trajectory_to_vtk(res_ty, field, filename="trajectory"):
