@@ -151,7 +151,7 @@ def plot_resonance_lines(
                 # ignore resonance lines which start near the trapped-passing
                 # boundary, in the region where the fit is inaccurate due to
                 # numerical noise
-                if trapped_boundary_fit_pitch[0] < resonance_pitch[0]:
+                if np.abs(trapped_boundary_fit_pitch[0]) < np.abs(resonance_pitch[0]):
                     continue
 
                 diff = trapped_passing_fit - s_fit
