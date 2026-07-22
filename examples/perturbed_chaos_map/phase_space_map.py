@@ -7,7 +7,7 @@ from firm3d.field.boozermagneticfield import (
     InterpolatedBoozerField,
     ShearAlfvenHarmonic,
 )
-from firm3d.field.trajectory_helpers import (
+from firm3d.trajectory_helpers import (
     MapPhaseSpace,
     PassingPerturbedPoincare,
     PassingPoincare,

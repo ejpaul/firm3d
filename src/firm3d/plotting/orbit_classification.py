@@ -1,6 +1,6 @@
 import numpy as np
 
-from ..field.trajectory_helpers import chi_eta_to_theta_zeta
+from ..trajectory_helpers import chi_eta_to_theta_zeta
 
 __all__ = ["OrbitClassification"]
 

@@ -83,7 +83,7 @@ def plot_trajectory_overhead_cyl(res_ty, field, ax=None):
     Returns:
         ax : The matplotlib Axes object containing the plot.
     """
-    from ..field.trajectory_helpers import compute_trajectory_cylindrical
+    from ..trajectory_helpers import compute_trajectory_cylindrical
 
     R, phi, Z = compute_trajectory_cylindrical(res_ty, field)
 

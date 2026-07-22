@@ -11,7 +11,7 @@ from firm3d.field.tracing_helpers import (
     initialize_position_uniform_vol,
     initialize_velocity_uniform,
 )
-from firm3d.field.trajectory_helpers import (
+from firm3d.trajectory_helpers import (
     WBAPerturbedParticles,
     return_chaotic_percentage,
 )

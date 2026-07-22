@@ -4,7 +4,7 @@ from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
 )
-from firm3d.field.trajectory_helpers import (
+from firm3d.trajectory_helpers import (
     MapEquilibrium,
 )
 from firm3d.util.constants import (
