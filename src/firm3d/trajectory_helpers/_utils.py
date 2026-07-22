@@ -693,6 +693,7 @@ def return_bounces_and_passes(vpar_path, zeta_path):
 
     zeta_path = np.mod(zeta_path, 2 * np.pi)
     dzeta = np.diff(zeta_path)
+    dzeta = np.abs(dzeta)
 
     # find large negative jump, this is where mod
     # brings factors of 2pi back to zero, and pass
