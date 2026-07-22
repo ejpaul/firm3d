@@ -327,6 +327,123 @@ def compute_Eprime(saw, points, vpar, mu, mass, charge, helicity_M, helicity_N):
     return Eprime
 
 
+def compute_reference_Eprime(
+    saw,
+    p0,
+    lam,
+    sign_vpar,
+    mass,
+    charge,
+    Ekin,
+    helicity_M,
+    helicity_N,
+    helicity_Mp,
+    helicity_Np,
+    Phim,
+    Phin,
+    omega,
+):
+    r"""
+    Compute a single reference value of the shifted-energy invariant Eprime
+    at a point p0, for a particle with fixed pitch angle lam and total
+    kinetic energy Ekin.
+
+    Unlike compute_Eprime, the canonical momentum here is evaluated on the
+    unperturbed field saw.B0 rather than the full perturbed saw, so the
+    perturbation's alpha contribution is excluded. This matches the
+    convention used to pick a single Eprime slice to sample, as opposed to
+    evaluating Eprime along an already-perturbed trajectory.
+
+    Args:
+        saw : A ShearAlfvenHarmonic instance. Only saw.B0 (the unperturbed
+              field) is used to evaluate modB and the canonical momentum.
+        p0 : A numpy array of shape (1, 3) containing the reference point
+             (s, theta, zeta).
+        lam : Pitch angle variable, lambda = vperp^2 / (v^2 B), assumed
+              constant along the trajectory.
+        sign_vpar : Desired sign of the parallel velocity (+1 or -1).
+        mass : Particle mass.
+        charge : Particle charge.
+        Ekin : Total kinetic energy.
+        helicity_M : Poloidal helicity of the field strength.
+        helicity_N : Toroidal helicity of the field strength.
+        helicity_Mp : Poloidal helicity of the mapping coordinate eta.
+        helicity_Np : Toroidal helicity of the mapping coordinate eta.
+        Phim : Poloidal mode number of the perturbation.
+        Phin : Toroidal mode number of the perturbation.
+        omega : Frequency of the perturbation.
+
+    Returns:
+        Eprime : The reference value of the shifted-energy invariant at p0.
+    """
+    v0 = np.sqrt(2 * Ekin / mass)  # Total velocity from kinetic energy
+    saw.B0.set_points(p0)
+    modB = saw.B0.modB()[0, 0]
+    if 1 - lam * modB < 0:
+        raise ValueError(
+            "Invalid parameter p0: 1 - lambda * modB must be non-negative."
+        )
+    vpar = sign_vpar * v0 * np.sqrt(1 - lam * modB)  # Parallel velocity
+    Peta0 = compute_peta(
+        saw.B0,
+        p0,
+        vpar,
+        mass,
+        charge,
+        helicity_M,
+        helicity_N,
+    )
+    nprime = (Phim * helicity_N - Phin * helicity_M) / (
+        helicity_Np * helicity_M - helicity_N * helicity_Mp
+    )
+    Eprime = nprime * Ekin - omega * Peta0
+    return Eprime[0]
+
+
+def calculate_crossings(drift_helicity, h_res, radial_position):
+    r"""
+    Find radial locations where a drift-helicity profile crosses a resonant
+    value.
+
+    Args:
+        drift_helicity : Array of drift-helicity values along a profile.
+        h_res : Resonant drift-helicity value to find crossings of.
+        radial_position : Array of radial-coordinate values corresponding to
+                           drift_helicity.
+
+    Returns:
+        crossings : List of radial positions at which drift_helicity crosses
+                    h_res.
+    """
+    diff = drift_helicity - h_res
+    sign_changes = np.where(np.sign(diff[:-1]) != np.sign(diff[1:]))[0]
+    crossings = []
+    for i in sign_changes:
+        s = radial_position[i]
+        crossings.append(s)
+    return crossings
+
+
+def calculate_QS_resonance(Phim, Phin, M, N, omega, drift_omega_zeta, ell):
+    r"""
+    Compute the drift-helicity value at which a quasisymmetric resonance
+    between a perturbation mode (Phim, Phin) and the drift motion occurs.
+
+    Args:
+        Phim : Poloidal mode number of the perturbation.
+        Phin : Toroidal mode number of the perturbation.
+        M : Poloidal helicity of the field strength.
+        N : Toroidal helicity of the field strength.
+        omega : Frequency of the perturbation.
+        drift_omega_zeta : Toroidal drift frequency.
+        ell : Resonance harmonic index.
+
+    Returns:
+        h_res : Resonant drift-helicity value.
+    """
+    return (Phin - N * Phim - omega / drift_omega_zeta) / (Phim + ell) + N
+
+
 def g(t, T):
     """
     Smooth bump weight on (0, T) with g=0 at t<=0 or t>=T.

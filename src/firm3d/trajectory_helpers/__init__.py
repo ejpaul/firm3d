@@ -1,9 +1,12 @@
 from ._utils import (
+    calculate_crossings,
+    calculate_QS_resonance,
     chi,
     chi_eta_to_theta_zeta,
     compute_Eprime,
     compute_loss_fraction,
     compute_peta,
+    compute_reference_Eprime,
     compute_trajectory_cylindrical,
     eta,
     g,
@@ -16,16 +19,25 @@ from ._utils import (
     trajectory_to_vtk,
 )
 from .phase_space import MapEquilibrium, MapPhaseSpace
-from .poincare import PassingPerturbedPoincare, PassingPoincare, TrappedPoincare
+from .poincare import (
+    PassingPerturbedPoincare,
+    PassingPoincare,
+    TrappedPoincare,
+    accumulate_resonance_crossings,
+    compute_rotational_profile,
+)
 from .wba import WBAParticles, WBAPerturbedParticles
 
 __all__ = [
+    "calculate_crossings",
+    "calculate_QS_resonance",
     "chi",
     "eta",
     "chi_eta_to_theta_zeta",
     "compute_Eprime",
     "compute_loss_fraction",
     "compute_peta",
+    "compute_reference_Eprime",
     "compute_trajectory_cylindrical",
     "g",
     "min_volumemodB",
@@ -35,6 +47,8 @@ __all__ = [
     "return_chaotic_percentage",
     "return_DA",
     "trajectory_to_vtk",
+    "accumulate_resonance_crossings",
+    "compute_rotational_profile",
     "MapEquilibrium",
     "MapPhaseSpace",
     "PassingPoincare",

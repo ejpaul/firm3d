@@ -15,6 +15,8 @@ from ..field.tracing import (
 )
 
 from ._utils import (
+    calculate_crossings,
+    calculate_QS_resonance,
     chi,
     chi_eta_to_theta_zeta,
     compute_peta,
@@ -2239,5 +2241,150 @@ class PassingPerturbedPoincare:
             self.DA_all,
             self.DA_times,
         )
+
+
+def compute_rotational_profile(
+    field,
+    pitch,
+    sgn,
+    mass,
+    charge,
+    Ekin,
+    helicity_M,
+    helicity_N,
+    helicity_Mp,
+    helicity_Np,
+    comm,
+    ns_poinc=100,
+    Nmaps=75,
+    s_profile=False,
+    tmax=1e-2,
+    solver_options=None,
+):
+    r"""
+    Compute the rotational-transform and orbit-helicity profile from a
+    passing-particle Poincare map at a fixed pitch angle.
+
+    Args:
+        field : The (unperturbed) BoozerMagneticField instance to trace in.
+        pitch : Pitch angle variable, lambda = vperp^2 / (v^2 B).
+        sgn : Desired sign of the parallel velocity (+1 or -1).
+        mass : Particle mass.
+        charge : Particle charge.
+        Ekin : Total kinetic energy.
+        helicity_M : Poloidal helicity of the field strength.
+        helicity_N : Toroidal helicity of the field strength.
+        helicity_Mp : Poloidal helicity of the mapping coordinate eta.
+        helicity_Np : Toroidal helicity of the mapping coordinate eta.
+        comm : MPI communicator.
+        ns_poinc : Number of initial flux-surface labels for the Poincare map
+                   (default: 100).
+        Nmaps : Number of Poincare return maps to compute (default: 75).
+        s_profile : If True, average over flux-surface label instead of
+                    initial condition (default: False).
+        tmax : Maximum integration time (default: 1e-2).
+        solver_options : Dict of solver options passed to PassingPoincare. If
+                          None, defaults to {"axis": 0}.
+
+    Returns:
+        profiles : Array of shape (npoints, 4) containing, for each initial
+                   condition and sorted by radial coordinate, the columns
+                   (radial_position, omega_theta, omega_zeta, orbit_helicity).
+    """
+    if solver_options is None:
+        solver_options = {"axis": 0}
+    poinc = PassingPoincare(
+        field,
+        np.abs(pitch),
+        sgn,
+        mass,
+        charge,
+        Ekin,
+        ns_poinc=ns_poinc,
+        ntheta_poinc=1,
+        Nmaps=Nmaps,
+        comm=comm,
+        tmax=tmax,
+        solver_options=solver_options,
+        helicity_M=helicity_M,
+        helicity_N=helicity_N,
+        helicity_Mp=helicity_Mp,
+        helicity_Np=helicity_Np,
+    )
+    data = poinc.compute_frequencies(s_profile=s_profile)
+    # returns omega_theta_prof, omega_zeta_prof, peta_prof, s_prof
+    # or omega_theta_prof, omega_zeta_prof, s_prof if s_profile is True
+    data = np.column_stack(
+        [
+            data[2],
+            data[0],
+            data[1],
+            [data[0][i] / data[1][i] for i in range(len(data[0]))],
+        ]
+    )
+    profiles = data[data[:, 0].argsort()]
+    # sort by radial coordinate
+    return profiles
+
+
+def accumulate_resonance_crossings(
+    harmonics,
+    profile,
+    pitch_angle,
+    mode_numbers,
+    helicity_M,
+    helicity_N,
+    omega,
+    max_ell,
+):
+    r"""
+    Update harmonics in place with the resonance crossings found in profile
+    at the given pitch angle, for each mode and ell in range(-max_ell,
+    max_ell + 1).
+
+    Args:
+        harmonics : Dict of the form {h: {}} to populate (h indexes into
+                    mode_numbers). On return, harmonics[h][ell] is a list of
+                    the form [[pitch_angles], [radii]], one entry per
+                    distinct crossing line found across calls.
+        profile : Rotational-transform profile as returned by
+                  compute_rotational_profile, with columns
+                  (radial_position, omega_theta, omega_zeta, orbit_helicity).
+        pitch_angle : Pitch angle at which profile was computed.
+        mode_numbers : Dict {h: (Phim_h, Phin_h)} of poloidal/toroidal mode
+                       numbers to search for resonances.
+        helicity_M : Poloidal helicity of the field strength.
+        helicity_N : Toroidal helicity of the field strength.
+        omega : Frequency of the perturbation.
+        max_ell : Resonances are searched for ell in
+                  range(-max_ell, max_ell + 1).
+    """
+    drift_helicity = profile[:, 3]
+    radial_position = profile[:, 0]
+    for h, (Phim_h, Phin_h) in mode_numbers.items():
+        for ell in range(-max_ell, max_ell + 1):
+            h_res = calculate_QS_resonance(
+                Phim_h,
+                Phin_h,
+                helicity_M,
+                helicity_N,
+                omega,
+                np.mean(profile[:, 2]),
+                ell=ell,
+            )
+            crossings = calculate_crossings(drift_helicity, h_res, radial_position)
+
+            for crossing_index, radius in enumerate(crossings):
+                if ell in harmonics[h]:
+                    # if the resonance location intercepts the rotational
+                    # profile multiple times, we want to store all of the
+                    # crossing locations. if this is the first entry, start
+                    # empty lists
+                    if crossing_index > (len(harmonics[h][ell]) - 1):
+                        harmonics[h][ell].append([[], []])
+                    harmonics[h][ell][crossing_index][0].append(pitch_angle)
+                    harmonics[h][ell][crossing_index][1].append(radius)
+                else:
+                    harmonics[h][ell] = [[[pitch_angle], [radius]]]
 
 

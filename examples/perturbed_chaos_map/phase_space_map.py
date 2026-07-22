@@ -7,11 +7,15 @@ from firm3d.field.boozermagneticfield import (
     InterpolatedBoozerField,
     ShearAlfvenHarmonic,
 )
+from firm3d.plotting.plotting_helpers import plot_resonance_lines
 from firm3d.trajectory_helpers import (
     MapPhaseSpace,
     PassingPerturbedPoincare,
-    PassingPoincare,
-    compute_peta,
+    accumulate_resonance_crossings,
+    calculate_crossings,
+    calculate_QS_resonance,
+    compute_reference_Eprime,
+    compute_rotational_profile,
     min_volumemodB,
 )
 from firm3d.saw.ae3d import AE3DEigenvector
@@ -125,32 +129,25 @@ mass = ALPHA_PARTICLE_MASS
 charge = ALPHA_PARTICLE_CHARGE
 Ekin = FUSION_ALPHA_PARTICLE_ENERGY
 
-vtotal = np.sqrt(2 * Ekin / mass)
-
 # Calculate Eprime for the given parameters
 p0 = np.zeros((1, 3))
 p0[0, 0] = p0_int  # s
-v0 = np.sqrt(2 * Ekin / mass)  # Total velocity from kinetic energy
-mu = 0.5 * lam * v0**2  # mu = vperp^2/(2 B)
-saw.B0.set_points(p0)
-modB = saw.B0.modB()[0, 0]
-if 1 - lam * modB < 0:
-    raise ValueError("Invalid parameter p0: 1 - lambda * modB must be non-negative.")
-vpar = sign_vpar * v0 * np.sqrt(1 - lam * modB)  # Parallel velocity
-Peta0 = compute_peta(
-    saw.B0,
+Eprime = compute_reference_Eprime(
+    saw,
     p0,
-    vpar,
+    lam,
+    sign_vpar,
     mass,
     charge,
+    Ekin,
     helicity_M,
     helicity_N,
+    helicity_Mp,
+    helicity_Np,
+    Phim,
+    Phin,
+    omega,
 )
-nprime = (Phim * helicity_N - Phin * helicity_M) / (
-    helicity_Np * helicity_M - helicity_N * helicity_Mp
-)
-Eprime = nprime * Ekin - omega * Peta0
-Eprime = Eprime[0]
 
 min_volmodB = min_volumemodB(field)
 
@@ -197,63 +194,12 @@ map = PassingPerturbedPoincare(
 )
 proc0_print("Finished computing poincare ")
 
-
-def compute_rotational_profile(pitch, sgn, s_profile, comm):
-    poinc = PassingPoincare(
-        field_p,
-        np.abs(pitch),
-        sgn,
-        mass,
-        charge,
-        Ekin,
-        ns_poinc=100,
-        ntheta_poinc=1,
-        Nmaps=75,
-        comm=comm,
-        tmax=1e-2,
-        solver_options={"axis": 0},
-        helicity_M=helicity_M,
-        helicity_N=helicity_N,
-        helicity_Mp=helicity_Mp,
-        helicity_Np=helicity_Np,
-    )
-    data = poinc.compute_frequencies(s_profile=s_profile)
-    # returns omega_theta_prof, omega_zeta_prof, peta_prof, s_prof
-    # or omega_theta_prof, omega_zeta_prof, s_prof if s_profile is True
-    data = np.column_stack(
-        [
-            data[2],
-            data[0],
-            data[1],
-            [data[0][i] / data[1][i] for i in range(len(data[0]))],
-        ]
-    )
-    profiles = data[data[:, 0].argsort()]
-    # sort by radial coordinate
-    # return radial_position, omega_theta, omega_zeta, orbit_helicity
-    return profiles
-
-
-def calculate_crossings(drift_helicity, h_res, radial_position):
-    diff = drift_helicity - h_res
-    sign_changes = np.where(np.sign(diff[:-1]) != np.sign(diff[1:]))[0]
-    crossings = []
-    for i in sign_changes:
-        s = radial_position[i]
-        crossings.append(s)
-    return crossings
-
-
-def calculate_QS_resonance(Phim, Phin, M, N, omega, drift_omega_zeta, ell):
-    return (Phin - N * Phim - omega / drift_omega_zeta) / (Phim + ell) + N
-
+# mode numbers of each harmonic we're searching for resonances with
+mode_numbers = {h: (AE_temp.harmonics[h].m, AE_temp.harmonics[h].n) for h in harmonics}
 
 max_mu = Ekin / min_volmodB
 # iterate through pitch angles
 mu_harmonics = np.linspace(0, max_mu, 50)
-perturbed_pitch_angle = []
-resonance_loc = []
-
 
 plt.clf()
 plt.xlabel("s", fontsize=12)
@@ -263,11 +209,25 @@ mpl.rcParams["ytick.labelsize"] = 12
 
 for plot_counter, mu_h in enumerate(mu_harmonics):
     # compute rotational profile for given pitch angle
-    profile = compute_rotational_profile(mu_h / Ekin, sign_vpar, False, comm=comm_world)
+    profile = compute_rotational_profile(
+        field_p,
+        mu_h / Ekin,
+        sign_vpar,
+        mass,
+        charge,
+        Ekin,
+        helicity_M,
+        helicity_N,
+        helicity_Mp,
+        helicity_Np,
+        comm_world,
+        ns_poinc=100,
+        Nmaps=75,
+        tmax=1e-2,
+    )
     if profile.shape[0] < 2:
         continue  # skip if not enough points to compute resonance:
     pitch_angle_h = (sign_vpar * np.abs(mu_h) / Ekin) * min_volmodB
-    perturbed_pitch_angle.append(pitch_angle_h)
     drift_helicity = profile[:, 3]
     radial_position = profile[:, 0]
 
@@ -283,41 +243,20 @@ for plot_counter, mu_h in enumerate(mu_harmonics):
     # creates a dictionary of the form
     #  {harmonic: {ell: [[resonance_peta], [resonance_radius]]}}
     # to store the resonance locations for each harmonic and ell value
-    for h in harmonics:
-        Phim_h = AE_temp.harmonics[h].m
-        Phin_h = AE_temp.harmonics[h].n
-
-        crossings = []
-        for ell in range(-max_ell, max_ell + 1):
-            h_res = calculate_QS_resonance(
-                Phim_h,
-                Phin_h,
-                helicity_M,
-                helicity_N,
-                omega,
-                np.mean(profile[:, 2]),
-                ell=ell,
-            )
-            crossings = calculate_crossings(drift_helicity, h_res, radial_position)
-
-            if len(crossings) != 0:
-                for crossing_index, radius in enumerate(crossings):
-                    if ell in harmonics[h]:
-                        # if the resonance location intercepts the rotational
-                        # profile multiple times, we want to store all of the
-                        # crossing locations. if this is the first entry, start
-                        # empty lists
-                        if crossing_index > (len(harmonics[h][ell]) - 1):
-                            harmonics[h][ell].append([[], []])
-                        harmonics[h][ell][crossing_index][0].append(pitch_angle_h)
-                        harmonics[h][ell][crossing_index][1].append(radius)
-                    else:
-                        harmonics[h][ell] = [[[pitch_angle_h], [radius]]]
+    accumulate_resonance_crossings(
+        harmonics,
+        profile,
+        pitch_angle_h,
+        mode_numbers,
+        helicity_M,
+        helicity_N,
+        omega,
+        max_ell,
+    )
 
 
 plt.clf()
 
-lines_modes = []
 mpl.rcParams["xtick.labelsize"] = 25
 mpl.rcParams["ytick.labelsize"] = 25
 
@@ -325,7 +264,23 @@ mpl.rcParams["ytick.labelsize"] = 25
 ell_list = []
 rad_list = []
 lines_modes = []
-profile = compute_rotational_profile(lam, sign_vpar, True, comm_world)
+profile = compute_rotational_profile(
+    field_p,
+    lam,
+    sign_vpar,
+    mass,
+    charge,
+    Ekin,
+    helicity_M,
+    helicity_N,
+    helicity_Mp,
+    helicity_Np,
+    comm_world,
+    ns_poinc=100,
+    Nmaps=75,
+    s_profile=True,
+    tmax=1e-2,
+)
 for ell in range(-max_ell, max_ell + 1):
     h_res = calculate_QS_resonance(
         Phim, Phin, helicity_M, helicity_N, omega, np.mean(profile[:, 2]), ell=ell
@@ -434,70 +389,22 @@ if verbose:
 
     fig = ax_right.get_figure()
 
-    lines = []
-    labels_lines = []
-    labels_text = []
-    # iterate through harmonics to plot
-    for h in harmonics:
-        Phim_h = AE_temp.harmonics[h].m
-        Phin_h = AE_temp.harmonics[h].n
-
-        for ell in harmonics[h]:
-            for crossing_line_index, crossing_line in enumerate(harmonics[h][ell]):
-                resonance_peta = np.asarray(crossing_line[1])
-                resonance_pitch = np.asarray(crossing_line[0])
-
-                if len(crossing_line[1]) < 2:
-                    continue  # skip if not enough points to fit a curve:
-
-                # smooth resonance lines with a polynomial fit
-                coeffs = np.polyfit(resonance_pitch, resonance_peta, 2)
-                poly = np.poly1d(coeffs)
-                pa_fit = np.linspace(min(resonance_pitch), max(resonance_pitch), 100)
-                s_fit = poly(pa_fit)
-
-                color = harmonic_cmap(norm(h))
-
-                # fit a curve to the resonance points to plot on the heatmap
-                trapped_passing_fit = heat_map.trapped_boundary_fit(pa_fit)
-                trapped_passing_line_rad = heat_map.trapped_boundary_fit_radial
-                trapped_passing_line_pitch = heat_map.trapped_boundary_fit_pitch
-
-                # ignore resonance lines which start near the trapped-passing boundary
-                # in the region where the fit is inaccurate due to numerical noise
-                if trapped_passing_line_pitch[0] < resonance_pitch[0]:
-                    continue
-
-                diff = trapped_passing_fit - s_fit
-                sign_changes = np.where(np.sign(diff[:-1]) != np.sign(diff[1:]))[0]
-
-                # don't repeat label if resonance line crosses multiple times
-                if crossing_line_index == 0:
-                    label = rf"m,n={Phim_h},{Phin_h} $\ell$={ell}"
-                else:
-                    label = None
-
-                stop_index = len(pa_fit) if len(sign_changes) == 0 else sign_changes[0]
-
-                if stop_index == 0:
-                    continue  # skip if resonance line is entirely in trapped region
-                (line,) = ax_right.plot(
-                    pa_fit[:stop_index],
-                    s_fit[:stop_index],
-                    linewidth=5,
-                    linestyle=possible_linestyles[ell + max_ell],
-                    label=label,
-                    color=color,
-                )
-
-                if crossing_line_index == 0:
-                    lines.append(line)
-                if crossing_line_index == 0:
-                    label = rf"m,n={Phim_h},{Phin_h} $\ell$={ell}"
-                    labels_lines.append(line)
-                    labels_text.append(label)
+    # fit and plot resonance lines on top of the heatmap
+    labels_lines, labels_text = plot_resonance_lines(
+        ax_right,
+        harmonics,
+        mode_numbers,
+        heat_map.trapped_boundary_fit,
+        heat_map.trapped_boundary_fit_pitch,
+        harmonic_cmap,
+        norm,
+        possible_linestyles,
+        max_ell,
+        min_crossing_points=2,
+        poly_degree=2,
+        n_fit_points=100,
+    )
     ax_dummy.remove()
-    # legend_handles, legend_labels = ax_right.get_legend_handles_labels()
     ax_right.legend(
         labels_lines,
         labels_text,
