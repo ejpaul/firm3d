@@ -333,8 +333,6 @@ class WBAPerturbedParticles:
             convergence_times = []
             convergence_petas = []
             convergence_energies = []
-            convergence_bounces = []
-            convergence_passes = []
             convergence_DAs = []
 
             for _conv_index, timing_index in enumerate(self.WBA_transit_indicies):
@@ -429,8 +427,8 @@ class WBAPerturbedParticles:
         across many particles.
 
         Populates self.DAs_at_loss, self.DA_at_tfinal, self.lost_total,
-        self.final_times, self.Peta_init/mean/final, self.E_init/mean/final, 
-        self.Eprime_init/mean/final, and the convergence_* arrays from the 
+        self.final_times, self.Peta_init/mean/final, self.E_init/mean/final,
+        self.Eprime_init/mean/final, and the convergence_* arrays from the
         list of per-particle state tuples produced by trace_particles.
 
         Args:
@@ -858,8 +856,8 @@ class WBAParticles:
         across many particles.
 
         Populates self.DAs_at_loss, self.DA_at_tfinal, self.lost_total,
-        self.final_times, self.s0, self.theta0, self.zeta0, self.vpar0, 
-        self.mus, and the convergence_* arrays from the list of per-particle 
+        self.final_times, self.s0, self.theta0, self.zeta0, self.vpar0,
+        self.mus, and the convergence_* arrays from the list of per-particle
         state tuples produced by trace_particles.
 
         Args:
@@ -872,7 +870,7 @@ class WBAParticles:
 
         lost_total = []
         final_times = []
-        
+
         s0 = []
         theta0 = []
         zeta0 = []
@@ -907,7 +905,7 @@ class WBAParticles:
                 DA_tfinal.append(end_state[5])
 
             DAs_at_loss.append(end_state[5])
-            
+
             s0.append(start_state[0])
             theta0.append(start_state[1])
             zeta0.append(start_state[2])
@@ -933,5 +931,3 @@ class WBAParticles:
         self.convergence_DAs = convergence_DAs
 
         return
-
-

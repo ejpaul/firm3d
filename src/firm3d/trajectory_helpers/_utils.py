@@ -662,6 +662,7 @@ def _check_filepaths(filepaths):
     """
     return all(exists(fp) for fp in filepaths.values())
 
+
 def compute_resonances(res_tys, res_hits, delta=1e-2):
     r"""
     Computes resonant particle orbits given the output of

@@ -2395,5 +2395,3 @@ def accumulate_resonance_crossings(
                     harmonics[h][ell][crossing_index][1].append(radius)
                 else:
                     harmonics[h][ell] = [[[pitch_angle], [radius]]]
-
-

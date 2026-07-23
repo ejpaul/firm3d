@@ -467,9 +467,9 @@ class MapEquilibrium:
         Unpack per-particle trajectory summaries into flat instance attributes
         suitable for plotting and aggregation.
 
-        Populates self.DAs_at_loss, self.DA_at_tfinal, self.pitch, self.lost_total, 
-        self.final_times, self.radial_coordinate_start, self.s0, self.mu0, and the 
-        convergence_* arrays from the list produced by trace_particles. 
+        Populates self.DAs_at_loss, self.DA_at_tfinal, self.pitch, self.lost_total,
+        self.final_times, self.radial_coordinate_start, self.s0, self.mu0, and the
+        convergence_* arrays from the list produced by trace_particles.
         If self.verbose, initial conditions are written to disk.
 
         Args:
@@ -1263,7 +1263,7 @@ class MapPhaseSpace:
 
         For each particle, integrates the guiding-center equations in the
         ShearAlfvenWave field, computes the canonical momentum p_eta, the total
-        energy E, the shifted energy Eprime, and the WBA digit accuracy. 
+        energy E, the shifted energy Eprime, and the WBA digit accuracy.
         Results are collected across MPI ranks, saved to
         disk if self.savedata is True, and passed to build_lists.
         """
@@ -1443,7 +1443,7 @@ class MapPhaseSpace:
         lists stored as instance attributes.
 
         Populates self.DAs_at_loss, self.DA_at_tfinal, self.lost_total,
-        self.final_times, self.pitch, self.Plot_Radial, 
+        self.final_times, self.pitch, self.Plot_Radial,
         self.Peta_init/mean/final, self.E_init/mean/final,
         and the convergence_* arrays.
 
@@ -1902,4 +1902,3 @@ class MapPhaseSpace:
         fig.colorbar(im2, ax=ax, label=colorlabel)
         plt.savefig(savepath, dpi=400)
         return ax
-
