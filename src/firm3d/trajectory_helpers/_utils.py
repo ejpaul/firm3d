@@ -662,56 +662,6 @@ def _check_filepaths(filepaths):
     """
     return all(exists(fp) for fp in filepaths.values())
 
-
-def return_bounces_and_passes(vpar_path, zeta_path):
-    r"""
-    Count guiding-center bounces and toroidal transits along a trajectory.
-
-    Bounces are detected as sign changes of vpar. Transits are detected as
-    negative jumps in zeta mod 2*pi; a candidate transit is rejected if a
-    bounce occurs between it and the next wrap.
-
-    Args:
-        vpar_path : Array of parallel velocity samples.
-        zeta_path : Array of zeta samples (radians).
-
-    Returns:
-        bounce_indices : Trajectory indices where vpar changes sign.
-        true_passes : Trajectory indices of confirmed toroidal transits.
-    """
-    v_par_signs = np.sign(vpar_path)
-
-    mask = v_par_signs != 0
-    v = v_par_signs[mask]
-    # Keep track of original indices after removing zeros
-    orig_idx = np.where(mask)[0]
-
-    # find vpar sign changes
-    bounce_local = np.where(v[1:] * v[:-1] < 0)[0]
-    # map back to original trajectory indexing, pre zero removal
-    bounce_indices = orig_idx[bounce_local + 1]
-
-    zeta_path = np.mod(zeta_path, 2 * np.pi)
-    dzeta = np.diff(zeta_path)
-    dzeta = np.abs(dzeta)
-
-    # find large negative jump, this is where mod
-    # brings factors of 2pi back to zero, and pass
-    wrap_idx = np.where(dzeta > 1.5 * np.pi)[0]
-
-    # isolate transits across zeta of 2pi
-    true_passes = []
-    for passing_index in range(len(wrap_idx) - 1):
-        pass1 = wrap_idx[passing_index]
-        pass2 = wrap_idx[passing_index + 1]
-
-        # ensure no bounce between these two toroidal passes
-        if not np.any((bounce_indices > pass1) & (bounce_indices < pass2)):
-            true_passes.append(wrap_idx[passing_index])
-
-    return bounce_indices, true_passes
-
-
 def compute_resonances(res_tys, res_hits, delta=1e-2):
     r"""
     Computes resonant particle orbits given the output of

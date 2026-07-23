@@ -18,7 +18,6 @@ from ._utils import (
     _solve_vpar_perturbed,
     compute_peta,
     min_volumemodB,
-    return_bounces_and_passes,
     return_DA,
 )
 
@@ -400,10 +399,6 @@ class MapEquilibrium:
                 self.helicity_Np,
             )
 
-            bounce_indices, passing_indicies = return_bounces_and_passes(
-                vpar_path, zeta_path
-            )
-
             # start_state = [s, theta, zeta, vpar, p_eta_0, mu]
             start_state = [
                 points_trajectory[0, 0],
@@ -421,7 +416,7 @@ class MapEquilibrium:
             else:
                 final_DA = np.nan
 
-            # end_state = [time, s, theta, zeta, vpar, p_eta_f, bounces, passes, DA]
+            # end_state = [time, s, theta, zeta, vpar, p_eta_f, DA]
             end_state = [
                 time_momentum[-1],
                 points_trajectory[-1, 0],
@@ -429,15 +424,11 @@ class MapEquilibrium:
                 points_trajectory[-1, 2],
                 vpar_path[-1],
                 Peta_values[-1],
-                len(bounce_indices),
-                len(passing_indicies),
                 final_DA,
             ]
 
             convergence_times = []
             convergence_petas = []
-            convergence_bounces = []
-            convergence_passes = []
             convergence_DAs = []
 
             for _conv_index, timing_index in enumerate(self.WBA_transit_indicies):
@@ -445,12 +436,6 @@ class MapEquilibrium:
                     break
                 convergence_times.append(time_momentum[timing_index])
                 convergence_petas.append(Peta_values[timing_index])
-
-                bounce_enum = np.searchsorted(bounce_indices, timing_index, side="left")
-                pass_enum = np.searchsorted(passing_indicies, timing_index, side="left")
-
-                convergence_bounces.append(bounce_enum)
-                convergence_passes.append(pass_enum)
 
                 stack_data = np.column_stack(
                     (time_momentum[:timing_index], Peta_values[:timing_index])
@@ -461,8 +446,6 @@ class MapEquilibrium:
             convergence_data = [
                 convergence_times,
                 convergence_petas,
-                convergence_bounces,
-                convergence_passes,
                 convergence_DAs,
             ]
 
@@ -484,10 +467,10 @@ class MapEquilibrium:
         Unpack per-particle trajectory summaries into flat instance attributes
         suitable for plotting and aggregation.
 
-        Populates self.DAs_at_loss, self.DA_at_tfinal, self.bounces, self.passes,
-        self.pitch, self.lost_total, self.final_times, self.radial_coordinate_start,
-        self.s0, self.mu0, and the convergence_* arrays from the list produced by
-        trace_particles. If self.verbose, initial conditions are written to disk.
+        Populates self.DAs_at_loss, self.DA_at_tfinal, self.pitch, self.lost_total, 
+        self.final_times, self.radial_coordinate_start, self.s0, self.mu0, and the 
+        convergence_* arrays from the list produced by trace_particles. 
+        If self.verbose, initial conditions are written to disk.
 
         Args:
             res_tys : List of per-particle summaries, each of the form
@@ -496,8 +479,6 @@ class MapEquilibrium:
         DAs_at_loss = []
 
         DA_tfinal = []
-        bounces = []
-        passes = []
 
         lost_total = []
         final_times = []
@@ -510,8 +491,6 @@ class MapEquilibrium:
         vpar0 = []
         mu0 = []
 
-        convergence_bounces = []
-        convergence_passes = []
         convergence_times = []
         convergence_petas = []
         convergence_DAs = []
@@ -520,7 +499,7 @@ class MapEquilibrium:
 
         for i in range(len(res_tys)):
             # start_state = [s, theta, zeta, vpar, p_eta_0, mu]
-            # end_state = [time, s, theta, zeta, vpar, p_eta_f, bounces, passes, DA]
+            # end_state = [time, s, theta, zeta, vpar, p_eta_f, DA]
 
             start_state = res_tys[i][0]
             end_state = res_tys[i][1]
@@ -537,7 +516,7 @@ class MapEquilibrium:
             if final_time < self.min_DA_time:
                 DAs_at_loss.append(np.nan)
             else:
-                DAs_at_loss.append(end_state[8])
+                DAs_at_loss.append(end_state[6])
 
             s0.append(start_state[0])
             theta0.append(start_state[1])
@@ -545,26 +524,19 @@ class MapEquilibrium:
             vpar0.append(start_state[3])
             mu0.append(start_state[5])
 
-            bounces.append(end_state[6])
-            passes.append(end_state[7])
-
             # params that depend on loss
             if final_time < (self.tmax - tolerance):
                 lost_total.append(1)
                 DA_tfinal.append(np.nan)
             else:
                 lost_total.append(0)
-                DA_tfinal.append(end_state[8])
+                DA_tfinal.append(end_state[6])
             convergence_times.append(convergence_data[0])
             convergence_petas.append(convergence_data[1])
-            convergence_bounces.append(convergence_data[2])
-            convergence_passes.append(convergence_data[3])
-            convergence_DAs.append(convergence_data[4])
+            convergence_DAs.append(convergence_data[2])
 
         self.DAs_at_loss = DAs_at_loss
         self.DA_at_tfinal = DA_tfinal
-        self.bounces = bounces
-        self.passes = passes
         self.pitch = pitch
 
         self.lost_total = lost_total
@@ -574,8 +546,6 @@ class MapEquilibrium:
         self.s0 = s0
         self.mu0 = mu0
 
-        self.convergence_bounces = convergence_bounces
-        self.convergence_passes = convergence_passes
         self.convergence_times = convergence_times
         self.convergence_petas = convergence_petas
         self.convergence_DAs = convergence_DAs
@@ -876,7 +846,7 @@ class MapPhaseSpace:
     This class traces particles in a ShearAlfvenHarmonic or
     ShearAlfvenWavesSuperposition field and computes per-particle diagnostics
     including the Weighted Birkhoff Average (WBA) digit accuracy, wall-loss
-    status, bounce and transit counts, and the perturbed energy invariant
+    status, and the perturbed energy invariant
     E' = n' * E - omega * p_eta.
 
     Initial conditions are generated either on a structured grid in
@@ -1292,8 +1262,8 @@ class MapPhaseSpace:
 
         For each particle, integrates the guiding-center equations in the
         ShearAlfvenWave field, computes the canonical momentum p_eta, the total
-        energy E, the shifted energy Eprime, bounce and transit counts, and the
-        WBA digit accuracy. Results are collected across MPI ranks, saved to
+        energy E, the shifted energy Eprime, and the WBA digit accuracy. 
+        Results are collected across MPI ranks, saved to
         disk if self.savedata is True, and passed to build_lists.
         """
         import pickle
@@ -1392,13 +1362,9 @@ class MapPhaseSpace:
             else:
                 final_DA = np.nan
 
-            bounce_indices, passing_indicies = return_bounces_and_passes(
-                vpar_path, zeta_path
-            )
-
             # start state vector:  [s, theta, zeta, vpar, peta, E, mu, Eprime]
             # end state vector:
-            # [t, s, theta, zeta, vpar, peta, E, mu, Eprime, bounces, passes, DA]
+            # [t, s, theta, zeta, vpar, peta, E, mu, Eprime, DA]
             # mean state vector:  [s_mean, peta_mean, E_mean, Eprime_mean]
             start_state = [
                 points_trajectory[0, 0],
@@ -1421,8 +1387,6 @@ class MapPhaseSpace:
                 E[-1],
                 weighted_mu,
                 Eprime[-1],
-                len(bounce_indices),
-                len(passing_indicies),
                 final_DA,
             ]
 
@@ -1436,8 +1400,6 @@ class MapPhaseSpace:
             convergence_times = []
             convergence_petas = []
             convergence_energies = []
-            convergence_bounces = []
-            convergence_passes = []
             convergence_DAs = []
 
             for _conv_index, timing_index in enumerate(self.WBA_transit_indicies):
@@ -1446,12 +1408,6 @@ class MapPhaseSpace:
                 convergence_times.append(time_momentum[timing_index])
                 convergence_petas.append(Peta_values[timing_index])
                 convergence_energies.append(E[timing_index])
-                bounce_enum = np.searchsorted(bounce_indices, timing_index, side="left")
-
-                pass_enum = np.searchsorted(passing_indicies, timing_index, side="left")
-
-                convergence_bounces.append(bounce_enum)
-                convergence_passes.append(pass_enum)
 
                 stack_data = np.column_stack(
                     (time_momentum[:timing_index], Peta_values[:timing_index])
@@ -1462,8 +1418,6 @@ class MapPhaseSpace:
             convergence_data = [
                 convergence_times,
                 convergence_petas,
-                convergence_bounces,
-                convergence_passes,
                 convergence_DAs,
                 convergence_energies,
             ]
@@ -1488,8 +1442,8 @@ class MapPhaseSpace:
         lists stored as instance attributes.
 
         Populates self.DAs_at_loss, self.DA_at_tfinal, self.lost_total,
-        self.final_times, self.bounces, self.passes, self.pitch,
-        self.Plot_Radial, self.Peta_init/mean/final, self.E_init/mean/final,
+        self.final_times, self.pitch, self.Plot_Radial, 
+        self.Peta_init/mean/final, self.E_init/mean/final,
         and the convergence_* arrays.
 
         Args:
@@ -1502,8 +1456,6 @@ class MapPhaseSpace:
 
         lost_total = []
         final_times = []
-        bounces = []
-        passes = []
         pitch = []
 
         Plot_Radial = []
@@ -1521,8 +1473,6 @@ class MapPhaseSpace:
         vpar0 = []
         mus0 = []
 
-        convergence_bounces = []
-        convergence_passes = []
         convergence_times = []
         convergence_petas = []
         convergence_energies = []
@@ -1534,11 +1484,11 @@ class MapPhaseSpace:
             # start state vector:
             #   [s, theta, zeta, vpar, peta, E, mu, Eprime]
             # end state vector:
-            #   [t, s, theta, zeta, vpar, peta(5), E, mu, Eprime, bounces, passes, DA]
+            #   [t, s, theta, zeta, vpar, peta, E, mu, Eprime, DA]
             # mean state vector:
             #   [s_mean, peta_mean, E_mean, Eprime_mean]
             # convergence state vector:
-            #   [times, petas, bounces, passes, DAs, energies]
+            #   [times, petas, DAs, energies]
 
             start_state = elem[0]
             end_state = elem[1]
@@ -1569,15 +1519,12 @@ class MapPhaseSpace:
                 DA_tfinal.append(np.nan)
             else:
                 lost_total.append(0)
-                DA_tfinal.append(end_state[11])
+                DA_tfinal.append(end_state[9])
 
             if final_time < self.min_DA_time:
                 DAs_at_loss.append(np.nan)
             else:
-                DAs_at_loss.append(end_state[11])
-
-            bounces.append(end_state[9])
-            passes.append(end_state[10])
+                DAs_at_loss.append(end_state[9])
 
             s0.append(start_state[0])
             theta0.append(start_state[1])
@@ -1585,20 +1532,16 @@ class MapPhaseSpace:
             vpar0.append(start_state[3])
             mus0.append(start_state[6])
 
-            convergence_bounces.append(convergence[2])
-            convergence_passes.append(convergence[3])
             convergence_times.append(convergence[0])
             convergence_petas.append(convergence[1])
-            convergence_energies.append(convergence[5])
-            convergence_DAs.append(convergence[4])
+            convergence_energies.append(convergence[3])
+            convergence_DAs.append(convergence[2])
 
         self.DAs_at_loss = DAs_at_loss
         self.DA_at_tfinal = DA_tfinal
         self.lost_total = lost_total
         self.final_times = final_times
 
-        self.bounces = bounces
-        self.passes = passes
         self.pitch = pitch
         self.Plot_Radial = Plot_Radial
 
@@ -1609,8 +1552,6 @@ class MapPhaseSpace:
         self.E_final = E_final
         self.E_init = E_init
 
-        self.convergence_bounces = convergence_bounces
-        self.convergence_passes = convergence_passes
         self.convergence_times = convergence_times
         self.convergence_petas = convergence_petas
         self.convergence_DAs = convergence_DAs
@@ -1960,5 +1901,4 @@ class MapPhaseSpace:
         fig.colorbar(im2, ax=ax, label=colorlabel)
         plt.savefig(savepath, dpi=400)
         return ax
-
 
