@@ -13,7 +13,7 @@ from ..field.tracing import (
     trace_particles_boozer_perturbed,
 )
 
-from ._utils import compute_peta, return_bounces_and_passes, return_DA
+from ._utils import compute_peta, return_DA
 
 
 class WBAPerturbedParticles:
@@ -104,13 +104,14 @@ class WBAPerturbedParticles:
                 "If providing points to trace, need v_pars and mu_per_mass."
             )
 
-        if points.shape[1] not in [3, 4]:
-            raise ValueError(
-                "Points must have shape (npoints, 4) for (s, theta, zeta, t) or "
-                "(npoints, 3) for (s, theta, zeta)"
-            )
-        if points.shape[1] == 4:
-            points = points[:, :3]
+        if points is not None:
+            if points.shape[1] not in [3, 4]:
+                raise ValueError(
+                    "Points must have shape (npoints, 4) for (s, theta, zeta, t) or "
+                    "(npoints, 3) for (s, theta, zeta)"
+                )
+            if points.shape[1] == 4:
+                points = points[:, :3]
 
         if not isinstance(saw, ShearAlfvenHarmonic) and not isinstance(
             saw, ShearAlfvenWavesSuperposition
@@ -241,7 +242,14 @@ class WBAPerturbedParticles:
         Trace perturbed particle trajectories and compute DA outputs.
 
         Returns:
-            res_tys : Per-particle trajectory summaries.
+            res_tys : List of raw trajectory arrays (only populated when
+                self.save_gc_trajectories is True; otherwise an empty list, or
+                self.gc_tys when self.trace is False).
+            DA_data : List of final digit-accuracy values, one per particle.
+            wall_lost : List of final integration times per particle (used to
+                flag wall-loss events).
+            dense_output : List of per-particle summaries of the form
+                [start_state, end_state, mean_state, convergence_data].
         """
         first, last = parallel_loop_bounds(self.comm, self.points0.shape[0])
 
@@ -293,10 +301,6 @@ class WBAPerturbedParticles:
                 points_trajectory = points_trajectory[:idx_wall, :]
                 vpar_path = vpar_path[:idx_wall]
 
-            bounce_indices, passing_indicies = return_bounces_and_passes(
-                vpar_path, zeta_path
-            )
-
             self.saw.set_points(points_trajectory)
 
             modB = self.saw.B0.modB()[:, 0]
@@ -339,12 +343,6 @@ class WBAPerturbedParticles:
                 convergence_times.append(time_momentum[timing_index])
                 convergence_petas.append(Peta_values[timing_index])
                 convergence_energies.append(E[timing_index])
-                bounce_enum = np.searchsorted(bounce_indices, timing_index, side="left")
-
-                pass_enum = np.searchsorted(passing_indicies, timing_index, side="left")
-
-                convergence_bounces.append(bounce_enum)
-                convergence_passes.append(pass_enum)
 
                 stack_data = np.column_stack(
                     (time_momentum[:timing_index], Peta_values[:timing_index])
@@ -355,15 +353,13 @@ class WBAPerturbedParticles:
             convergence_data = [
                 convergence_times,
                 convergence_petas,
-                convergence_bounces,
-                convergence_passes,
                 convergence_DAs,
                 convergence_energies,
             ]
             # start state:
-            # [s, theta, zeta, vpar, peta, E, Eprime]
+            # [s, theta, zeta, vpar, mu, peta, E, Eprime]
             # end state:
-            # [t, s, theta, zeta, vpar, peta, E, Eprime, bounces, passes, DA]
+            # [t, s, theta, zeta, vpar, peta, E, Eprime, DA]
             # mean state:
             # [s_mean, peta_mean, E_mean, Eprime_mean]
             start_state = [
@@ -386,8 +382,6 @@ class WBAPerturbedParticles:
                 Peta_values[-1],
                 E[-1],
                 Eprime[-1],
-                len(bounce_indices),
-                len(passing_indicies),
                 final_DA,
             ]
 
@@ -435,10 +429,9 @@ class WBAPerturbedParticles:
         across many particles.
 
         Populates self.DAs_at_loss, self.DA_at_tfinal, self.lost_total,
-        self.final_times, self.bounces, self.passes, self.Peta_init/mean/final,
-        self.E_init/mean/final, self.Eprime_init/mean/final, and the
-        convergence_* arrays from the list of per-particle state tuples
-        produced by trace_particles.
+        self.final_times, self.Peta_init/mean/final, self.E_init/mean/final, 
+        self.Eprime_init/mean/final, and the convergence_* arrays from the 
+        list of per-particle state tuples produced by trace_particles.
 
         Args:
             dense_output : List of per-particle trajectory summaries, each a
@@ -451,8 +444,6 @@ class WBAPerturbedParticles:
 
         lost_total = []
         final_times = []
-        bounces = []
-        passes = []
 
         mus = []
         Peta_init = []
@@ -470,8 +461,6 @@ class WBAPerturbedParticles:
         zeta0 = []
         vpar0 = []
 
-        convergence_bounces = []
-        convergence_passes = []
         convergence_times = []
         convergence_petas = []
         convergence_energies = []
@@ -481,11 +470,11 @@ class WBAPerturbedParticles:
             # start state vector:
             #   [s, theta, zeta, vpar, mu, peta, E, Eprime]
             # end state vector:
-            #   [t, s, theta, zeta, vpar, peta, E, Eprime, bounces, passes, DA]
+            #   [t, s, theta, zeta, vpar, peta, E, Eprime, DA]
             # mean state vector:
             #   [s_mean, peta_mean, E_mean, Eprime_mean]
             # convergence state vector:
-            #   [times, petas, bounces, passes, DAs, energies]
+            #   [times, petas, DAs, energies]
 
             start_state = elem[0]
             end_state = elem[1]
@@ -501,11 +490,9 @@ class WBAPerturbedParticles:
                 DA_tfinal.append(np.nan)
             else:
                 lost_total.append(0)
-                DA_tfinal.append(end_state[10])
+                DA_tfinal.append(end_state[8])
 
-            DAs_at_loss.append(end_state[10])
-            bounces.append(end_state[8])
-            passes.append(end_state[9])
+            DAs_at_loss.append(end_state[8])
 
             s0.append(start_state[0])
             theta0.append(start_state[1])
@@ -528,19 +515,14 @@ class WBAPerturbedParticles:
 
             convergence_times.append(convergence[0])
             convergence_petas.append(convergence[1])
-            convergence_bounces.append(convergence[2])
-            convergence_passes.append(convergence[3])
-            convergence_DAs.append(convergence[4])
-            convergence_energies.append(convergence[5])
+            convergence_DAs.append(convergence[2])
+            convergence_energies.append(convergence[3])
 
         self.mus = mus
         self.DAs_at_loss = DAs_at_loss
         self.DA_at_tfinal = DA_tfinal
         self.lost_total = lost_total
         self.final_times = final_times
-
-        self.bounces = bounces
-        self.passes = passes
 
         self.Peta_init = Peta_init
         self.Peta_mean = Peta_mean
@@ -557,8 +539,6 @@ class WBAPerturbedParticles:
         self.zeta0 = zeta0
         self.vpar0 = vpar0
 
-        self.convergence_bounces = convergence_bounces
-        self.convergence_passes = convergence_passes
         self.convergence_times = convergence_times
         self.convergence_petas = convergence_petas
         self.convergence_DAs = convergence_DAs
@@ -714,17 +694,11 @@ class WBAParticles:
         digit-accuracy diagnostics.
 
         If self.trace is True, particles are integrated with
-        trace_particles_boozer from the initial conditions (points_phase, vpars).
-        Otherwise, pre-traced trajectories in self.gc_tys are reused. For each
-        trajectory, the canonical momentum p_eta is evaluated, bounces and
-        toroidal transits are counted, and the WBA digit accuracy is computed at
-        every index in self.WBA_transit_indicies as well as at the final time.
-
-        Args:
-            points_phase : Array of shape (N, 3) of initial (s, theta, zeta)
-                coordinates. Ignored when self.trace is False.
-            vpars : Array of initial parallel velocities. Ignored when self.trace
-                is False.
+        trace_particles_boozer from the initial conditions (self.points0,
+        self.v_pars0). Otherwise, pre-traced trajectories in self.gc_tys are
+        reused. For each trajectory, the canonical momentum p_eta is evaluated,
+        and the WBA digit accuracy is computed at every index in
+        self.WBA_transit_indicies as well as at the final time.
 
         Returns:
             res_tys : List of raw trajectory arrays (only populated when
@@ -804,14 +778,8 @@ class WBAParticles:
             else:
                 final_DA = np.nan
 
-            bounce_indices, passing_indicies = return_bounces_and_passes(
-                vpar_path, points_trajectory[:, 2]
-            )
-
             convergence_times = []
             convergence_petas = []
-            convergence_bounces = []
-            convergence_passes = []
             convergence_DAs = []
 
             for _conv_index, timing_index in enumerate(self.WBA_transit_indicies):
@@ -819,13 +787,6 @@ class WBAParticles:
                     break
                 convergence_times.append(time_momentum[timing_index])
                 convergence_petas.append(Peta_values[timing_index])
-
-                bounce_enum = np.searchsorted(bounce_indices, timing_index, side="left")
-
-                pass_enum = np.searchsorted(passing_indicies, timing_index, side="left")
-
-                convergence_bounces.append(bounce_enum)
-                convergence_passes.append(pass_enum)
 
                 stack_data = np.column_stack(
                     (time_momentum[:timing_index], Peta_values[:timing_index])
@@ -836,8 +797,6 @@ class WBAParticles:
             convergence_data = [
                 convergence_times,
                 convergence_petas,
-                convergence_bounces,
-                convergence_passes,
                 convergence_DAs,
             ]
             points = np.zeros((1, 3))
@@ -848,7 +807,7 @@ class WBAParticles:
             B = self.B0.modB()[0, 0]
             mu = (1 / 2) * self.mass * (self.vtotal**2 - vpar_path[0] ** 2) / B
             # start state vector:  [s, theta, zeta, vpar, mu]
-            # end state vector:   [t, s, theta, zeta, vpar,  bounces, passes, DA]
+            # end state vector:   [t, s, theta, zeta, vpar,  DA]
             start_state = [
                 points_trajectory[0, 0],
                 points_trajectory[0, 1],
@@ -863,8 +822,6 @@ class WBAParticles:
                 points_trajectory[-1, 1],
                 points_trajectory[-1, 2],
                 vpar_path[-1],
-                len(bounce_indices),
-                len(passing_indicies),
                 final_DA,
             ]
 
@@ -901,9 +858,9 @@ class WBAParticles:
         across many particles.
 
         Populates self.DAs_at_loss, self.DA_at_tfinal, self.lost_total,
-        self.final_times, self.bounces, self.passes, self.s0, self.theta0,
-        self.zeta0, self.vpar0, self.mus, and the convergence_* arrays from
-        the list of per-particle state tuples produced by trace_particles.
+        self.final_times, self.s0, self.theta0, self.zeta0, self.vpar0, 
+        self.mus, and the convergence_* arrays from the list of per-particle 
+        state tuples produced by trace_particles.
 
         Args:
             dense_output : List of per-particle trajectory summaries, each a
@@ -915,17 +872,13 @@ class WBAParticles:
 
         lost_total = []
         final_times = []
-        bounces = []
-        passes = []
-
+        
         s0 = []
         theta0 = []
         zeta0 = []
         vpar0 = []
         mu0 = []
 
-        convergence_bounces = []
-        convergence_passes = []
         convergence_times = []
         convergence_petas = []
         convergence_DAs = []
@@ -934,9 +887,9 @@ class WBAParticles:
             # start state vector:
             #   [s, theta, zeta, vpar, mu]
             # end state vector:
-            #   [t, s, theta, zeta, vpar,  bounces, passes, DA]
+            #   [t, s, theta, zeta, vpar, DA]
             # convergence state vector:
-            #   [times, petas, bounces, passes, DAs]
+            #   [times, petas, DAs]
 
             start_state = elem[0]
             end_state = elem[1]
@@ -951,40 +904,30 @@ class WBAParticles:
                 DA_tfinal.append(np.nan)
             else:
                 lost_total.append(0)
-                DA_tfinal.append(end_state[7])
+                DA_tfinal.append(end_state[5])
 
-            DAs_at_loss.append(end_state[7])
-            bounces.append(end_state[5])
-            passes.append(end_state[6])
-
+            DAs_at_loss.append(end_state[5])
+            
             s0.append(start_state[0])
             theta0.append(start_state[1])
             zeta0.append(start_state[2])
             vpar0.append(start_state[3])
             mu0.append(start_state[4])
 
-            convergence_bounces.append(convergence[2])
-            convergence_passes.append(convergence[3])
             convergence_times.append(convergence[0])
             convergence_petas.append(convergence[1])
-            convergence_DAs.append(convergence[4])
+            convergence_DAs.append(convergence[2])
 
         self.DAs_at_loss = DAs_at_loss
         self.DA_at_tfinal = DA_tfinal
         self.lost_total = lost_total
         self.final_times = final_times
 
-        self.bounces = bounces
-        self.passes = passes
-
         self.s0 = s0
         self.theta0 = theta0
         self.zeta0 = zeta0
         self.vpar0 = vpar0
         self.mus = mu0
-
-        self.convergence_bounces = convergence_bounces
-        self.convergence_passes = convergence_passes
         self.convergence_times = convergence_times
         self.convergence_petas = convergence_petas
         self.convergence_DAs = convergence_DAs

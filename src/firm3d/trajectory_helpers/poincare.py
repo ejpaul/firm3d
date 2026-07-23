@@ -246,6 +246,9 @@ class PassingPoincare:
             point : A numpy array of shape (3,) containing the coordinates
                 (s,theta,vpar) when the trajectory returns to the zeta = 0 plane.
             time : The time taken to return to the zeta = 0 plane.
+            peta : A numpy array of shape (N, 2) containing trajectory time and
+                the canonical momentum p_eta if the map was initialized with
+                helicity_M and helicity_N; otherwise an empty list.
         """
 
         points = np.zeros((1, 3))
@@ -1457,6 +1460,8 @@ class PassingPerturbedPoincare:
             comm : MPI communicator for parallel execution (default: None).
             tmax : Maximum integration time for each segment of the Poincare
                 map (default: 1e-2 s).
+            dt_save : Save interval for the ODE solver along each trajectory
+                (default: 1e-6 s).
             solver_options : Dictionary of options to pass to the ODE solver
                 (default: {}).
         """
@@ -1692,7 +1697,7 @@ class PassingPerturbedPoincare:
 
         return s_init, chis_init, vpars_init
 
-    def passing_map(self, point, t, eta):
+    def passing_map(self, point, t, eta0):
         r"""
         Integrates the GC equations from the provided point on the eta -
         omega/n' * t plane to the next intersection with this plane. An
@@ -1704,20 +1709,24 @@ class PassingPerturbedPoincare:
 
         Args:
             point : A numpy array of shape (3,) containing the initial
-                coordinates (s,chi,eta).
+                coordinates (s,chi,vpar).
             t : Initial time at which the map is evaluated
+            eta0 : Initial eta coordinate at which the map is evaluated
         Returns:
             point : A numpy array of shape (3,) containing the coordinates
-                (s,chi,eta).
+                (s,chi,vpar).
             time : The time at which the trajectory returns to the eta -
                 omega/n' * t plane.
-            peta : Timeseries of the canonical momentum p_eta along the trajectory.
+            eta : The eta coordinate when the trajectory returns to the plane.
+            Peta : Only returned when self.chaos_detection is True. A numpy array
+                of shape (N, 2) containing trajectory time and the canonical
+                momentum p_eta along the trajectory.
         """
         phase = self.omega * t
         self.saw.phase = phase
         theta, zeta = chi_eta_to_theta_zeta(
             point[1],
-            eta,
+            eta0,
             self.helicity_M,
             self.helicity_N,
             self.helicity_Mp,

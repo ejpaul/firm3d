@@ -576,8 +576,8 @@ class MapEquilibrium:
         boundary overlaid as a fitted curve.
 
         Args:
-            nx          : Number of bins along the pitch-angle axis (default: 30).
-            ny          : Number of bins along the radial axis (default: 30).
+            nx          : Number of bins along the pitch-angle axis (default: 25).
+            ny          : Number of bins along the radial axis (default: 25).
             savepath    : File path for the output heatmap image
                         (default: 'heatmap_digit_accuracy.pdf').
             DA_at_loss : If True, use the digit accuracy value at the time of
@@ -585,11 +585,12 @@ class MapEquilibrium:
                         integration (default: True).
             ax          : Matplotlib axis to plot on. If None, a new figure and
                         axis are created.
-            DA_max      : Maximum digit accuracy value shown on the colorbar
-                        (default: 7).
-            minimum_DA  : If True, show the minimum DA within each bin instead of
-                        the mean (default: False).
-            plot_losses : Currently unused (default: False).
+            DA_max      : Maximum digit accuracy value shown on the colorbar. If
+                        None, defaults to the maximum DA in the data.
+            statistic   : Aggregation statistic passed to binned_statistic_2d
+                        (default: 'mean').
+            plot_losses : If True, overlay loss-fraction markers per bin
+                        (default: False).
             peta_exp : Exponent to apply to the p_eta values axis for plotting.
                 Should be the integer of magnitude (eg. -19)
 
@@ -923,11 +924,11 @@ class MapPhaseSpace:
                                 for computing the expected trajectory length
                                 (default: 1e-6 s).
             ns_points            : Number of flux surfaces in the structured grid
-                                (default: 25).
+                                (default: 35).
             particles_per_surface : Number of particles sampled on each flux surface
-                                (default: 15).
+                                (default: 20).
             nlambda_points       : Number of magnetic-moment values in the structured
-                                grid (default: 25).
+                                grid (default: 35).
             randomize_particles  : If True, sample initial conditions uniformly at
                                 random rather than on a structured grid
                                 (default: False).
