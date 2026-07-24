@@ -401,6 +401,33 @@ class BoozerMagneticField(sopp.BoozerMagneticField):
         self.field_type = field_type
         sopp.BoozerMagneticField.__init__(self, psi0, field_type)
 
+    def set_points(self, points):
+        """
+        Set the points where the field should be evaluated in Boozer
+        coordinates `(s,theta,zeta)`.
+
+        Args:
+            points: A (n, 3) array-like of `(s,theta,zeta)` points. The
+                underlying C++ binding requires a C-contiguous
+                row-major array, so arrays that are views with a
+                different memory layout (e.g. the result of
+                ``np.vstack(...).T``) are copied into a contiguous
+                array here; this avoids a confusing pybind11
+                "incompatible function arguments" error for otherwise
+                valid input. The binding also does not itself validate
+                the number of columns, so a wrong shape like (3, n) is
+                checked explicitly here rather than being silently
+                misread as n points.
+        """
+        points = np.ascontiguousarray(points, dtype=np.float64)
+        if points.ndim != 2 or points.shape[1] != 3:
+            raise ValueError(
+                "points must have shape (n, 3), corresponding to "
+                f"(s, theta, zeta) for each of n points; got shape "
+                f"{points.shape}."
+            )
+        return sopp.BoozerMagneticField.set_points(self, points)
+
     def _modB_derivs_impl(self, modB_derivs):
         self._dmodBds_impl(modB_derivs[:, 0:1])
         self._dmodBdtheta_impl(modB_derivs[:, 1:2])
