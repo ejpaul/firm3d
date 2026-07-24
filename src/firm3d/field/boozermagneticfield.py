@@ -407,17 +407,7 @@ class BoozerMagneticField(sopp.BoozerMagneticField):
         coordinates `(s,theta,zeta)`.
 
         Args:
-            points: A (n, 3) array-like of `(s,theta,zeta)` points. The
-                underlying C++ binding requires a C-contiguous
-                row-major array, so arrays that are views with a
-                different memory layout (e.g. the result of
-                ``np.vstack(...).T``) are copied into a contiguous
-                array here; this avoids a confusing pybind11
-                "incompatible function arguments" error for otherwise
-                valid input. The binding also does not itself validate
-                the number of columns, so a wrong shape like (3, n) is
-                checked explicitly here rather than being silently
-                misread as n points.
+            points: A (n, 3) array-like of `(s,theta,zeta)` points.
         """
         points = np.ascontiguousarray(points, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] != 3:
