@@ -1,5 +1,7 @@
 import numpy as np
 
+from ..trajectory_helpers import chi_eta_to_theta_zeta
+
 __all__ = ["OrbitClassification"]
 
 
@@ -88,36 +90,6 @@ class OrbitClassification:
         else:
             self.helicity_Mp = 0
             self.helicity_Np = -1
-
-    def chi_eta_to_theta_zeta(self, chi, eta):
-        r"""
-        Convert helical angles (chi, eta) to Boozer angles (theta, zeta).
-
-        The helical coordinate system is defined by:
-        - chi = M*theta - N*zeta (helical angle along which modB varies)
-        - eta = Mp*theta - Np*zeta (mapping angle perpendicular to chi)
-
-        This method inverts the transformation to obtain (theta, zeta) from (chi, eta).
-
-        Args:
-            chi (float or array): Helical angle chi [radians].
-            eta (float or array): Mapping angle eta [radians].
-
-        Returns:
-            tuple: (theta, zeta) where
-                - theta (float or array): Poloidal Boozer angle [radians].
-                - zeta (float or array): Toroidal Boozer angle [radians].
-
-        Notes:
-            The transformation is:
-            theta = (Np*chi - N*eta) / (Np*M - N*Mp)
-            zeta = (Mp*chi - M*eta) / (Np*M - N*Mp)
-        """
-        denom = self.helicity_Np * self.helicity_M - self.helicity_N * self.helicity_Mp
-        theta = (self.helicity_Np * chi - self.helicity_N * eta) / denom
-        zeta = (self.helicity_Mp * chi - self.helicity_M * eta) / denom
-
-        return theta, zeta
 
     def classify_orbit(self, res_ty, res_hit):
         r"""
@@ -276,7 +248,14 @@ class OrbitClassification:
             # Predict dchi based on mirror point locations on constant-s
             # Sample modB on a chi grid at fixed s and eta=0
             chi_grid = np.linspace(0, 2 * np.pi, 100)
-            theta, zeta = self.chi_eta_to_theta_zeta(chi_grid, np.zeros_like(chi_grid))
+            theta, zeta = chi_eta_to_theta_zeta(
+                chi_grid,
+                np.zeros_like(chi_grid),
+                self.helicity_M,
+                self.helicity_N,
+                self.helicity_Mp,
+                self.helicity_Np,
+            )
             points = np.zeros((len(chi_grid.flatten()), 3))
             points[:, 0] = mean_s
             points[:, 1] = theta
