@@ -401,6 +401,23 @@ class BoozerMagneticField(sopp.BoozerMagneticField):
         self.field_type = field_type
         sopp.BoozerMagneticField.__init__(self, psi0, field_type)
 
+    def set_points(self, points):
+        """
+        Set the points where the field should be evaluated in Boozer
+        coordinates `(s,theta,zeta)`.
+
+        Args:
+            points: A (n, 3) array-like of `(s,theta,zeta)` points.
+        """
+        points = np.ascontiguousarray(points, dtype=np.float64)
+        if points.ndim != 2 or points.shape[1] != 3:
+            raise ValueError(
+                "points must have shape (n, 3), corresponding to "
+                f"(s, theta, zeta) for each of n points; got shape "
+                f"{points.shape}."
+            )
+        return sopp.BoozerMagneticField.set_points(self, points)
+
     def _modB_derivs_impl(self, modB_derivs):
         self._dmodBds_impl(modB_derivs[:, 0:1])
         self._dmodBdtheta_impl(modB_derivs[:, 1:2])
