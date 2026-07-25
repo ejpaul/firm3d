@@ -1906,7 +1906,8 @@ class PassingPerturbedPoincare:
         Return the Poincare map data.
 
         Returns:
-            s_all, chis_all, etas_all, vpars_all, t_all : Lists of trajectory data.
+            s_all, chis_all, etas_all, vpars_all, t_all, DA_all, DA_times :
+                Lists of trajectory data.
         """
         return (
             self.s_all,

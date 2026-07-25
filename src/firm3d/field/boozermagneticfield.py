@@ -628,19 +628,19 @@ class BoozerAnalytic(BoozerMagneticField):
     the covariant components of equilibrium field are,
 
     .. math::
-        G(s) = G_0 + \sqrt{2s\psi_0/\overline{B}} G_1
+        G(s) = G_0 + s G_1
 
-        I(s) = I_0 + \sqrt{2s\psi_0/\overline{B}} I_1
+        I(s) = I_0 + s I_1
 
         K(s,\theta,\zeta) = \sqrt{2s\psi_0/\overline{B}} K_1 \sin(\theta - N \zeta),
 
     and the rotational transform is,
 
     .. math::
-        \iota(s) = \iota_0.
+        \iota(s) = \iota_0 + s \iota_1.
 
-    While formally :math:`I_0 = I_1 = G_1 = K_1 = 0`, these terms have been included
-    in order to test the guiding center equations at finite beta.
+    While formally :math:`I_0 = I_1 = G_1 = K_1 = \iota_1 = 0`, these terms have
+    been included in order to test the guiding center equations at finite beta.
 
     Args:
         etabar: magnitude of first order correction to magnetic field strength
@@ -654,6 +654,7 @@ class BoozerAnalytic(BoozerMagneticField):
         G1: first order correction to toroidal covariant component (defaults to 0)
         I1: first order correction to poloidal covariant component (defaults to 0)
         K1: first order correction to radial covariant component (defaults to 0)
+        iota1: first order correction to rotational transform (defaults to 0)
         B0z: amplitude of symmetry-breaking perturbation mode
         n: toroidal mode number for the perturbation
         m: poloidal mode bumber for the perturbation
