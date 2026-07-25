@@ -103,7 +103,8 @@ def trace_particles_boozer_perturbed(
         + |B| q v_{||} (1 + \alpha_{,\psi} I + \alpha I'(\psi))
         + (m v_{||}^2/|B|) (|B| I'(\psi) - |B|_{,\psi} I)\Big)/D
 
-        \dot v_{||} = \Big((|B|q/m) \big(-m \mu (|B|_{,\zeta}(1 + \alpha_{,\psi} I + \alpha I'(\psi))
+        \dot v_{||} = \Big((|B|q/m) \big(-m \mu
+        (|B|_{,\zeta}(1 + \alpha_{,\psi} I + \alpha I'(\psi))
         + |B|_{,\psi} (\alpha_{,\theta} G - \alpha_{,\zeta} I)
         + |B|_{,\theta} (\iota - \alpha G'(\psi) - \alpha_{,\psi} G))
         - q \big(\dot{\alpha} (G + I (\iota - \alpha G'(\psi)) + \alpha G I'(\psi))
