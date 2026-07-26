@@ -1078,16 +1078,7 @@ class MapPhaseSpace:
 
             self.particles_per_surface = particles_per_surface
 
-            s, thetas, zetas, vpar, mu_per_mass = None, None, None, None, None
-            if self.verbose:
-                s, thetas, zetas, vpar, mu_per_mass = self.initialize_particles()
-            if comm is not None:
-                s, thetas, zetas, vpar, mu_per_mass = comm.bcast(
-                    (s, thetas, zetas, vpar, mu_per_mass), root=0
-                )
-            else:
-                if s is None:
-                    s, thetas, zetas, vpar, mu_per_mass = self.initialize_particles()
+            s, thetas, zetas, vpar, mu_per_mass = self.initialize_particles()
 
             initial_points = np.zeros((len(s), 3))  # initialize with t = 0
             initial_points[:, 0] = s
@@ -1152,7 +1143,7 @@ class MapPhaseSpace:
                 self.B0,
                 self.particles_per_surface,
                 surfaces_flat[particle_index],
-                comm=None,
+                comm=self.comm,
             )
 
             self.B0.set_points(points_temp)
@@ -1314,6 +1305,9 @@ class MapPhaseSpace:
 
             points_trajectory = gc_tys[0]
 
+            if points_trajectory.ndim != 2:
+                continue
+
             time_momentum, s_path, theta_path, zeta_path, vpar_path = (
                 points_trajectory[:, 0],
                 points_trajectory[:, 1],
@@ -1383,7 +1377,7 @@ class MapPhaseSpace:
                 points_trajectory[-1, 0],
                 points_trajectory[-1, 1],
                 points_trajectory[-1, 2],
-                vpar[-1],
+                vpar_path[-1],
                 Peta_values[-1],
                 E[-1],
                 weighted_mu,
