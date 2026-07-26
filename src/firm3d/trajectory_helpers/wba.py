@@ -712,7 +712,6 @@ class WBAParticles:
         shape = self.points0.shape[0] if self.trace else len(self.gc_tys)
 
         first, last = parallel_loop_bounds(self.comm, shape)
-        res_tys = []
 
         DA_data = []
         dense_output = []

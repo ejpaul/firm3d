@@ -742,10 +742,9 @@ def compute_toroidal_transits(res_tys):
     ntransits = np.zeros((nparticles,))
     for ip in range(nparticles):
         ntraj = len(res_tys[ip][:, 0])
-        phi_init = res_tys[ip][0, 3]
-        for it in range(1, ntraj):
-            phi = res_tys[ip][it, 3]
         if ntraj > 1:
+            phi_init = res_tys[ip][0, 3]
+            phi = res_tys[ip][-1, 3]
             ntransits[ip] = np.round((phi - phi_init) / (2 * np.pi))
     return ntransits
 
@@ -782,10 +781,9 @@ def compute_poloidal_transits(res_tys, ma=None, flux=True):
     ntransits = np.zeros((nparticles,))
     for ip in range(nparticles):
         ntraj = len(res_tys[ip][:, 0])
-        theta_init = res_tys[ip][0, 2]
-        for it in range(1, ntraj):
-            theta = res_tys[ip][it, 2]
         if ntraj > 1:
+            theta_init = res_tys[ip][0, 2]
+            theta = res_tys[ip][-1, 2]
             ntransits[ip] = np.round((theta - theta_init) / (2 * np.pi))
     return ntransits
 
