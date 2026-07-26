@@ -168,7 +168,6 @@ class MapEquilibrium:
         # set timing parameters
         self.tmax = tmax
         self.min_timestep = min_timestep
-        self.vtotal = np.sqrt(2 * self.Ekin / mass)
 
         # set communicator parameters
         self.comm = comm
@@ -191,11 +190,6 @@ class MapEquilibrium:
         self.savedata = savedata
         if savepath != "":
             savepath += "_"
-        if savedata:
-            self.res_filepaths = {
-                "tys": savepath + "DA_data.txt",
-                "ICs": savepath + "initial_conditions.txt",
-            }
 
         self.savepath = savepath
         load_ics = False
@@ -215,9 +209,7 @@ class MapEquilibrium:
         if not randomize_particles:
             self.ns_points = ns_points
             self.nlambda_points = nlambda_points
-            self.nParticles = ns_points * particles_per_surface * nlambda_points
         else:
-            self.nParticles = number_of_particles
             xy_pts = int(np.sqrt(number_of_particles / particles_per_surface))
             self.ns_points = xy_pts
             self.nlambda_points = xy_pts
@@ -995,7 +987,6 @@ class MapPhaseSpace:
 
         self.Ekin = Ekin
         self.sign = sign_vpar
-        self.vtotal = np.sqrt(2 * self.Ekin / mass)
         self.mass = mass
         self.charge = charge
 
@@ -1031,7 +1022,9 @@ class MapPhaseSpace:
 
         # plotting settings
         self.savedata = savedata
-        self.savepath = file_name + "_"
+        if file_name != "":
+            file_name += "_"
+        self.savepath = file_name
         self.convergence_points = convergence_points
 
         if mu_lims is None:
@@ -1067,14 +1060,12 @@ class MapPhaseSpace:
             )
         else:
             if randomize_particles:
-                self.nParticles = number_of_particles
                 xy_pts = int(np.sqrt(number_of_particles / particles_per_surface))
                 self.ns_points = xy_pts
                 self.nlambda_points = xy_pts
             else:
                 self.ns_points = ns_points
                 self.nlambda_points = nlambda_points
-                self.nParticles = ns_points * particles_per_surface * nlambda_points
 
             self.particles_per_surface = particles_per_surface
 
