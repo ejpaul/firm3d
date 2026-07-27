@@ -16,12 +16,17 @@
 #     (TRESBillingWeights CPU=2000/min) across all users on the account;
 #     bump --ntasks up (and adjust -n in srun to match) if your account has
 #     more headroom -- 128 ranks matches the Perlmutter reference exactly.
-#   - Occasionally srun fails to reach a PMIx server on Delta and falls
-#     back to launching singleton MPI processes ("No PMIx server was
-#     reachable... N singletons will be started") -- the job will hang
-#     silently until the time limit if this happens. If the log shows that
-#     message, just resubmit (this was a transient node issue, not
-#     something fixed via an --mpi= flag).
+#   - Must load `PrgEnv-gnu cray-mpich` (matching the build) before
+#     activating the conda env. conda-forge's own openmpi package does NOT
+#     integrate with Slurm's srun launcher on Delta: srun silently falls
+#     back to N independent singleton MPI processes ("No PMIx server was
+#     reachable... N singletons will be started") instead of one N-rank
+#     job, so every rank redundantly traces the FULL particle set and the
+#     job hangs to the time limit without producing a valid result. This
+#     reproduced 5/5 times across two independent investigations (not a
+#     transient/intermittent issue as earlier believed) -- see
+#     firm3d_delta_mpi_reliability_findings.md. Building/running against
+#     cray-mpich instead fixes it deterministically.
 #SBATCH --job-name=firm3d-cpu
 #SBATCH --account=bhvw-delta-cpu
 #SBATCH --partition=cpu-interactive
@@ -37,6 +42,7 @@ export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
+module load PrgEnv-gnu cray-mpich
 module load miniforge3-python
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate firm3d

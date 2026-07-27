@@ -5,7 +5,10 @@
 #
 # Usage: cd /path/to/parent && sbatch firm3d/install/delta/run_gpu_boozer_tracing.sh
 #
-# Single process, no MPI -- matches the Perlmutter reference script.
+# Single process, no MPI -- matches the Perlmutter reference script. Still
+# loads PrgEnv-gnu cray-mpich because firm3d's compiled extension is now
+# linked against cray-mpich's libmpi (see install_firm3d_delta.sh) -- without
+# the module loaded, importing firm3d fails to find libmpi.so at runtime.
 #SBATCH --job-name=firm3d-gpu-run
 #SBATCH --account=bhvw-delta-gpu
 #SBATCH --partition=gpuA100x4-interactive
@@ -20,6 +23,7 @@
 set -x
 nvidia-smi -L
 
+module load PrgEnv-gnu cray-mpich
 module load miniforge3-python
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate firm3d
