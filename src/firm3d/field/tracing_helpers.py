@@ -63,12 +63,7 @@ def initialize_position_uniform_surf(
         )
     J_max = np.max(J_vals * sign)
 
-    # Sample on rank 0 only and broadcast the result.  Every rank seeds the
-    # global numpy RNG identically, so drawing a per-rank slice from that
-    # stream would make all ranks generate the same points.  Sampling on a
-    # single rank also keeps the returned distribution independent of the
-    # number of ranks, so a given seed reproduces the same particles whether
-    # the run is serial or parallel.
+    # Sample on rank 0 only and broadcast the result.
     root = comm.rank == 0 if comm is not None else True
 
     stz_init = None
@@ -205,12 +200,7 @@ def initialize_position_profile(
         J_vals * sign * profile_values
     )  # Normalize by the maximum value of J * profile
 
-    # Sample on rank 0 only and broadcast the result.  Every rank seeds the
-    # global numpy RNG identically, so drawing a per-rank slice from that
-    # stream would make all ranks generate the same points.  Sampling on a
-    # single rank also keeps the returned distribution independent of the
-    # number of ranks, so a given seed reproduces the same particles whether
-    # the run is serial or parallel.
+    # Sample on rank 0 only and broadcast the result.
     root = comm.rank == 0 if comm is not None else True
 
     stz_init = None
