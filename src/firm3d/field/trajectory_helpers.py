@@ -407,7 +407,9 @@ class PassingPoincare:
 
         Args:
             ax : Matplotlib axis to plot on. If None, a new figure and axis are
-                 created.
+                 created. A figure created here is closed before returning, so
+                 that repeated calls do not accumulate figures in pyplot's
+                 global registry. A figure supplied by the caller is left open.
             filename : Name of the file to save the plot
                        (default: 'passing_poincare.pdf').
         Returns:
@@ -418,8 +420,10 @@ class PassingPoincare:
         matplotlib.use("Agg")  # Don't use interactive backend
         import matplotlib.pyplot as plt
 
+        created_fig = None
         if ax is None:
-            fig, ax = plt.subplots()
+            created_fig, ax = plt.subplots()
+        fig = ax.get_figure()
 
         ax.set_xlabel(r"$\theta$")
         ax.set_ylabel(r"$s$")
@@ -433,7 +437,11 @@ class PassingPoincare:
                 s=0.5,
                 edgecolors="none",
             )
-            plt.savefig(filename)
+        fig.savefig(filename)
+
+        # Only close what we created; a caller-supplied ax stays composable.
+        if created_fig is not None:
+            plt.close(created_fig)
 
         return ax
 
@@ -839,7 +847,9 @@ class TrappedPoincare:
 
         Args:
             ax : Matplotlib axis to plot on. If None, a new figure and axis are
-                 created.
+                 created. A figure created here is closed before returning, so
+                 that repeated calls do not accumulate figures in pyplot's
+                 global registry. A figure supplied by the caller is left open.
             filename : Name of the file to save the plot
                        (default: 'trapped_poincare.pdf').
         Returns:
@@ -850,8 +860,10 @@ class TrappedPoincare:
         matplotlib.use("Agg")  # Don't use interactive backend
         import matplotlib.pyplot as plt
 
+        created_fig = None
         if ax is None:
-            fig, ax = plt.subplots()
+            created_fig, ax = plt.subplots()
+        fig = ax.get_figure()
 
         ax.set_xlabel(r"$\eta$")
         ax.set_ylabel(r"$s$")
@@ -865,7 +877,11 @@ class TrappedPoincare:
                 s=0.5,
                 edgecolors="none",
             )
-        plt.savefig(filename)
+        fig.savefig(filename)
+
+        # Only close what we created; a caller-supplied ax stays composable.
+        if created_fig is not None:
+            plt.close(created_fig)
 
         return ax
 
@@ -1754,7 +1770,9 @@ class PassingPerturbedPoincare:
         call this function on MPI rank 0.
         Args:
             ax : Matplotlib axis to plot on. If None, a new figure and axis are
-                 created.
+                 created. A figure created here is closed before returning, so
+                 that repeated calls do not accumulate figures in pyplot's
+                 global registry. A figure supplied by the caller is left open.
             filename : Name of the file to save the plot
                        (default: 'passing_poincare.pdf').
             convergence_test_indicies : Indices of initial conditions to show
@@ -1795,8 +1813,11 @@ class PassingPerturbedPoincare:
             s_lst_true = list(s_itrj_map.values())
             cmap_s = mpl.colormaps["copper"].resampled(len(s_lst_true) ** 2)
 
+        created_fig = None
         if ax is None:
-            fig, ax = plt.subplots()
+            created_fig, ax = plt.subplots()
+        # Resolve from ax so the colorbar below also works on a caller-supplied ax.
+        fig = ax.get_figure()
 
         def normalize(numbers):
             if not numbers:
@@ -1865,12 +1886,14 @@ class PassingPerturbedPoincare:
                 orientation="vertical",
                 label="Digit Accuracy",
             )
-        plt.savefig(filename)
+        fig.savefig(filename)
 
         # convergence plot - change in DA with number of transit evaluations
         # histogram of final DA values
         if self.DA_poinc and self.nconvergence_points > 1:
-            fig, ax2 = plt.subplots(1, 1)
+            # Bound to its own name so the Poincare figure stays reachable
+            # (and closeable) below.
+            fig_conv, ax2 = plt.subplots(1, 1)
             ax2.set_ylabel(r"Digit Accuracy")
             ax2.set_xlabel(r"Toroidal Periods")
 
@@ -1883,22 +1906,30 @@ class PassingPerturbedPoincare:
                     label=f"{s_itrj_map[itrj]}",
                 )
             norm = plt.Normalize(min(s_lst_true), max(s_lst_true))
-            fig.colorbar(
+            fig_conv.colorbar(
                 ScalarMappable(norm=norm, cmap=cmap_s),
                 ax=ax,
                 orientation="vertical",
                 label="$s$",
             )
 
-            fig.tight_layout()
-            plt.savefig("convergence_" + filename)
+            fig_conv.tight_layout()
+            fig_conv.savefig("convergence_" + filename)
 
+            # The pyplot calls below act on fig_conv, which plt.subplots left
+            # as the current figure; it is reused as the histogram canvas.
             plt.clf()
             plt.hist(final_DAs)
             plt.tight_layout()
             plt.xlabel("Digit Accuracy")
             plt.title("Distribution of Digit Accuracy")
             plt.savefig("DA_histogram_" + filename)
+            plt.close(fig_conv)
+
+        # Only close what we created; a caller-supplied ax stays composable.
+        if created_fig is not None:
+            plt.close(created_fig)
+
         return ax
 
     def get_poincare_data(self):
