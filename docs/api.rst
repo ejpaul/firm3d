@@ -136,8 +136,6 @@ Class Hierarchy
 #    # firm3d.field.stopping_criteria.StoppingCriterion
 #    # firm3d.field.stopping_criteria.MaxToroidalFluxStoppingCriterion
 #    # firm3d.field.stopping_criteria.MinToroidalFluxStoppingCriterion
-#    # firm3d.field.stopping_criteria.ZetaStoppingCriterion
-#    # firm3d.field.stopping_criteria.VparStoppingCriterion
 #    # firm3d.field.stopping_criteria.ToroidalTransitStoppingCriterion
 #    # firm3d.field.stopping_criteria.IterationStoppingCriterion
 #    # firm3d.field.stopping_criteria.StepSizeStoppingCriterion

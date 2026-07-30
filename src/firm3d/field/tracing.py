@@ -740,11 +740,9 @@ class ToroidalTransitStoppingCriterion(sopp.ToroidalTransitStoppingCriterion):
 
     .. code-block::
 
-        stopping_criteria=[ToroidalTransitStoppingCriterion(ntransits,flux)]
+        stopping_criteria=[ToroidalTransitStoppingCriterion(ntransits)]
 
-    where ``ntransits`` is the maximum number of toroidal transits and ``flux``
-    is a boolean indicating whether tracing is being performed in a flux
-    coordinate system.
+    where ``ntransits`` is the maximum number of toroidal transits.
     """
 
     pass
