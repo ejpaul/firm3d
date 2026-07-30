@@ -439,7 +439,6 @@ class PassingPoincare:
             )
         fig.savefig(filename)
 
-        # Only close what we created; a caller-supplied ax stays composable.
         if created_fig is not None:
             plt.close(created_fig)
 
@@ -879,7 +878,6 @@ class TrappedPoincare:
             )
         fig.savefig(filename)
 
-        # Only close what we created; a caller-supplied ax stays composable.
         if created_fig is not None:
             plt.close(created_fig)
 
@@ -1816,7 +1814,6 @@ class PassingPerturbedPoincare:
         created_fig = None
         if ax is None:
             created_fig, ax = plt.subplots()
-        # Resolve from ax so the colorbar below also works on a caller-supplied ax.
         fig = ax.get_figure()
 
         def normalize(numbers):
@@ -1891,8 +1888,6 @@ class PassingPerturbedPoincare:
         # convergence plot - change in DA with number of transit evaluations
         # histogram of final DA values
         if self.DA_poinc and self.nconvergence_points > 1:
-            # Bound to its own name so the Poincare figure stays reachable
-            # (and closeable) below.
             fig_conv, ax2 = plt.subplots(1, 1)
             ax2.set_ylabel(r"Digit Accuracy")
             ax2.set_xlabel(r"Toroidal Periods")
@@ -1906,10 +1901,7 @@ class PassingPerturbedPoincare:
                     label=f"{s_itrj_map[itrj]}",
                 )
             norm = plt.Normalize(min(s_lst_true), max(s_lst_true))
-            # This colorbar labels the convergence curves, so it belongs on the
-            # convergence axes. It previously passed ax=ax, which put it on the
-            # Poincare figure -- after that figure had already been saved, so it
-            # appeared in neither output file.
+
             fig_conv.colorbar(
                 ScalarMappable(norm=norm, cmap=cmap_s),
                 ax=ax2,
@@ -1920,8 +1912,6 @@ class PassingPerturbedPoincare:
             fig_conv.tight_layout()
             fig_conv.savefig("convergence_" + filename)
 
-            # The pyplot calls below act on fig_conv, which plt.subplots left
-            # as the current figure; it is reused as the histogram canvas.
             plt.clf()
             plt.hist(final_DAs)
             plt.tight_layout()
@@ -1930,7 +1920,6 @@ class PassingPerturbedPoincare:
             plt.savefig("DA_histogram_" + filename)
             plt.close(fig_conv)
 
-        # Only close what we created; a caller-supplied ax stays composable.
         if created_fig is not None:
             plt.close(created_fig)
 
