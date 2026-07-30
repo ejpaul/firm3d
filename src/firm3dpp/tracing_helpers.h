@@ -21,17 +21,6 @@ class StoppingCriterion {
         virtual ~StoppingCriterion() {}
 };
 
-class ZetaStoppingCriterion : public StoppingCriterion {
-    private:
-        int nfp;
-    public:
-        ZetaStoppingCriterion(int nfp) : nfp(nfp) {
-        };
-        bool operator()(int iter, double dt, double t, double s, double theta, double zeta, double vpar=0) override {
-            return std::abs(zeta)>=2*M_PI/nfp;
-        };
-};
-
 class ToroidalTransitStoppingCriterion : public StoppingCriterion {
     private:
         int max_transits;
