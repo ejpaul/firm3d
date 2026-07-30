@@ -25,17 +25,20 @@ void interpolate_batch_mpi(RegularGridInterpolant3D<Array2>& self,
 
 void init_interpolant(py::module_ &m){
 
-    py::class_<InterpolationRule, shared_ptr<InterpolationRule>>(m, "InterpolationRule", "Abstract class for interpolation rules on an interval.")
-        .def_readonly("degree", &InterpolationRule::degree, "The degree of the polynomial. The number of interpolation points in `degree+1`.");
+    py::class_<InterpolationRule, shared_ptr<InterpolationRule>>(m, "InterpolationRule", py::module_local(), "Abstract class for interpolation rules on an interval.")
+        .def_readonly("degree", &InterpolationRule::degree, "The degree of the polynomial. The number of interpolation points is `degree+1`.")
+        // nodes and scalings exposed for InterpolatedBoozerField serialization
+        .def_readonly("nodes", &InterpolationRule::nodes, "The interpolation nodes within each cell.")
+        .def_readonly("scalings", &InterpolationRule::scalings, "The scaling factors for interpolation weights.");
 
-    py::class_<UniformInterpolationRule, shared_ptr<UniformInterpolationRule>, InterpolationRule>(m, "UniformInterpolationRule", "Polynomial interpolation using equispaced points.")
+    py::class_<UniformInterpolationRule, shared_ptr<UniformInterpolationRule>, InterpolationRule>(m, "UniformInterpolationRule", py::module_local(), "Polynomial interpolation using equispaced points.")
         .def(py::init<int>())
-        .def_readonly("degree", &UniformInterpolationRule::degree, "The degree of the polynomial. The number of interpolation points in `degree+1`.");
-    py::class_<ChebyshevInterpolationRule, shared_ptr<ChebyshevInterpolationRule>, InterpolationRule>(m, "ChebyshevInterpolationRule", "Polynomial interpolation using chebychev points.")
+        .def_readonly("degree", &UniformInterpolationRule::degree, "The degree of the polynomial. The number of interpolation points is `degree+1`.");
+    py::class_<ChebyshevInterpolationRule, shared_ptr<ChebyshevInterpolationRule>, InterpolationRule>(m, "ChebyshevInterpolationRule", py::module_local(), "Polynomial interpolation using Chebyshev points.")
         .def(py::init<int>())
-        .def_readonly("degree", &ChebyshevInterpolationRule::degree, "The degree of the polynomial. The number of interpolation points in `degree+1`.");
+        .def_readonly("degree", &ChebyshevInterpolationRule::degree, "The degree of the polynomial. The number of interpolation points is `degree+1`.");
 
-    py::class_<RegularGridInterpolant3D<Array2>, shared_ptr<RegularGridInterpolant3D<Array2>>>(m, "RegularGridInterpolant3D",
+    py::class_<RegularGridInterpolant3D<Array2>, shared_ptr<RegularGridInterpolant3D<Array2>>>(m, "RegularGridInterpolant3D", py::module_local(),
             R"pbdoc(
             Interpolates a (vector valued) function on a uniform grid.
             This interpolant is optimized for fast function evaluation (at the cost of memory usage). The main purpose of this class is to be used to interpolate magnetic fields and then use the interpolant for tasks such as fieldline or particle tracing for which the field needs to be evaluated many many times.
@@ -54,5 +57,8 @@ void init_interpolant(py::module_ &m){
              "Interpolate a function with MPI parallelization. 'comm_fortran' should be a Fortran MPI communicator handle (obtained from comm.py2f() in Python).")
 #endif
         .def("evaluate", &RegularGridInterpolant3D<Array2>::evaluate, "Evaluate the interpolant at a point.")
-        .def("evaluate_batch", &RegularGridInterpolant3D<Array2>::evaluate_batch, "Evaluate the interpolant at multiple points (faster than `evaluate` as it uses prefetching).");
+        .def("evaluate_batch", &RegularGridInterpolant3D<Array2>::evaluate_batch, "Evaluate the interpolant at multiple points (faster than `evaluate` as it uses prefetching).")
+        // Serialization for InterpolatedBoozerField save/load
+        .def("get_interpolant_data", &RegularGridInterpolant3D<Array2>::get_interpolant_data)
+        .def("set_interpolant_data", &RegularGridInterpolant3D<Array2>::set_interpolant_data);
 }

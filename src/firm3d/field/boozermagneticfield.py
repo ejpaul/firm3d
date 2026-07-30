@@ -401,6 +401,23 @@ class BoozerMagneticField(sopp.BoozerMagneticField):
         self.field_type = field_type
         sopp.BoozerMagneticField.__init__(self, psi0, field_type)
 
+    def set_points(self, points):
+        """
+        Set the points where the field should be evaluated in Boozer
+        coordinates `(s,theta,zeta)`.
+
+        Args:
+            points: A (n, 3) array-like of `(s,theta,zeta)` points.
+        """
+        points = np.ascontiguousarray(points, dtype=np.float64)
+        if points.ndim != 2 or points.shape[1] != 3:
+            raise ValueError(
+                "points must have shape (n, 3), corresponding to "
+                f"(s, theta, zeta) for each of n points; got shape "
+                f"{points.shape}."
+            )
+        return sopp.BoozerMagneticField.set_points(self, points)
+
     def _modB_derivs_impl(self, modB_derivs):
         self._dmodBds_impl(modB_derivs[:, 0:1])
         self._dmodBdtheta_impl(modB_derivs[:, 1:2])
@@ -628,19 +645,19 @@ class BoozerAnalytic(BoozerMagneticField):
     the covariant components of equilibrium field are,
 
     .. math::
-        G(s) = G_0 + \sqrt{2s\psi_0/\overline{B}} G_1
+        G(s) = G_0 + s G_1
 
-        I(s) = I_0 + \sqrt{2s\psi_0/\overline{B}} I_1
+        I(s) = I_0 + s I_1
 
         K(s,\theta,\zeta) = \sqrt{2s\psi_0/\overline{B}} K_1 \sin(\theta - N \zeta),
 
     and the rotational transform is,
 
     .. math::
-        \iota(s) = \iota_0.
+        \iota(s) = \iota_0 + s \iota_1.
 
-    While formally :math:`I_0 = I_1 = G_1 = K_1 = 0`, these terms have been included
-    in order to test the guiding center equations at finite beta.
+    While formally :math:`I_0 = I_1 = G_1 = K_1 = \iota_1 = 0`, these terms have
+    been included in order to test the guiding center equations at finite beta.
 
     Args:
         etabar: magnitude of first order correction to magnetic field strength
@@ -654,6 +671,7 @@ class BoozerAnalytic(BoozerMagneticField):
         G1: first order correction to toroidal covariant component (defaults to 0)
         I1: first order correction to poloidal covariant component (defaults to 0)
         K1: first order correction to radial covariant component (defaults to 0)
+        iota1: first order correction to rotational transform (defaults to 0)
         B0z: amplitude of symmetry-breaking perturbation mode
         n: toroidal mode number for the perturbation
         m: poloidal mode bumber for the perturbation
@@ -3334,6 +3352,48 @@ class InterpolatedBoozerField(sopp.InterpolatedBoozerField, BoozerMagneticField)
         if initialize:
             for item in initialize:
                 getattr(self, item)()
+
+    @classmethod
+    def from_json(cls, json_file_path):
+        """
+        Load an InterpolatedBoozerField from a JSON file.
+
+        This class method creates a new InterpolatedBoozerField instance by loading
+        pre-computed interpolant data from JSON file, avoiding recomputation.
+
+        Args:
+            json_file_path: Path to the JSON file containing the saved field data.
+
+        Returns:
+            InterpolatedBoozerField: A new instance loaded from the JSON file.
+
+        Example:
+            # First, create and save a field
+            field = InterpolatedBoozerField(bri, 4, srange, thetarange, zetarange, True)
+            field.to_json("field_data.json")
+            # Later, reload without recomputation
+            loaded_field = InterpolatedBoozerField.from_json("field_data.json")
+        """
+        # InterpolatedBoozerField inherits from both
+        # sopp.InterpolatedBoozerField (C++) and BoozerMagneticField (Python).
+        # We must initialize each parent separately since the normal __init__
+        # requires a BoozerRadialInterpolant which we don't have when loading.
+        instance = cls.__new__(cls)
+
+        # C++ side: reads JSON and restores all interpolants + status flags
+        sopp.InterpolatedBoozerField.__init__(instance, json_file_path)
+
+        # Python side needs psi0, field_type, nfp, stellsym. C++ keeps them private,
+        # so we use getters instead of attributes.
+        BoozerMagneticField.__init__(
+            instance,
+            instance.get_psi0(),
+            instance.get_field_type(),
+            instance.get_nfp(),
+            instance.get_stellsym(),
+        )
+
+        return instance
 
     @classmethod
     def from_booz_xform(

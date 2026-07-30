@@ -75,9 +75,9 @@ class IterationStoppingCriterion : public StoppingCriterion {
 
 class StepSizeStoppingCriterion : public StoppingCriterion {
     private:
-        int min_dt;
+        double min_dt;
     public:
-        StepSizeStoppingCriterion(int min_dt) : min_dt(min_dt) {};
+        StepSizeStoppingCriterion(double min_dt) : min_dt(min_dt) {};
         bool operator()(int iter, double dt, double t, double s, double theta, double zeta, double vpar=0) override {
             return dt<min_dt;
         };

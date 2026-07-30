@@ -1,6 +1,7 @@
 import numpy as np
 
 from firm3d.catapult.tracing import trace_particles_boozer_gpu
+from firm3d.catapult.utils import boozer_saw_interpolant
 from firm3d.field.boozermagneticfield import (
     BoozerRadialInterpolant,
     InterpolatedBoozerField,
@@ -13,7 +14,6 @@ from firm3d.util.constants import ALPHA_PARTICLE_CHARGE as CHARGE
 from firm3d.util.constants import ALPHA_PARTICLE_MASS as MASS
 from firm3d.util.constants import FUSION_ALPHA_PARTICLE_ENERGY as ENERGY
 from firm3d.util.functions import in_github_actions
-from firm3d.util.gpu_utils import boozer_saw_interpolant
 from firm3d.util.sampling import sample_stz
 
 np.random.seed(1800)

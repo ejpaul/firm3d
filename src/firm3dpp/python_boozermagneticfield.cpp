@@ -22,7 +22,7 @@ void init_boozermagneticfields(py::module_ &m){
       BoozerMagneticField,
       BoozerMagneticFieldTrampoline<BoozerMagneticField>,
       shared_ptr<BoozerMagneticField>
-      >(m, "BoozerMagneticField", "")
+      >(m, "BoozerMagneticField", py::module_local(), "")
     .def(py::init<double,string>());
     mf
     .def(
@@ -406,7 +406,7 @@ void init_boozermagneticfields(py::module_ &m){
       InterpolatedBoozerField,
       BoozerMagneticField,
       shared_ptr<InterpolatedBoozerField>
-      >(m, "InterpolatedBoozerField")
+      >(m, "InterpolatedBoozerField", py::module_local())
       .def(
           py::init<shared_ptr<BoozerMagneticField>,
           InterpolationRule,
@@ -522,6 +522,14 @@ void init_boozermagneticfields(py::module_ &m){
       .def_readwrite("status_Z_derivs",&InterpolatedBoozerField::status_Z_derivs)
       .def_readwrite("status_nu_derivs",&InterpolatedBoozerField::status_nu_derivs)
       .def_readwrite("status_modB_derivs",&InterpolatedBoozerField::status_modB_derivs)
+      .def(py::init<string>(), "Load from JSON file.")
+      .def("to_json", &InterpolatedBoozerField::to_json, "Save to JSON file.")
+      // Getters needed because C++ members are private; from_json() reads these in Python
+      .def("get_nfp", &InterpolatedBoozerField::get_nfp)
+      .def("get_stellsym", &InterpolatedBoozerField::get_stellsym)
+      .def("get_extrapolate", &InterpolatedBoozerField::get_extrapolate)
+      .def("get_psi0", &InterpolatedBoozerField::get_psi0)
+      .def("get_field_type", &InterpolatedBoozerField::get_field_type)
       ;
 
     // ShearAlfvenWave:
@@ -529,7 +537,7 @@ void init_boozermagneticfields(py::module_ &m){
         ShearAlfvenWave,
         ShearAlfvenWaveTrampoline<ShearAlfvenWave>,
         shared_ptr<ShearAlfvenWave>
-        >(m, "ShearAlfvenWave", "")
+        >(m, "ShearAlfvenWave", py::module_local(), "")
         .def(py::init<shared_ptr<BoozerMagneticField>>())
         .def(
             "Phi",
@@ -602,7 +610,7 @@ void init_boozermagneticfields(py::module_ &m){
         );
 
     // Phihat:
-    py::class_<Phihat>(m, "Phihat")
+    py::class_<Phihat>(m, "Phihat", py::module_local())
         .def(
             py::init<const std::vector<double>&,
             const std::vector<double>&>()
@@ -616,7 +624,7 @@ void init_boozermagneticfields(py::module_ &m){
         ShearAlfvenHarmonic,
         ShearAlfvenWave,
         shared_ptr<ShearAlfvenHarmonic>
-        >(m, "ShearAlfvenHarmonic")
+        >(m, "ShearAlfvenHarmonic", py::module_local())
         .def(py::init<const Phihat&, int, int, double, double, shared_ptr<BoozerMagneticField>>())
         .def_readwrite("Phim", &ShearAlfvenHarmonic::Phim)
         .def_readwrite("Phin", &ShearAlfvenHarmonic::Phin)
@@ -634,7 +642,7 @@ void init_boozermagneticfields(py::module_ &m){
         ShearAlfvenWavesSuperposition,
         ShearAlfvenWave,
         shared_ptr<ShearAlfvenWavesSuperposition>
-        >(m, "ShearAlfvenWavesSuperposition")
+        >(m, "ShearAlfvenWavesSuperposition", py::module_local())
         .def(py::init<shared_ptr<ShearAlfvenWave>>())
         .def("add_wave", &ShearAlfvenWavesSuperposition::add_wave)
         .def("set_points", &ShearAlfvenWavesSuperposition::set_points)

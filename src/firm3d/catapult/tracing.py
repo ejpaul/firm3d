@@ -1,10 +1,13 @@
-__all__ = ["trace_particles_boozer_gpu"]
+__all__ = ["trace_particles_boozer_gpu", "trace_particles_cartesian_gpu"]
 import numpy as np
 
 import firm3dpp
-from firm3d.catapult.utils import boozer_interpolant
+from firm3d.catapult.utils import (
+    boozer_interpolant,
+    boozer_saw_interpolant,
+    cartesian_interpolant,
+)
 from firm3d.field.boozermagneticfield import ShearAlfvenWavesSuperposition
-from firm3d.util.gpu_utils import boozer_saw_interpolant
 
 
 def trace_particles_boozer_gpu(
@@ -132,5 +135,53 @@ def trace_particles_boozer_gpu(
             vacuum=vacuum,
         )
 
+    last_time = np.reshape(last_time, (nparticles, 6))
+    return last_time
+
+
+def trace_particles_cartesian_gpu(
+    field,
+    surface_classifier,
+    xyz_inits,
+    parallel_speeds,
+    tmax,
+    mass,
+    charge,
+    vtotal,
+    tol,
+    dt=None,
+):
+    """
+    Trace particles in Cartesian coordinates using CATAPULT
+    field: a magnetic field object representing the field in Cartesian coordinates
+    surface_classifier: a simsopt surface classifier object for detecting a surface
+    xyz_inits: initial conditions for particles in (x, y, z) coordinates
+    parallel_speeds: initial parallel speeds of the particles
+    tmax: maximum time to trace particles
+    mass: mass of each particle
+    charge: charge of each particle
+    vtotal: total velocity of each particle
+    tol: tolerance for the ODE solver
+    dt: the initial time step size for the solver (optional)
+    """
+    nparticles = xyz_inits.shape[0]
+    r_range, phi_range, z_range, quad_info = cartesian_interpolant(
+        field, surface_classifier
+    )
+    last_time = firm3dpp.cartesian_gpu_tracing(
+        quad_pts=quad_info,
+        rrange=r_range,
+        phirange=phi_range,
+        zrange=z_range,
+        xyz_init=xyz_inits,
+        m=mass,
+        q=charge,
+        vtotal=vtotal,
+        vtang=parallel_speeds,
+        tmax=tmax,
+        tol=tol,
+        dt_in=dt if dt is not None else -np.ones(nparticles),
+        nparticles=nparticles,
+    )
     last_time = np.reshape(last_time, (nparticles, 6))
     return last_time

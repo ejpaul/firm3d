@@ -47,11 +47,28 @@ class CMakeBuild(build_ext):
         # Set Python_EXECUTABLE instead if you use PYBIND11_FINDPYTHON
         # EXAMPLE_VERSION_INFO shows you how to pass a value into the C++ code
         # from Python.
+
+        # nlohmann-json is required for InterpolatedBoozerField save/load.
+        # Install via: pip install nlohmann_json
+
+        nlohmann_json_include = None
+        try:
+            import nlohmann_json
+
+            nlohmann_json_path = Path(nlohmann_json.__file__).parent
+            nlohmann_json_include = str(nlohmann_json_path / "include")
+        except ImportError:
+            pass
+
         cmake_args = [
             f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={extdir}{os.sep}",
             f"-DPYTHON_EXECUTABLE={sys.executable}",
             f"-DCMAKE_BUILD_TYPE={cfg}",  # not used on MSVC, but no harm
         ]
+
+        # Add nlohmann-json include path if found
+        if nlohmann_json_include:
+            cmake_args.append(f"-Dnlohmann_json_INCLUDE_DIR={nlohmann_json_include}")
         build_args = []
         # Adding CMake arguments set as environment variable
         # (needed e.g. to build for ARM OSx on conda-forge)

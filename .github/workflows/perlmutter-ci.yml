@@ -1,0 +1,85 @@
+name: Perlmutter GPU CI
+
+# Runs GPU tests on NERSC Perlmutter via a self-hosted Actions runner.
+# The runner must be running on a Perlmutter login node; see
+# install/perlmutter/setup_ci_env.sh for the one-time environment setup.
+#
+# Required: NERSC_ACCOUNT GitHub secret (SLURM project account, e.g. m4505)
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    types: [labeled, synchronize]
+
+jobs:
+  perlmutter-gpu:
+    if: >
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.labels.*.name, 'GPU CI')
+    runs-on: [perlmutter]
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Submit SLURM job and wait
+        id: slurm
+        env:
+          NERSC_ACCOUNT: ${{ secrets.NERSC_ACCOUNT }}
+          GH_SHA: ${{ github.sha }}
+          WORK_DIR: ${{ runner.temp }}/firm3d-${{ github.sha }}
+        run: |
+          mkdir -p "$WORK_DIR"
+          cp .github/scripts/run_gpu_tests.sh "$WORK_DIR/run_gpu_tests.sh"
+
+          JOB_ID=$(sbatch \
+            --account="$NERSC_ACCOUNT" \
+            --output="$WORK_DIR/slurm-%j.out" \
+            "$WORK_DIR/run_gpu_tests.sh" "$WORK_DIR" "$GITHUB_WORKSPACE" \
+            | awk '{print $NF}')
+          echo "Submitted SLURM job $JOB_ID"
+
+          echo "Polling job $JOB_ID every 60 s..."
+          while true; do
+            # Touch a file so the login node doesn't consider this session idle.
+            touch "$WORK_DIR/.runner-keepalive"
+            STATE=$(squeue -j "$JOB_ID" -h -o '%T' 2>/dev/null || true)
+            echo "  $(date '+%H:%M:%S')  state: ${STATE:-DONE}"
+            case "$STATE" in
+              PENDING|CONFIGURING|RUNNING|COMPLETING) sleep 60 ;;
+              FAILED|TIMEOUT|CANCELLED|OUT_OF_MEMORY)
+                cat "$WORK_DIR/slurm-$JOB_ID.out" || true
+                echo "::error::SLURM job ended in state: $STATE"
+                exit 1 ;;
+              *) break ;;
+            esac
+          done
+
+          cat "$WORK_DIR/slurm-$JOB_ID.out"
+
+          if [ ! -f "$WORK_DIR/test_exit_code.txt" ]; then
+            echo "::error::SLURM job did not produce test_exit_code.txt — job likely crashed before tests ran"
+            exit 1
+          fi
+          EXIT_CODE=$(tr -d '[:space:]' < "$WORK_DIR/test_exit_code.txt")
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "::error::GPU tests failed (exit $EXIT_CODE)"
+            exit 1
+          fi
+          echo "All GPU tests passed."
+
+          # Record whether coverage was produced for the next step.
+          [ -f "$WORK_DIR/coverage.xml" ] && echo "coverage=true" >> "$GITHUB_OUTPUT" || true
+
+      - name: Upload coverage to Codecov
+        if: steps.slurm.outputs.coverage == 'true'
+        uses: codecov/codecov-action@v3
+        with:
+          file: ${{ runner.temp }}/firm3d-${{ github.sha }}/coverage.xml
+          flags: unittests
+          name: codecov-perlmutter
+
+      - name: Clean up work directory
+        if: always()
+        run: rm -rf "${{ runner.temp }}/firm3d-${{ github.sha }}"

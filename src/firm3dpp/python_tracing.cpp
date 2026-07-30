@@ -11,8 +11,8 @@ using std::vector;
 #endif
 
 #ifdef USE_CUDA
-extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
-        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> rrange,
+        py::array_t<double> phirange, py::array_t<double> zrange, py::array_t<double> xyz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
         double tmax, double tol, py::array_t<double> dt_in, int nparticles);
 
 extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
@@ -37,8 +37,8 @@ extern "C" py::array_t<double> test_derivatives_saw_nok(py::array_t<double> quad
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
         py::array_t<double> loc, py::array_t<double> vpar, py::array_t<double> time, double v_total, double m, double q,  double psi0, int n_points);
 
-extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, py::array_t<double> srange,
-        py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, 
+extern "C" vector<double> test_timestep_cartesian(py::array_t<double> quad_pts, py::array_t<double> rrange,
+        py::array_t<double> phirange, py::array_t<double> zrange, py::array_t<double> loc_init, double m, double q, double vtotal, py::array_t<double> vtang,
         double tol, int nparticles);
 
 extern "C" vector<double> test_timestep_boozer(py::array_t<double> quad_pts, py::array_t<double> srange,
@@ -58,16 +58,16 @@ extern "C" vector<double> test_timestep_saw_nok(py::array_t<double> quad_pts, py
 #endif
 
 void init_tracing(py::module_ &m){
-    py::class_<StoppingCriterion, shared_ptr<StoppingCriterion>>(m, "StoppingCriterion");
-    py::class_<IterationStoppingCriterion, shared_ptr<IterationStoppingCriterion>, StoppingCriterion>(m, "IterationStoppingCriterion")
+    py::class_<StoppingCriterion, shared_ptr<StoppingCriterion>>(m, "StoppingCriterion", py::module_local());
+    py::class_<IterationStoppingCriterion, shared_ptr<IterationStoppingCriterion>, StoppingCriterion>(m, "IterationStoppingCriterion", py::module_local())
         .def(py::init<int>());
-    py::class_<MaxToroidalFluxStoppingCriterion, shared_ptr<MaxToroidalFluxStoppingCriterion>, StoppingCriterion>(m, "MaxToroidalFluxStoppingCriterion")
+    py::class_<MaxToroidalFluxStoppingCriterion, shared_ptr<MaxToroidalFluxStoppingCriterion>, StoppingCriterion>(m, "MaxToroidalFluxStoppingCriterion", py::module_local())
         .def(py::init<double>());
-    py::class_<MinToroidalFluxStoppingCriterion, shared_ptr<MinToroidalFluxStoppingCriterion>, StoppingCriterion>(m, "MinToroidalFluxStoppingCriterion")
+    py::class_<MinToroidalFluxStoppingCriterion, shared_ptr<MinToroidalFluxStoppingCriterion>, StoppingCriterion>(m, "MinToroidalFluxStoppingCriterion", py::module_local())
         .def(py::init<double>());
-    py::class_<ToroidalTransitStoppingCriterion, shared_ptr<ToroidalTransitStoppingCriterion>, StoppingCriterion>(m, "ToroidalTransitStoppingCriterion")
+    py::class_<ToroidalTransitStoppingCriterion, shared_ptr<ToroidalTransitStoppingCriterion>, StoppingCriterion>(m, "ToroidalTransitStoppingCriterion", py::module_local())
         .def(py::init<int>());
-    py::class_<StepSizeStoppingCriterion, shared_ptr<StepSizeStoppingCriterion>, StoppingCriterion>(m, "StepSizeStoppingCriterion")
+    py::class_<StepSizeStoppingCriterion, shared_ptr<StepSizeStoppingCriterion>, StoppingCriterion>(m, "StepSizeStoppingCriterion", py::module_local())
         .def(py::init<double>());
 
     m.def("particle_guiding_center_boozer_tracing", &particle_guiding_center_boozer_tracing,
@@ -131,10 +131,10 @@ void init_tracing(py::module_ &m){
 #ifdef USE_CUDA
     m.def("cartesian_gpu_tracing", &cartesian_gpu_tracing,
         py::arg("quad_pts"),
-        py::arg("srange"),
-        py::arg("trange"),
+        py::arg("rrange"),
+        py::arg("phirange"),
         py::arg("zrange"),
-        py::arg("stz_init"),
+        py::arg("xyz_init"),
         py::arg("m"),
         py::arg("q"),
         py::arg("vtotal"),
@@ -316,10 +316,10 @@ void init_tracing(py::module_ &m){
 
     m.def("test_timestep_cartesian", &test_timestep_cartesian,
         py::arg("quad_pts"),
-        py::arg("srange"),
-        py::arg("trange"),
+        py::arg("rrange"),
+        py::arg("phirange"),
         py::arg("zrange"),
-        py::arg("stz_init"),
+        py::arg("loc_init"),
         py::arg("m"),
         py::arg("q"),
         py::arg("vtotal"),

@@ -1,58 +1,20 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.1.6
+    rev: v0.15.10
     hooks:
       - id: ruff
         args: [--fix]
-        always_run: false
-        stages: [manual]
       - id: ruff-format
-        always_run: false
-        stages: [manual]
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
     hooks:
       - id: trailing-whitespace
-        always_run: false
-        stages: [manual]
       - id: end-of-file-fixer
-        always_run: false
-        stages: [manual]
       - id: check-yaml
-        always_run: false
-        stages: [manual]
       - id: check-added-large-files
-        always_run: false
-        stages: [manual]
       - id: check-merge-conflict
-        always_run: false
-        stages: [manual]
       - id: check-case-conflict
-        always_run: false
-        stages: [manual]
       - id: check-docstring-first
-        always_run: false
-        stages: [manual]
       - id: check-json
-        always_run: false
-        stages: [manual]
       - id: debug-statements
-        always_run: false
-        stages: [manual]
-
-  - repo: https://github.com/psf/black
-    rev: 23.12.1
-    hooks:
-      - id: black
-        language_version: python3
-        always_run: false
-        stages: [manual]
-
-  - repo: https://github.com/pycqa/isort
-    rev: 5.13.2
-    hooks:
-      - id: isort
-        args: ["--profile", "black"]
-        always_run: false
-        stages: [manual]
