@@ -77,10 +77,10 @@ class TracingHelpersTests(unittest.TestCase):
     @unittest.skipIf(comm is None, "mpi4py not available")
     def test_all_ranks_get_the_same_distinct_sample(self):
         """
-        The sample is drawn once on rank 0 and broadcast. Previously each rank
-        sampled its own slice of the particles from an identically seeded RNG,
-        so the gathered array repeated the same nparticles/comm.size positions
-        -- silently, since the shape was still correct.
+        The sample is drawn once on rank 0 and broadcast, so every rank must
+        hold the same array of nparticles distinct positions. A sample that
+        repeats positions across ranks still has the expected shape, so the
+        distinctness is asserted on directly.
         """
         for sample in SAMPLERS:
             with self.subTest(sample.__name__):
