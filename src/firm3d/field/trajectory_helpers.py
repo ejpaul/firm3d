@@ -1906,9 +1906,13 @@ class PassingPerturbedPoincare:
                     label=f"{s_itrj_map[itrj]}",
                 )
             norm = plt.Normalize(min(s_lst_true), max(s_lst_true))
+            # This colorbar labels the convergence curves, so it belongs on the
+            # convergence axes. It previously passed ax=ax, which put it on the
+            # Poincare figure -- after that figure had already been saved, so it
+            # appeared in neither output file.
             fig_conv.colorbar(
                 ScalarMappable(norm=norm, cmap=cmap_s),
-                ax=ax,
+                ax=ax2,
                 orientation="vertical",
                 label="$s$",
             )
