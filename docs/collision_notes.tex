@@ -180,8 +180,18 @@ $T_b \to 0$ at finite density) the binary-collision model is undefined and
 an exception is raised; ASCOT5 reaches the equivalent outcome by aborting
 markers through its input-evaluation errors, and its input profiles keep
 the temperature finite wherever the density is nonzero.  A warning is
-printed for $0 < \lnL < 2$, where the perturbative expansion underlying
+issued for $0 < \lnL < 2$, where the perturbative expansion underlying
 the Fokker--Planck operator begins to lose validity.
+
+Both checks are applied to the profiles once, before tracing starts, rather
+than from inside the right-hand side: the latter is evaluated roughly seven
+times per accepted step per particle, so a per-evaluation warning would emit
+millions of duplicate lines, and a per-evaluation exception would fire on
+whichever MPI rank owns the offending particle, hanging the remaining ranks
+in the collective that gathers results.  Since $\lnL$ increases
+monotonically with $v$ through $\bar{v}^2$, evaluating at $v\to0$ bounds it
+from below over all particle speeds, making the up-front check conservative
+but never optimistic.
 
 \subsection{Chandrasekhar G Function}
 

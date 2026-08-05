@@ -161,12 +161,12 @@ inline CollisionCoefficients compute_collision_coefficients(
                 lnL, v, s, n_b, T_b);
             throw std::runtime_error(msg);
         }
-        if (lnL < 2.0) {
-            std::fprintf(stderr,
-                "collisions: warning: ln_Lambda = %.3f < 2 "
-                "(v=%.3e m/s, s=%.3f, species m=%.3e kg, q=%.3e C)\n",
-                lnL, v, s, m_b, q_b);
-        }
+        // A marginal-but-positive ln_Lambda (< 2) is reported once, up front,
+        // by _validate_coulomb_log() in collisions.py.  Warning from here is
+        // not viable: this runs once per species per right-hand-side
+        // evaluation -- roughly seven times per accepted step, per particle --
+        // so a single cold region would emit millions of duplicate lines and
+        // dominate the run.
 
         double G      = chandrasekhar_G(x);
         double Gp     = chandrasekhar_G_deriv(x);   // dG/dx

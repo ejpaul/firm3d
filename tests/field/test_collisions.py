@@ -31,6 +31,7 @@ Test structure
 """
 
 import unittest
+import warnings
 
 import numpy as np
 import pytest
@@ -652,15 +653,75 @@ class TestUnphysicalCoulombLog(unittest.TestCase):
     its input-evaluation errors.
     """
 
-    def test_tracer_raises(self):
-        bad_bg = ThermalBackground(
+    @staticmethod
+    def _bad_background():
+        return ThermalBackground(
             n_profile=lambda s: 1e30,
             T_profile=lambda s: 1e-3 * ONE_EV,
             mass=ELECTRON_MASS,
             charge=-ELEMENTARY_CHARGE,
         )
+
+    def test_rejected_before_tracing(self):
+        """The up-front profile check rejects it without starting a trace.
+
+        Catching this in Python matters under MPI: the C++ throw fires
+        from inside the RHS on whichever rank owns the offending
+        particle, and the ranks that did not fail then block forever in
+        the allgather that collects results.
+        """
+        with self.assertRaises(ValueError):
+            _coll_trace(_field(), self._bad_background(), tmax=1e-8)
+
+    def test_cpp_still_refuses_when_validation_bypassed(self):
+        """With validate_profiles=False the C++ layer is the backstop.
+
+        The failure must surface as an exception from the tracer call
+        rather than being swallowed by the per-particle error capture.
+        """
         with self.assertRaises(RuntimeError):
-            _coll_trace(_field(), bad_bg, tmax=1e-8)
+            _coll_trace(
+                _field(),
+                self._bad_background(),
+                tmax=1e-8,
+                validate_profiles=False,
+            )
+
+    def test_healthy_profiles_are_not_rejected(self):
+        """The v -> 0 bound must not reject an ordinary reactor profile."""
+        traj = _coll_trace(_field(), _hot_background(), tmax=1e-8)
+        self.assertEqual(traj.shape[1], 6)
+
+    @staticmethod
+    def _marginal_background():
+        """0 < ln_Lambda < 2 as v -> 0: usable, but not quantitative."""
+        return ThermalBackground(
+            n_profile=lambda s: 1e20,
+            T_profile=lambda s: 0.025 * ONE_EV,
+            mass=2 * PROTON_MASS,
+            charge=ELEMENTARY_CHARGE,
+        )
+
+    def test_marginal_warns_exactly_once(self):
+        """A marginal ln_Lambda warns once per call, not once per evaluation.
+
+        The C++ layer sees one (v, s) at a time from inside the ODE
+        right-hand side, so warning there fired on every evaluation --
+        roughly seven times per accepted step, per particle.
+        """
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            _coll_trace(_field(), self._marginal_background(), tmax=1e-7)
+        hits = [w for w in caught if "ln_Lambda" in str(w.message)]
+        self.assertEqual(len(hits), 1, f"expected 1 warning, got {len(hits)}")
+        self.assertTrue(issubclass(hits[0].category, RuntimeWarning))
+
+    def test_healthy_profiles_do_not_warn(self):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            _coll_trace(_field(), _hot_background(), tmax=1e-8)
+        hits = [w for w in caught if "ln_Lambda" in str(w.message)]
+        self.assertEqual(hits, [], f"unexpected warning: {hits}")
 
 
 class TestCollisionCoefficients(unittest.TestCase):
