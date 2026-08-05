@@ -245,7 +245,11 @@ is denoted $D_k$, with $D_{\parallel} = D_k/2$; the noise amplitude for the
 speed SDE is $\sqrt{D_k} = \sqrt{2D_{\parallel}}$ in both conventions.
 ASCOT5 names this coefficient \texttt{Dpara}.
 The $v$-derivative is required by the Milstein correction term
-(Section~\ref{sec:milstein}).
+(Section~\ref{sec:milstein}).  Note that it differentiates $\Gamma_b$ as
+though $\lnL_{ab}$ were constant, even though the $\lnL_{ab}$ actually
+evaluated depends on $v$ through $\bar v^2$; this follows ASCOT5 and has a
+small but systematic consequence for the equilibrium, quantified in
+Section~\ref{sec:limitations}.
 
 \subsection{Deterministic Drag in $v$}
 
@@ -423,6 +427,30 @@ collision coefficients, which diverge as $v\to0$, are never evaluated deep
 below the thermal speed.  The pitch mirrors at the boundary:
 $|\xi| > 1 \Rightarrow \xi \leftarrow \mathrm{sign}(\xi)\,(2 - |\xi|)$;
 a hard clamp would pile up probability at exactly $\xi = \pm 1$.
+
+\subsubsection*{Order of convergence}
+\label{sec:milstein-order}
+
+Only the diagonal Milstein corrections are retained above.  In more than one
+dimension these alone give order-1 strong convergence just when the diffusion
+matrix is commutative, i.e.\ $L^{j_1}g^{k,j_2} = L^{j_2}g^{k,j_1}$ with
+$L^{j} = \sum_k g^{k,j}\,\partial_k$ \cite{kloeden1992}.  The diffusion here is
+diagonal --- $\dd W_v$ drives $v$ and $\dd W_\xi$ drives $\xi$ --- so with
+$k=\xi$,
+\begin{equation}
+  L^{v}g_\xi = g_v\,\frac{\partial g_\xi}{\partial v} \neq 0,
+  \qquad
+  L^{\xi}g_v = g_\xi\,\frac{\partial g_v}{\partial \xi} = 0 ,
+\end{equation}
+the first being nonzero because $\nu_D$ depends on $v$, and the second
+vanishing because $D_\parallel$ does not depend on $\xi$.  The condition fails,
+so the double stochastic integrals (L\'evy areas) $I_{(v,\xi)}$ and
+$I_{(\xi,v)}$ do not cancel and cannot be recovered from
+$\Delta W_v,\Delta W_\xi$ alone.  Dropping them --- as ASCOT5 also does ---
+reduces \emph{strong} convergence to order $1/2$ in that coupling.
+\emph{Weak} convergence, which governs the moments and distribution functions
+a Monte Carlo transport calculation actually reports, remains order 1 and is
+unaffected.
 
 %-----------------------------------------------------------------------
 \section{Adaptive Integration Strategy}
@@ -722,6 +750,7 @@ against the analytic Spitzer estimate (right).}
 
 %-----------------------------------------------------------------------
 \section{Validity and Limitations}
+\label{sec:limitations}
 %-----------------------------------------------------------------------
 
 \begin{itemize}
@@ -747,6 +776,34 @@ against the analytic Spitzer estimate (right).}
         (Larmor radius over gradient length).  The spatial diffusion term
         $D_X \propto D_\perp/\Omega_g^2$ present in the full operator
         \cite{hirvijoki2014} is neglected.
+
+  \item \textbf{Coulomb logarithm held fixed in $\partial D_\parallel/\partial v$:}
+        Eq.~\eqref{eq:Dpar} treats $\lnL_{ab}$ as constant under
+        differentiation, while the $\lnL_{ab}$ actually used varies with $v$
+        through $\bar v^2$ (Eq.~\eqref{eq:vbar}).  The spurious-drift terms in
+        $K$ (Eq.~\eqref{eq:K}) are then not quite the ones belonging to the
+        $D_\parallel(v)$ that drives the noise, and the stationary solution of
+        the speed SDE becomes the Maxwellian divided by $\lnL_{ab}(v)$ rather
+        than the Maxwellian itself.  Integrating the code's own $K$ and
+        $D_\parallel$ for a proton in $1$\,keV hydrogen at
+        $n=10^{21}\,\mathrm{m}^{-3}$ gives $\langle E\rangle/T_b = 1.469$
+        against the exact $3/2$, a $-2.1\%$ bias; the closed form above
+        reproduces that number exactly.  This is inherited, not accidental:
+        ASCOT5's \texttt{mccc\_coefs\_clog} is likewise velocity-dependent and
+        re-evaluated every step, while \texttt{mccc\_coefs\_dDpara} likewise
+        carries $c_{ab}$ (which contains $\ln\Lambda$) through the derivative,
+        so the two codes agree coefficient for coefficient and share this
+        bias.  Adding the $\partial\lnL_{ab}/\partial v$ term would make the
+        equilibrium exactly Maxwellian at the cost of departing from ASCOT5.
+        Note the effect is on the thermal equilibrium, not on slowing-down:
+        the uniform-plasma benchmark of Section~\ref{sec:ascot5-uniform}
+        agrees with ASCOT5 to $0.7\sigma$, as it should when both codes carry
+        the same approximation.
+
+  \item \textbf{Strong convergence of the noise step:} the diffusion matrix is
+        not commutative, so omitting the L\'evy-area terms leaves the scheme
+        strong order $1/2$ rather than $1$ in the $v$--$\xi$ coupling; weak
+        order 1 is retained.  See Section~\ref{sec:milstein-order}.
 
   \item \textbf{Slow tests: \texttt{@pytest.mark.slow}} --- five physics-validation
         tests require $N\sim 20$ particles integrated for $5$--$100\,\mu$s and are
