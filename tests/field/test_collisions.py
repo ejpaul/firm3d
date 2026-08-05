@@ -43,6 +43,7 @@ from firm3d.field.collisions import (
     trace_particles_boozer_with_collisions,
 )
 from firm3d.field.tracing import (
+    IterationStoppingCriterion,
     MaxToroidalFluxStoppingCriterion,
     trace_particles_boozer,
 )
@@ -373,6 +374,99 @@ class TestTrajectoryShape(unittest.TestCase):
             forget_exact_path=True,
         )
         self.assertEqual(res_tys[0].shape[0], 2)
+
+
+# ---------------------------------------------------------------------------
+# Stopping criteria
+# ---------------------------------------------------------------------------
+
+
+class TestIterationStoppingCriterion(unittest.TestCase):
+    """
+    The `iter` argument passed to stopping criteria must count accepted
+    solver steps, as it does in the collisionless tracer.
+
+    solve_sde() originally synthesised this argument from the elapsed
+    normalised time, ``(int)(tau / (dtau_max * 1e-3))``, which is a
+    proxy for simulated time rather than a step count.  Two consequences
+    are asserted against here:
+
+      * the stop time was independent of the solver tolerance, since it
+        depended only on tau (pre-fix, max_iter = 5 stopped at exactly
+        t = 3.7532e-09 s at both 1e-6 and 1e-11);
+      * the stop time saturated in max_iter, so distinct limits produced
+        identical traces (pre-fix, max_iter = 10 and 20 both stopped at
+        t = 1.9392e-08 s).
+
+    ToroidalTransitStoppingCriterion is affected by the same argument --
+    it keys its `zeta_init` initialisation on ``iter == 1`` -- but needs
+    a confined multi-transit orbit to exercise, so the step counter is
+    tested directly here instead.
+    """
+
+    _TMAX = 1e-6
+
+    def _stop_time(self, max_iter, tol):
+        """Final time of a single zero-density trace under an iteration cap."""
+        Ekin = FUSION_ALPHA_PARTICLE_ENERGY
+        v0 = np.sqrt(2 * Ekin / ALPHA_PARTICLE_MASS)
+        res_tys, res_hits = trace_particles_boozer_with_collisions(
+            _field(),
+            np.array([[0.3, 0.0, 0.0]]),
+            np.array([0.5 * v0]),
+            backgrounds=_zero_background(),
+            tmax=self._TMAX,
+            mass=ALPHA_PARTICLE_MASS,
+            charge=ALPHA_PARTICLE_CHARGE,
+            Ekin=Ekin,
+            dt_save=self._TMAX / 20,
+            tol=tol,
+            stopping_criteria=[IterationStoppingCriterion(max_iter)],
+        )
+        return res_tys[0][-1, 0], np.asarray(res_hits[0])
+
+    def test_criterion_fires_and_is_recorded(self):
+        """A low cap stops the trace early and records a hit at index -1."""
+        t_end, hits = self._stop_time(5, tol=1e-9)
+        self.assertLess(t_end, self._TMAX)
+        self.assertEqual(hits.shape[0], 1)
+        self.assertEqual(hits[0, 1], -1.0)
+
+    def test_no_stop_when_cap_is_unreachable(self):
+        """A cap above the step count runs to tmax with no hit recorded."""
+        t_end, hits = self._stop_time(10**6, tol=1e-9)
+        self.assertAlmostEqual(t_end, self._TMAX, delta=1e-15)
+        self.assertEqual(hits.size, 0)
+
+    def test_stop_time_depends_on_tolerance(self):
+        """Tighter tolerance means smaller steps, so N steps cover less time."""
+        t_loose, _ = self._stop_time(5, tol=1e-6)
+        t_tight, _ = self._stop_time(5, tol=1e-11)
+        self.assertGreater(
+            t_loose,
+            2 * t_tight,
+            f"stop time barely moved with tolerance (loose {t_loose:.4e}, "
+            f"tight {t_tight:.4e}); iter is not counting solver steps",
+        )
+
+    def test_stop_time_increases_with_cap(self):
+        """Doubling the cap must let the trace run measurably further.
+
+        Run at 1e-11 so that 20 steps still fall well short of tmax; at
+        looser tolerances the steps are large enough that the cap is
+        never reached and both traces simply clamp to tmax.
+        """
+        t_10, hits_10 = self._stop_time(10, tol=1e-11)
+        t_20, hits_20 = self._stop_time(20, tol=1e-11)
+        # Both traces must have stopped on the criterion, or the
+        # comparison below is between two values clamped at tmax.
+        self.assertEqual(hits_10.shape[0], 1, "max_iter = 10 ran to tmax")
+        self.assertEqual(hits_20.shape[0], 1, "max_iter = 20 ran to tmax")
+        self.assertGreater(
+            t_20,
+            1.5 * t_10,
+            f"stop time saturated in max_iter (10 -> {t_10:.4e}, 20 -> {t_20:.4e})",
+        )
 
 
 # ---------------------------------------------------------------------------

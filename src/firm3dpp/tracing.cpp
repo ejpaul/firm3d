@@ -442,6 +442,35 @@ class GuidingCenterBoozerRHS : public BaseRHS {
         }
 };
 
+// Create the adaptive ODE solver selected by `ode_solver`.  Shared by solve()
+// and solve_sde().  DP_hmin is given in physical seconds while the solver
+// operates in normalized time tau = t / tnorm, hence the division.
+static std::unique_ptr<ODESolver> make_ode_solver(
+    const string& ode_solver,
+    double abstol,
+    double reltol,
+    double dtau_max,
+    double DP_hmin,
+    double tnorm) {
+    if (ode_solver == "dormand_prince") {
+        return create_dormand_prince_solver(
+            abstol,
+            reltol,
+            dtau_max,
+            DP_hmin / tnorm
+        );
+    } else if (ode_solver == "boost") {
+        return create_dopri_boost_solver(
+            abstol,
+            reltol,
+            dtau_max
+        );
+    }
+    throw std::invalid_argument(
+        "ode_solver is \"boost\", \"dormand_prince\" or \"symplectic\""
+    );
+}
+
 tuple<vector<vector<double>>, vector<vector<double>>>
 solve(
     BaseRHS& rhs,
@@ -476,27 +505,8 @@ solve(
     vector<vector<double>> res_hits = {};
     vector<double> y(state_size), temp(state_size);
 
-    std::unique_ptr<ODESolver> solver;
-    if (ode_solver == "dormand_prince") {
-        // DP_hmin is given in physical seconds; the solver operates in
-        // normalized time tau = t / tnorm.
-        solver = create_dormand_prince_solver(
-            abstol,
-            reltol,
-            dtau_max,
-            DP_hmin / tnorm
-        );
-    } else if (ode_solver == "boost") {
-        solver = create_dopri_boost_solver(
-            abstol,
-            reltol,
-            dtau_max
-        );
-    } else {
-        throw std::invalid_argument(
-            "ode_solver is \"boost\", \"dormand_prince\" of \"symplectic\""
-        );
-    }
+    std::unique_ptr<ODESolver> solver = make_ode_solver(
+        ode_solver, abstol, reltol, dtau_max, DP_hmin, tnorm);
 
     double tau = 0;
     int iter = 0;
@@ -1006,8 +1016,29 @@ class GuidingCenterVacuumCollisionBoozerRHS : public BaseRHS {
 };
 
 // --------------------------------------------------------------------------
-// solve_sde: like solve() but applies Milstein noise after each accepted step.
-// Output rows are [t, s, theta, zeta, v_par, v] (6 elements).
+// solve_sde: like solve() but applies Milstein noise to (v, xi) after each
+// accepted step.  Output rows are [t, s, theta, zeta, v_par, v] (6 elements).
+//
+// Why this is a separate loop rather than a flag on solve():
+//
+// The Milstein kick perturbs (v, xi) at the end of an accepted step and then
+// re-initializes the stepper from the perturbed state, which discards the
+// dense-output interpolant for the step just taken.  That imposes an ordering
+// on the loop body which solve() does not satisfy:
+//
+//   * the path must be saved BEFORE the kick, while the interpolant is still
+//     valid (solve() saves after the stopping check);
+//   * the tau_max endpoint must be captured eagerly into y_at_tmax, since
+//     after re-initialization it can no longer be interpolated back to;
+//   * stopping criteria cannot use dense-output root finding, so they are
+//     evaluated at the post-noise step endpoint only.
+//
+// The last point is why phase-plane and v_par-plane crossings (the `phases`
+// and `vpars` arguments of solve()) are not offered here: a velocity-space
+// crossing is ill-defined when a discontinuous kick lands on the step
+// endpoint.  Spatial phase crossings would still be well-defined within a
+// step -- the noise only touches (v, xi) -- so they could be recovered later
+// by root-finding on the pre-kick interpolant.
 // --------------------------------------------------------------------------
 tuple<vector<vector<double>>, vector<vector<double>>>
 solve_sde(
@@ -1020,15 +1051,8 @@ solve_sde(
     double dtau_max,
     double abstol,
     double reltol,
-    vector<double> phases,
-    vector<double> n_zetas,
-    vector<double> m_thetas,
-    vector<double> omegas,
     vector<shared_ptr<StoppingCriterion>> stopping_criteria,
     double dtau_save,
-    vector<double> vpars,
-    bool phases_stop,
-    bool vpars_stop,
     bool forget_exact_path,
     int axis,
     double vnorm,
@@ -1047,16 +1071,8 @@ solve_sde(
     vector<vector<double>> res_hits;
     vector<double> y(state_size), stzv_xi(state_size);
 
-    // Factory: only dormand_prince or boost for SDE
-    std::unique_ptr<ODESolver> solver;
-    if (ode_solver == "boost") {
-        solver = create_dopri_boost_solver(abstol, reltol, dtau_max);
-    } else {
-        // DP_hmin is given in physical seconds; the solver operates in
-        // normalized time tau = t / tnorm.
-        solver = create_dormand_prince_solver(abstol, reltol, dtau_max,
-                                              DP_hmin / tnorm);
-    }
+    std::unique_ptr<ODESolver> solver = make_ode_solver(
+        ode_solver, abstol, reltol, dtau_max, DP_hmin, tnorm);
 
     // Helper: build a 6-element save record [t, s, theta, zeta, v_par, v]
     auto make_record = [&](double t_phys, const vector<double>& sv) -> vector<double> {
@@ -1072,6 +1088,7 @@ solve_sde(
     solver->initialize(y, 0.0, dtau, rhs);
 
     double tau = 0.0;
+    int iter = 0;
     bool stop = false;
     // Capture the state at tau_max before any Milstein re-initialization destroys
     // the dense-output interval.  Set when the step crosses tau_max.
@@ -1080,6 +1097,7 @@ solve_sde(
 
     do {
         auto step = solver->do_step(rhs);
+        iter++;
         double tau_last    = std::get<0>(step);
         double tau_current = std::get<1>(step);
         double h_taken     = tau_current - tau_last;  // normalised step
@@ -1153,7 +1171,7 @@ solve_sde(
 
             for (int i = 0; i < (int)stopping_criteria.size(); ++i) {
                 if (stopping_criteria[i] && (*stopping_criteria[i])(
-                        (int)(tau / (dtau_max * 1e-3)), h_taken * tnorm,
+                        iter, h_taken * tnorm,
                         t_current, s_current, th_current, z_current, vpar_current)) {
                     stop = true;
                     vector<double> hit = {t_current, -1.0 - double(i)};
@@ -1249,11 +1267,8 @@ particle_guiding_center_boozer_collision_tracing(
         dtau_max,
         abstol,
         reltol,
-        {}, {}, {}, {},  // phases/n_zetas/m_thetas/omegas (not used yet)
         stopping_criteria,
         dtau_save,
-        {},              // vpars
-        false, false,    // phases_stop, vpars_stop
         forget_exact_path,
         axis,
         vnorm,
