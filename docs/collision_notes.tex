@@ -673,8 +673,8 @@ running the same suite serially.
 \subsection{Cross-Code Validation Against ASCOT5: Uniform Plasma}
 \label{sec:ascot5-uniform}
 
-\url{examples/collision_validation_ascot5/} mirrors the alpha
-slowing-down branch of ASCOT5's own built-in Coulomb-collision physics
+This validation mirrors the alpha slowing-down branch of ASCOT5's own
+built-in Coulomb-collision physics
 test: $N$ fusion alphas (birth energy $3.52$\,MeV, isotropic pitch, shared
 random seed) slow down in a uniform $1$\,keV hydrogen plasma.  The two
 codes use different magnetic geometries (ASCOT5's analytical ITER-like
@@ -709,141 +709,6 @@ and the distribution of per-particle slowing-down times to $50$\,keV
 against the analytic Spitzer estimate (right).}
 \label{fig:ascot5-uniform}
 \end{figure}
-
-\subsection{Reactor-Scale Demonstration: Wistell-A / ARIES-CS}
-\label{sec:wistell-firm3d}
-
-\url{examples/fusion_distribution_collisional/} traces $1024$
-fusion-born alphas (birth positions weighted by the fusion reactivity
-profile, isotropic pitch) for $150$\,ms in the Wistell-A configuration
-scaled to ARIES-CS size and field strength, against a D--T--electron
-background with the profile shapes of Bader et al.\ \cite{bader2021}
-(core $n_D=n_T=10^{20}\,\mathrm{m}^{-3}$, $T_0=11.5$\,keV).  The identical
-birth ensemble is also traced collisionlessly, isolating prompt orbit
-losses from collisional (pitch-angle-scattering-driven) transport.
-
-\begin{table}[h]
-\centering
-\begin{tabular}{lcc}
-\toprule
-& With collisions & Collisionless \\
-\midrule
-Particle loss fraction (150 ms) & $19$--$21\%$ & $1.2\%$ \\
-Energy loss fraction (wall loading) & $7.6\%$ & --- \\
-\bottomrule
-\end{tabular}
-\caption{firm3d, Wistell-A/ARIES-CS scale, $N=1024$, $1$ CPU node
-$\times$ $128$ MPI ranks, $13$\,min (debug queue).  Particle and energy
-loss fractions differ because late-time collisional losses are
-increasingly thermalised ash carrying little energy.}
-\end{table}
-
-The time-integrated (i.e.\ ergodically equivalent to a steady-state
-source) energy spectrum of confined alphas matches the classical
-slowing-down distribution $f(E)\propto \sqrt{E}/(E^{3/2}+E_c^{3/2})$
-(critical energy $E_c=266$\,keV) to a mean $|$relative residual$|$ of
-$4.7\%$ over $0.9$--$3.3$\,MeV (Figure~\ref{fig:wistell-firm3d}, right).
-
-\begin{figure}[h]
-\centering
-\includegraphics[width=0.48\textwidth]{figures/wistell_firm3d_loss_fraction.png}
-\hfill
-\includegraphics[width=0.48\textwidth]{figures/wistell_firm3d_slowing_spectrum.png}
-\caption{Left: loss fraction vs.\ time, with and without collisions.
-Right: time-integrated confined-alpha energy spectrum vs.\ the classical
-slowing-down distribution.}
-\label{fig:wistell-firm3d}
-\end{figure}
-
-As a literature consistency check (not a marker-level validation), Bader
-et al.\ \cite{bader2021} ran the same Wistell-A/ARIES-CS-scale
-configuration with the ANTS code and report a collisional energy-loss
-fraction of $\approx 8\%$ (their Fig.~3, plateau near $100$\,ms), with
-Wistell-A performing on par with W7-X.  The firm3d result above
-($7.6\%$ at $150$\,ms) is consistent, though several inputs differ (Bader
-et al.\ use $n_{e,0}=4.8\times10^{20}\,\mathrm{m}^{-3}$ with $Z_{\rm eff}=1.13$
-versus $n_{e,0}=2\times10^{20}\,\mathrm{m}^{-3}$, $Z_{\rm eff}=1$ here, and
-follow particles to full thermalisation).
-
-\subsection{Direct Cross-Code Comparison in the Wistell-A Geometry}
-\label{sec:wistell-ascot5}
-
-Beyond the uniform-plasma validation of Section~\ref{sec:ascot5-uniform},
-\url{examples/fusion_distribution_collisional/run_ascot5_wistell.py}
-builds an ASCOT5 input for the identical Wistell-A equilibrium directly
-from the VMEC \texttt{wout} file (a hand-padded real-space
-$(R,\phi,z)$ spline, as opposed to firm3d's Boozer-coordinate spline of
-the same \texttt{booz\_xform}-transformed field), with the same
-D--T--electron profiles, birth-energy and pitch distribution, and
-integration time as Section~\ref{sec:wistell-firm3d}.\footnote{Two ASCOT5
-source patches were required and are documented in
-\url{run_ascot5_wistell.py}'s module docstring: a compile-time Wiener
-process array too small for this problem, and a near-magnetic-axis
-floating-point edge case in the generic $\rho$ evaluator that a sibling
-function in the same codebase already guards against.}
-
-\begin{table}[h]
-\centering
-\begin{tabular}{lccc}
-\toprule
-Collisional & firm3d & ASCOT5 & Agreement \\
-\midrule
-Particle loss fraction & $19.4\%$ & $22.6\%$ & $1.7\sigma$ \\
-Energy loss fraction   & $7.6\%$  & $13.4\%$ & large discrepancy \\
-\bottomrule
-\end{tabular}
-\begin{tabular}{lccc}
-\toprule
-Collisionless & firm3d & ASCOT5 & Agreement \\
-\midrule
-Final loss fraction & $1.2\%$ & $27.2\%$ & $18.2\sigma$ \\
-\bottomrule
-\end{tabular}
-\caption{$N=1024$, same Wistell-A/ARIES-CS equilibrium, same birth
-distribution shape and profiles.  Collisionless: particles retain full
-birth energy until lost, so particle-loss fraction is energy-loss
-fraction.}
-\end{table}
-
-\begin{figure}[h]
-\centering
-\includegraphics[width=0.48\textwidth]{figures/wistell_ascot5_loss_comparison_collisional.png}
-\hfill
-\includegraphics[width=0.48\textwidth]{figures/wistell_ascot5_lost_energy_collisional.png}
-\caption{Collisional Wistell-A comparison. Left: loss fraction vs.\
-time.  Right: energy distribution of lost alphas -- ASCOT5's lost
-population skews markedly toward near-birth-energy (``prompt'') losses
-relative to firm3d's, which skews toward thermalised, low-energy losses;
-this drives the energy-loss-fraction discrepancy despite the particle
-counts agreeing to $1.7\sigma$.}
-\label{fig:wistell-ascot5-collisional}
-\end{figure}
-
-\begin{figure}[h]
-\centering
-\includegraphics[width=0.6\textwidth]{figures/wistell_ascot5_loss_comparison_collisionless.png}
-\caption{Collisionless (orbit-following only) loss fraction vs.\ time.
-The two codes agree at early times ($\sim 0.3$--$1\%$ within the first
-millisecond, consistent prompt-loss physics) but diverge entirely in a
-late-time, slow ``stochastic'' loss channel with zero collisions:
-firm3d's curve is flat after $\sim1$\,ms, while ASCOT5's continues
-climbing through the full $150$\,ms window.}
-\label{fig:wistell-ascot5-collisionless}
-\end{figure}
-
-The $18.2\sigma$ collisionless discrepancy is noteworthy because both
-codes trace the \emph{same} VMEC equilibrium (Section~\ref{sec:wistell-ascot5}),
-so a large gap in a real physical effect (secular guiding-centre orbit
-diffusion from broken exact quasisymmetry) more likely reflects a
-numerical or methodological difference between the two field
-representations than two genuinely different physical predictions.
-Candidate explanations --- none yet confirmed --- include differing
-resolution of the fine, non-quasisymmetric ripple harmonics that drive
-this diffusion in each code's respective spline, boundary-handling
-differences for orbits that repeatedly graze the loss boundary, and
-differences in the guiding-centre equations or order retained by each
-code.  This is flagged as an open item for a future, better-suited
-cross-code comparison rather than a validated result.
 
 %-----------------------------------------------------------------------
 \section{Validity and Limitations}
@@ -956,12 +821,6 @@ J.~R.~Dormand and P.~J.~Prince,
 ``A family of embedded Runge-Kutta formulae,''
 \textit{J.\ Comput.\ Appl.\ Math.} \textbf{6}, 19 (1980).
 \texttt{doi:10.1016/0771-050X(80)90013-3}
-
-\bibitem{bader2021}
-A.~Bader et al.,
-``Modeling of energetic particle transport in optimized stellarators,''
-\textit{Nucl.\ Fusion} \textbf{61}, 116060 (2021).
-\texttt{arXiv:2106.00716}
 
 \end{thebibliography}
 

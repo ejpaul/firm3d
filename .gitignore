@@ -39,6 +39,9 @@ examples/**/*.txt
 examples/**/*.pdf
 examples/**/*.png
 examples/**/*.vt*
+examples/**/*.log
+examples/**/*.npz
+examples/**/*.h5
 
 # Sphinx related files
 docs/build/
