@@ -88,16 +88,6 @@ __constant__ double v_total_d; // initial velocity
 __constant__ double psi0_d; // used for Boozer RHS only
 __constant__ double saw_srange_d[4]; // used for SAW RHS only
 
-// ---------------------------------------------------------------------------
-// Monte Carlo Coulomb collisions.
-//
-// The physics is not restated here: collisions.h is compiled for device as
-// well as host (see FIRM3D_HD there), so the kernel calls the same routines
-// the CPU tests pin.  What lives here is only the plumbing -- where the
-// profiles sit, where the randomness comes from, and where in the step the
-// kick is applied.
-// ---------------------------------------------------------------------------
-#define COLL_MAX_SPECIES 8
 
 __constant__ ThermalBackgroundView coll_bgs_d[COLL_MAX_SPECIES];
 __constant__ int    coll_n_bgs_d = 0;          // 0 disables the kick entirely
@@ -872,10 +862,12 @@ __device__ void collision_kick(double* state, double* mu, double* derivs,
     if (compute_collision_coefficients_core(v, s_flux, mass_d, charge_d,
                                             coll_bgs_d, coll_n_bgs_d, &c)
         != COLL_OK) {
-        // ln_Lambda <= 0: the model is undefined here.  A kernel cannot throw,
-        // and the host validates the profiles up front, so this is
-        // unreachable from the supported entry points; skip rather than
-        // integrate garbage.
+        // ln_Lambda <= 0: the model is undefined here.  A kernel cannot
+        // throw, so skip rather than integrate garbage.  This is normally
+        // caught on the host before launch, but validate_profiles=False is a
+        // supported argument that turns that check off -- in which case the
+        // particle silently continues collisionlessly, and nothing in the
+        // returned array marks it.  The CPU path raises instead.
         return;
     }
 
@@ -1030,7 +1022,14 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
         // particle index makes the stream independent of how the particles
         // are distributed over blocks -- the GPU analogue of the CPU's
         // rng_seed + particle_index.
-        curand_init(coll_seed_d, (unsigned long long)idx, 0ULL, &rng_state[threadIdx.x]);
+        //
+        // Gated on the species count: curand_init is documented as costing
+        // considerably more than drawing from an initialised state, and every
+        // collisionless kernel -- Cartesian, Boozer, both SAW variants --
+        // instantiates this same template.  They must not pay for it.
+        if (coll_n_bgs_d > 0) {
+            curand_init(coll_seed_d, (unsigned long long)idx, 0ULL, &rng_state[threadIdx.x]);
+        }
     }
     __syncthreads();
 
@@ -1093,8 +1092,14 @@ static vector<double*> upload_collision_backgrounds(
     vector<double*> owned;
     int n = (int)backgrounds.size();
     if (n > COLL_MAX_SPECIES) {
-        throw std::invalid_argument(
-            "GPU collision tracing supports at most COLL_MAX_SPECIES background species");
+        // Format the limit rather than naming the macro: the preprocessor
+        // does not substitute inside a string literal, so the literal form
+        // told the caller neither the limit nor what they passed.
+        char msg[160];
+        std::snprintf(msg, sizeof(msg),
+            "GPU collision tracing supports at most %d background species, "
+            "but %d were given", COLL_MAX_SPECIES, n);
+        throw std::invalid_argument(msg);
     }
     gpuErrchk(cudaMemcpyToSymbol(coll_seed_d, &rng_seed, sizeof(rng_seed)));
 
@@ -1261,7 +1266,21 @@ extern "C" vector<double> boozer_collision_gpu_tracing(py::array_t<double> quad_
     }
     gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
 
-    vector<double*> owned = upload_collision_backgrounds(backgrounds, rng_seed);
+    // RAII: the species count and the profile buffers are process-global
+    // device state, and every Boozer kernel -- including the collisionless and
+    // SAW ones -- reads coll_n_bgs_d as its only gate.  Releasing them only on
+    // the normal return would let a throw anywhere below leave collisions
+    // switched on for the next call in this process, with freed-but-live
+    // pointers behind it.
+    struct CollisionStateGuard {
+        vector<double*> owned;
+        ~CollisionStateGuard() {
+            int zero = 0;
+            cudaMemcpyToSymbol(coll_n_bgs_d, &zero, sizeof(zero));
+            for (double* p : owned) cudaFree(p);
+        }
+    } coll_state{upload_collision_backgrounds(backgrounds, rng_seed)};
+
 
     std::vector<double> results;
     if (vacuum) {
@@ -1269,12 +1288,6 @@ extern "C" vector<double> boozer_collision_gpu_tracing(py::array_t<double> quad_
     } else {
         results = gpu_tracing<RHS::GC_Boozer>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, dt_in, nparticles);
     }
-
-    // Leave the collision state disabled behind us, so a later collisionless
-    // call on the same process cannot inherit these profiles.
-    int zero = 0;
-    gpuErrchk(cudaMemcpyToSymbol(coll_n_bgs_d, &zero, sizeof(zero)));
-    for (double* p : owned) gpuErrchk(cudaFree(p));
 
     for(int i=0; i<nparticles; ++i){
         double x1 = results[6*i+1];

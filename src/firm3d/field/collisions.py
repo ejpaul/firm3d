@@ -100,6 +100,13 @@ class ThermalBackground:
             raise ValueError("n_profile must be callable.")
         if not callable(T_profile):
             raise ValueError("T_profile must be callable.")
+        # Linear interpolation needs two nodes and a non-zero spacing.  With
+        # one point the grid spacing is 0/0 and the lookup indexes off the end
+        # of the sample array -- on the GPU that is an unchecked read of device
+        # memory, and on the CPU it silently produced NaN coefficients.
+        n_grid_points = int(n_grid_points)
+        if n_grid_points < 2:
+            raise ValueError(f"n_grid_points must be at least 2, got {n_grid_points}")
 
         self.n_profile = n_profile
         self.T_profile = T_profile
@@ -532,11 +539,12 @@ def trace_particles_boozer_perturbed_with_collisions(
     # error naming none of the cause.
     if getattr(perturbed_field.B0, "field_type", None) is None:
         raise ValueError(
-            "perturbed_field.B0 has lost its Python subclass, so the field "
-            "cannot be evaluated (field_type, iota, G and the rest live on the "
-            "subclass).  Keep a reference to the BoozerMagneticField alive for "
-            "the duration of the call -- e.g. bind it to a local -- rather "
-            "than constructing it inline in the ShearAlfvenWave argument."
+            "perturbed_field.B0 exposes no field_type, so it is not an "
+            "evaluable BoozerMagneticField subclass: field_type, iota, G and "
+            "the rest are defined on the Python subclass, and pybind is "
+            "handing back the bare C++ base.  Usually this means the "
+            "subclass was constructed inline in the ShearAlfvenWave argument "
+            "and collected; bind it to a local that outlives the call."
         )
     field_type = perturbed_field.B0.field_type
     if mode is not None:
@@ -567,12 +575,16 @@ def trace_particles_boozer_perturbed_with_collisions(
     # reconstruction clamps v_perp^2 to zero, so the trace runs to completion
     # and returns finite numbers that correspond to no particle.  Reject it
     # here, where the caller can still be told which entry is at fault.
+    # Tested as "not >= 0" rather than "< 0" so that NaN is rejected too:
+    # NaN < 0 is False, so the obvious form lets it through to produce exactly
+    # the unmarked garbage this check exists to prevent.
     mus = np.asarray(mus)
-    if np.any(mus < 0.0):
-        bad = np.flatnonzero(mus < 0.0)
+    if not np.all(mus >= 0.0):
+        bad = np.flatnonzero(~(mus >= 0.0))
         raise ValueError(
             f"mus must be non-negative; {bad.size} of {nparticles} are "
-            f"negative, first at index {bad[0]} with value {mus[bad[0]]!r}"
+            f"negative or NaN, first at index {bad[0]} with value "
+            f"{mus[bad[0]]!r}"
         )
 
     res_tys = []

@@ -1015,19 +1015,23 @@ class TestPerturbedCollisions(unittest.TestCase):
 
     def test_negative_mu_is_refused(self):
         """
-        A negative mu must be refused rather than traced.
+        A negative or NaN mu must be refused rather than traced.
 
         Without the check the trace runs to completion and returns finite,
         plausible-looking numbers, because the two consumers of mu disagree:
         the orbit right-hand side integrates the negative value while the
         kick's speed reconstruction clamps v_perp^2 up to zero.  Measured on
-        the unguarded code, mu = -1e12 returned the same speed as mu = 0
-        (6.514e+06) but a different theta (0.01513 against 0.01542) -- that
-        is, a trajectory belonging to no particle at all, with nothing in the
-        output marking it as such.
+        the unguarded code with vpar0 = 0.5 v0 and mu = -1e12: the same speed
+        as mu = 0 (6.514e+06) but a different theta (0.01513 against
+        0.01542) -- a trajectory belonging to no particle at all, with
+        nothing in the output marking it as such.  This fixture launches at
+        0.6 v0 and negates its own mu0, so its numbers differ from those;
+        the failure mode is the same.
 
-        mu = 0 is legal (a strictly passing particle) and must still trace,
-        so the boundary is checked in both directions.
+        NaN is checked because the natural spelling of the guard misses it:
+        NaN < 0 is False, so a "< 0" test admits exactly the input the check
+        exists to reject.  mu = 0 is legal (a strictly passing particle) and
+        must still trace, so the boundary is checked in both directions.
         """
         saw, _, vpar0, mu0 = self._setup(1e-5)
         kw = {
@@ -1038,13 +1042,18 @@ class TestPerturbedCollisions(unittest.TestCase):
             "rng_seed": 1,
             "backgrounds": _hot_background(),
         }
-        with self.assertRaises(ValueError) as cm:
-            trace_particles_boozer_perturbed_with_collisions(
-                saw, self._stz, vpar0, np.array([-abs(mu0[0])]), **kw
-            )
-        msg = str(cm.exception)
-        self.assertIn("non-negative", msg)
-        self.assertIn("index 0", msg)
+        for label, bad_mu in (
+            ("negative", -abs(mu0[0])),
+            ("nan", np.nan),
+        ):
+            with self.subTest(mu=label):
+                with self.assertRaises(ValueError) as cm:
+                    trace_particles_boozer_perturbed_with_collisions(
+                        saw, self._stz, vpar0, np.array([bad_mu]), **kw
+                    )
+                msg = str(cm.exception)
+                self.assertIn("non-negative", msg)
+                self.assertIn("index 0", msg)
 
         # The boundary itself is a legal input, not an error.
         res, _ = trace_particles_boozer_perturbed_with_collisions(
@@ -1090,7 +1099,15 @@ class TestPerturbedCollisions(unittest.TestCase):
                         mode=mode,
                         **kw,
                     )
-                self.assertIn("lost its Python subclass", str(cm.exception))
+                # Pin the diagnosis and the remedy, not the exact phrasing:
+                # the message must name field_type as the observable symptom
+                # and point at the object's lifetime as the usual cause.  It
+                # deliberately does not assert the subclass was ever present
+                # -- a bare C++ BoozerMagneticField never has field_type, and
+                # is refused here for the same reason.
+                msg = str(cm.exception)
+                self.assertIn("field_type", msg)
+                self.assertIn("outlives the call", msg)
 
     def test_stopping_criterion_fires_and_pins_the_hit_layout(self):
         """
@@ -1335,6 +1352,49 @@ class TestInterpolatedField(unittest.TestCase):
                         "interpolated field"
                     ),
                 )
+
+
+class TestProfileGridValidation(unittest.TestCase):
+    """
+    The profile grid must have at least two nodes.
+
+    Linear interpolation needs two nodes and a non-zero spacing.  With one the
+    spacing is 0/0 and the lookup indexes off the end of the sample array;
+    measured before the check, that produced nu_D = K = D_par = nan from the
+    shipped coefficient routine rather than any error.  The same lookup runs
+    on the GPU against a raw device pointer, where the equivalent read is
+    unchecked.
+    """
+
+    def _bg(self, n_grid_points):
+        return ThermalBackground(
+            n_profile=lambda s: 1e20,
+            T_profile=lambda s: 10e3 * ONE_EV,
+            mass=2 * PROTON_MASS,
+            charge=ELEMENTARY_CHARGE,
+            n_grid_points=n_grid_points,
+        )
+
+    def test_degenerate_grid_is_refused(self):
+        for npts in (1, 0, -3):
+            with self.subTest(n_grid_points=npts):
+                with self.assertRaises(ValueError) as cm:
+                    self._bg(npts)
+                self.assertIn("at least 2", str(cm.exception))
+
+    def test_two_points_is_accepted_and_finite(self):
+        """Two nodes is the smallest legal grid and must still work."""
+        c = sopp.compute_collision_coefficients(
+            1.0e7,
+            0.5,
+            float(ALPHA_PARTICLE_MASS),
+            float(ALPHA_PARTICLE_CHARGE),
+            [self._bg(2)._to_cpp()],
+        )
+        for name in ("nu_D", "K", "D_par"):
+            with self.subTest(coefficient=name):
+                self.assertTrue(np.isfinite(getattr(c, name)))
+        self.assertGreater(c.nu_D, 0.0)
 
 
 class TestCollisionSubstepping(unittest.TestCase):

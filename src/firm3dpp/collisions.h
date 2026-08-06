@@ -3,7 +3,6 @@
 #include <vector>
 #include <cmath>
 #include <cstdio>
-#include <limits>
 #include <stdexcept>
 #include <algorithm>
 
@@ -24,6 +23,11 @@ static constexpr double COLL_PI          = 3.14159265358979323846;
 static constexpr double COLL_EPSILON0    = 8.8541878188e-12;   // F/m
 static constexpr double COLL_SQRT_PI     = 1.7724538509055159; // sqrt(pi)
 static constexpr double COLL_HBAR        = 1.054571817e-34;    // J·s (reduced Planck)
+
+// Maximum number of background species.  Lives here rather than in the CUDA
+// translation unit because both the device's constant-memory array and the
+// host wrapper's stack buffer are sized by it.
+static constexpr int COLL_MAX_SPECIES = 8;
 
 // Reflecting speed boundary as a fraction of sqrt(T_b / m_a), following
 // ASCOT5 (MCCC_CUTOFF in mccc.h): "if the guiding center energy goes below
@@ -58,20 +62,10 @@ struct ThermalBackground {
     double mass;             // kg
     double charge;           // C (signed)
 
-    // Linear interpolation helper
-    double interp(const vector<double>& vals, double s) const {
-        s = std::max(s_grid.front(), std::min(s_grid.back(), s));
-        int n = (int)s_grid.size();
-        // Uniform grid assumed
-        double ds = (s_grid.back() - s_grid.front()) / (n - 1);
-        int i = (int)((s - s_grid.front()) / ds);
-        i = std::max(0, std::min(n - 2, i));
-        double t = (s - s_grid[i]) / ds;
-        return vals[i] * (1.0 - t) + vals[i + 1] * t;
-    }
-
-    double n(double s) const { return interp(n_grid, s); }
-    double T(double s) const { return interp(T_grid, s); }
+    // No interpolation here: every consumer goes through
+    // ThermalBackgroundView, which is the one implementation of the profile
+    // lookup and the only one a device build can call.  A second copy on this
+    // struct would be dead on the host and free to drift from the live one.
 };
 
 
@@ -148,7 +142,13 @@ FIRM3D_HD inline int compute_collision_coefficients_core(
     // first background species (Tb[0]); the coldest one is the conservative
     // generalization when species temperatures differ.
     double inv_lD_sq = 0.0;
-    double T_min = 1.0 / 0.0;   // +inf without <limits>
+    // HUGE_VAL rather than std::numeric_limits<double>::infinity(): the
+    // latter is a constexpr *host* function, which nvcc rejects in device
+    // code unless built with --expt-relaxed-constexpr, and this project does
+    // not pass it.  A literal 1.0/0.0 would also work but is folded away
+    // under -ffast-math / --use_fast_math, silently disabling the guard
+    // below.
+    double T_min = HUGE_VAL;
     for (int ib = 0; ib < n_backgrounds; ++ib) {
         const ThermalBackgroundView& bg = backgrounds[ib];
         double n_b = bg.n(s), T_b = bg.T(s);
@@ -158,7 +158,7 @@ FIRM3D_HD inline int compute_collision_coefficients_core(
         }
     }
     double lambda_D = (inv_lD_sq > 0.0) ? 1.0 / std::sqrt(inv_lD_sq) : 0.0;
-    if (T_min < 1.0 / 0.0)
+    if (T_min < HUGE_VAL)
         c.v_cutoff = COLL_CUTOFF * std::sqrt(T_min / m_a);
 
     for (int ib = 0; ib < n_backgrounds; ++ib) {
@@ -258,33 +258,67 @@ inline CollisionCoefficients compute_collision_coefficients(
     double q_a,
     const vector<ThermalBackground>& backgrounds)
 {
-    vector<ThermalBackgroundView> views;
-    views.reserve(backgrounds.size());
-    for (const auto& bg : backgrounds) {
-        ThermalBackgroundView vw;
-        vw.n_grid   = bg.n_grid.data();
-        vw.T_grid   = bg.T_grid.data();
-        vw.n_points = (int)bg.s_grid.size();
-        vw.s_min    = bg.s_grid.front();
-        vw.s_max    = bg.s_grid.back();
-        vw.mass     = bg.mass;
-        vw.charge   = bg.charge;
-        views.push_back(vw);
+    // Stack buffer, not a vector: this runs once per collision sub-step per
+    // particle, so a malloc/free pair here measured ~2x the cost of the whole
+    // call (84-95 ns against 41.6 ns).  COLL_MAX_SPECIES is the same bound the
+    // device's constant-memory array uses.
+    const int n_bg = (int)backgrounds.size();
+    if (n_bg > COLL_MAX_SPECIES) {
+        char msg[160];
+        std::snprintf(msg, sizeof(msg),
+            "collisions: at most %d background species are supported, "
+            "but %d were given", COLL_MAX_SPECIES, n_bg);
+        throw std::invalid_argument(msg);
+    }
+    ThermalBackgroundView views[COLL_MAX_SPECIES];
+    for (int ib = 0; ib < n_bg; ++ib) {
+        const ThermalBackground& bg = backgrounds[ib];
+        views[ib].n_grid   = bg.n_grid.data();
+        views[ib].T_grid   = bg.T_grid.data();
+        views[ib].n_points = (int)bg.s_grid.size();
+        views[ib].s_min    = bg.s_grid.front();
+        views[ib].s_max    = bg.s_grid.back();
+        views[ib].mass     = bg.mass;
+        views[ib].charge   = bg.charge;
     }
 
     CollisionCoefficients c = {0.0, 0.0, 0.0, 0.0, 0.0};
     int status = compute_collision_coefficients_core(
-        v, s, m_a, q_a, views.data(), (int)views.size(), &c);
+        v, s, m_a, q_a, views, n_bg, &c);
 
     if (status == COLL_LNLAMBDA_NONPOSITIVE) {
-        // Re-derive the offending species for the message; the core returns a
-        // status only, since it also runs where throwing is impossible.
-        char msg[256];
-        std::snprintf(msg, sizeof(msg),
-            "collisions: ln_Lambda <= 0 (v=%.3e m/s, s=%.3f): background "
-            "profiles give an unphysical Coulomb logarithm, which happens when "
-            "T falls to zero at finite density; keep T finite where n > 0",
-            v, s);
+        // The core returns a status only, since it also runs on device where
+        // throwing is impossible, so name the offending species here: with
+        // several backgrounds, knowing which one to fix is the actionable
+        // part.  ln_Lambda goes non-positive when the Debye length collapses
+        // to the impact parameter, and 1/lambda_D^2 = sum n_b q_b^2/(eps0 T_b)
+        // is dominated by the coldest dense species -- so report the active
+        // species with the smallest T_b rather than looking for T_b == 0,
+        // which is only the limiting case and usually not what was passed.
+        int worst = -1;
+        double T_worst = 0.0;
+        for (int ib = 0; ib < n_bg; ++ib) {
+            double n_b = views[ib].n(s), T_b = views[ib].T(s);
+            if (!(n_b > 0.0)) continue;
+            if (worst < 0 || T_b < T_worst) {
+                worst = (int)ib;
+                T_worst = T_b;
+            }
+        }
+        char msg[320];
+        if (worst >= 0) {
+            std::snprintf(msg, sizeof(msg),
+                "collisions: ln_Lambda <= 0 (v=%.3e m/s, s=%.3f): species %d "
+                "has n_b=%.3e m^-3 with T_b=%.3e J, an unphysical Coulomb "
+                "logarithm; keep T finite where n > 0",
+                v, s, worst, views[worst].n(s), views[worst].T(s));
+        } else {
+            std::snprintf(msg, sizeof(msg),
+                "collisions: ln_Lambda <= 0 (v=%.3e m/s, s=%.3f) over %d "
+                "background species: profiles give an unphysical Coulomb "
+                "logarithm; keep T finite where n > 0",
+                v, s, n_bg);
+        }
         throw std::runtime_error(msg);
     }
     return c;

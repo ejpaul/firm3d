@@ -219,12 +219,23 @@ def trace_particles_boozer_with_collisions_gpu(
     accepted orbit step, sub-cycled when the collision rates are fast relative
     to that step.
 
-    Differences from the CPU entry point, which are properties of the GPU
-    tracer rather than of collisions:
+    Differences from the CPU entry point:
 
-    * a single ``vtotal`` sets the velocity normalisation for every particle,
-      as in :func:`trace_particles_boozer_gpu`, rather than per-particle
-      ``(v_par, mu)``;
+    * **The speed is not returned, so the energy and magnetic moment cannot
+      be recovered.** The sixth column is ``dt``, matching
+      :func:`trace_particles_boozer_gpu`, where it costs nothing because
+      ``v == vtotal`` for every particle throughout.  Under collisions ``v``
+      changes, and neither it nor ``mu`` nor ``|B|`` is written out, so
+      slowing-down, the final energy distribution, and the trapped/passing
+      fraction are not obtainable from this function.  The CPU entry point
+      returns ``v`` as a sixth column for exactly this reason.  Use it if you
+      need those quantities.
+    * ``vtotal`` is the initial speed of every particle, not merely a
+      normalisation: ``mu`` is derived from it as
+      ``(vtotal**2 - v_par**2) / (2 |B|)``.  Passing ``|v_par| > vtotal``
+      therefore yields a negative ``mu``, which the orbit equations integrate
+      as given while the kick clamps it to zero -- a trace that corresponds
+      to no particle.  Nothing checks this.
     * only the final state is returned, not the trajectory;
     * stopping criteria are not available.
 
@@ -243,20 +254,32 @@ def trace_particles_boozer_with_collisions_gpu(
         tmax: Integration time in seconds.
         mass: EP mass in kg.
         charge: EP charge in C.
-        vtotal: Speed setting the velocity normalisation, in m/s.
+        vtotal: Initial speed of every particle, in m/s.  ``mu`` is derived
+            from this and ``parallel_speeds``; see above.
         tol: Tolerance for the adaptive step control.
         ns, ntheta, nzeta: Interpolant resolution.
         dt: Initial step size; ``None`` lets the tracer choose.
         rng_seed: Base seed.  Each particle uses a Philox stream keyed on its
             global index, so results do not depend on the block layout.
-        validate_profiles: Check up front that the profiles give a usable
-            Coulomb logarithm.  The device cannot raise, so this is the only
-            place an unphysical profile is reported.
+        validate_profiles: If ``True`` (default), check up front that the
+            profiles give a usable Coulomb logarithm.  The device cannot
+            raise, so this is the only place an unphysical profile is
+            reported: with it disabled, a profile giving ``ln Lambda <= 0``
+            makes the kick silently skip the affected particles, returning a
+            trace that is collisionless there and marked in no way.  The CPU
+            entry point raises from inside the trace instead.
 
     Returns:
         ``(nparticles, 6)`` array of final states,
         ``[t, s, theta, zeta, v_par, dt]``, as for
-        :func:`trace_particles_boozer_gpu`.
+        :func:`trace_particles_boozer_gpu`.  Note that the sixth column is
+        ``dt``, not the speed -- see above.
+
+    Raises:
+        ValueError: If ``field.field_type`` is not ``"vac"`` or ``""``, if
+            ``parallel_speeds`` does not match ``stz_inits`` in length, or if
+            the profiles give an unphysical Coulomb logarithm and
+            ``validate_profiles`` is set.
     """
     from firm3d.field.collisions import ThermalBackground, _validate_coulomb_log
 
@@ -267,6 +290,37 @@ def trace_particles_boozer_with_collisions_gpu(
             f"expected 'vac' or ''"
         )
     vacuum = field.field_type == "vac"
+
+    if len(parallel_speeds) != nparticles:
+        raise ValueError(
+            f"parallel_speeds has length {len(parallel_speeds)} but stz_inits "
+            f"has {nparticles} rows; the C++ layer indexes both by particle "
+            f"and would read past the shorter one"
+        )
+
+    # mu is derived on the device as (vtotal**2 - v_par**2)/(2|B|), so
+    # |v_par| > vtotal makes it negative -- and the two consumers then
+    # disagree, the orbit equations integrating the negative value while the
+    # kick clamps v_perp^2 to zero.  That is the same silent inconsistency
+    # trace_particles_boozer_perturbed_with_collisions rejects; reject it here
+    # too, where the offending index can still be named.  Tested as "not <="
+    # so NaN is caught as well.
+    parallel_speeds = np.asarray(parallel_speeds)
+    if not np.all(np.abs(parallel_speeds) <= abs(float(vtotal))):
+        bad = np.flatnonzero(~(np.abs(parallel_speeds) <= abs(float(vtotal))))
+        raise ValueError(
+            f"|parallel_speeds| must not exceed vtotal={vtotal!r}, else mu is "
+            f"negative; {bad.size} of {nparticles} violate this, first at "
+            f"index {bad[0]} with value {parallel_speeds[bad[0]]!r}"
+        )
+
+    # The kernel rewrites its stz_init buffer in place, turning (s, theta)
+    # into (s cos theta, s sin theta), and pybind hands it the caller's array
+    # unchanged for a C-contiguous float64 input.  Copy so that this entry
+    # point does not destroy its argument: callers reasonably keep the
+    # initial conditions to re-run at another tmax or to compare against the
+    # CPU tracer, and a silently corrupted array is very hard to attribute.
+    stz_inits = np.ascontiguousarray(stz_inits, dtype=float).copy()
 
     if isinstance(backgrounds, ThermalBackground):
         backgrounds = [backgrounds]

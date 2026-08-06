@@ -738,11 +738,17 @@ class TestGPUTracing(unittest.TestCase):
         memory not populated, the RNG dead -- the collisional trace would
         reproduce the collisionless one exactly, and every other check here
         would still pass.
+
+        Every call gets its own copy of the initial conditions.  The tracer
+        rewrites stz_init in place, turning (s, theta) into
+        (s cos theta, s sin theta) in the caller's buffer, so handing the same
+        array to both calls would launch them from different particles and
+        satisfy the comparison for a reason that has nothing to do with
+        collisions.  Measured on an A100: sharing the array gives
+        frac_moved = 1.00 whether or not the kick runs, while with copies a
+        zero-density background gives 0.02 against 1.00 for a live one.
         """
-        from firm3d.catapult.tracing import (
-            trace_particles_boozer_gpu,
-            trace_particles_boozer_with_collisions_gpu,
-        )
+        from firm3d.catapult.tracing import trace_particles_boozer_with_collisions_gpu
         from firm3d.field.collisions import ThermalBackground
         from firm3d.util.constants import ELEMENTARY_CHARGE, ONE_EV, PROTON_MASS
 
@@ -781,22 +787,53 @@ class TestGPUTracing(unittest.TestCase):
             "nzeta": 15,
         }
 
-        without = trace_particles_boozer_gpu(field, stz, vpar, **kw)
+        # A zero-density background makes every coefficient identically zero,
+        # so it is the control: it goes through the whole collisional entry
+        # point -- upload, constant memory, RNG, kick -- and must still land
+        # on the collisionless answer.  Without it, "the two runs differ" is
+        # satisfied by any difference at all, including one the kick did not
+        # cause.
+        zero_bg = ThermalBackground(
+            n_profile=lambda s: 0.0,
+            T_profile=lambda s: 1e3 * ONE_EV,
+            mass=2 * PROTON_MASS,
+            charge=ELEMENTARY_CHARGE,
+        )
+
+        without = trace_particles_boozer_gpu(field, stz.copy(), vpar, **kw)
         with_coll = trace_particles_boozer_with_collisions_gpu(
-            field, stz, vpar, backgrounds=bg, rng_seed=0, **kw
+            field, stz.copy(), vpar, backgrounds=bg, rng_seed=0, **kw
+        )
+        no_kick = trace_particles_boozer_with_collisions_gpu(
+            field, stz.copy(), vpar, backgrounds=zero_bg, rng_seed=0, **kw
         )
 
         self.assertEqual(with_coll.shape, (n, 6))
         self.assertTrue(np.all(np.isfinite(with_coll)), "non-finite GPU results")
 
-        # v_par must have been perturbed relative to the collisionless run.
-        dv = np.abs(with_coll[:, 4] - without[:, 4])
-        frac_moved = np.mean(dv > 1e-6 * VELOCITY)
+        # The guard in adjust_time must hold with the kick active too: it
+        # fires on every accepted step, so a particle running past tmax would
+        # keep being scattered.
+        np.testing.assert_allclose(with_coll[:, 0], kw["tmax"], rtol=1e-12)
+
+        def frac_moved(a, b):
+            return np.mean(np.abs(a[:, 4] - b[:, 4]) > 1e-6 * VELOCITY)
+
+        moved = frac_moved(with_coll, without)
         self.assertGreater(
-            frac_moved,
+            moved,
             0.9,
-            f"only {frac_moved:.2f} of particles differ from the collisionless "
+            f"only {moved:.2f} of particles differ from the collisionless "
             f"run; the collision kick is not reaching the device",
+        )
+
+        unmoved = frac_moved(no_kick, without)
+        self.assertLess(
+            unmoved,
+            0.1,
+            f"{unmoved:.2f} of particles differ from the collisionless run "
+            f"with a zero-density background, where every coefficient is "
+            f"zero; the comparison above is not measuring the kick",
         )
 
     def test_boozer_finite_beta(self):
