@@ -262,85 +262,85 @@ def trace_particles_boozer_with_collisions(
     mode=None,
 ):
     r"""
-        Trace guiding-centre particles including Monte Carlo Coulomb collisions
-        with one or more Maxwellian background species.
+    Trace guiding-centre particles including Monte Carlo Coulomb collisions
+    with one or more Maxwellian background species.
 
-        The orbit is advanced by adaptive Dormand-Prince in
-        :math:`(s, \theta, \zeta, v_\parallel)` at fixed :math:`\mu`, and the
-        collision operator is applied as a kick to :math:`(v, \xi)` at each
-        accepted step -- drift by explicit Euler plus the Milstein noise term,
-        following ASCOT5's ``mccc_gc_milstein.c``.  The kick is sub-cycled when
-        the collision rates are fast compared with the orbit step, which the
-        scheme depends on for accuracy in the thermal regime rather than being an
-        implementation detail.  Because :math:`\mu` is
-        constant within a step it is a parameter of the orbit equations rather
-        than a state variable, so the vacuum, ``noK`` and full guiding-centre
-        equations are all supported; which one is used follows
-        ``field.field_type``, as in
-        :func:`~firm3d.field.tracing.trace_particles_boozer`.
+    The orbit is advanced by adaptive Dormand-Prince in
+    :math:`(s, \theta, \zeta, v_\parallel)` at fixed :math:`\mu`, and the
+    collision operator is applied as a kick to :math:`(v, \xi)` at each
+    accepted step -- drift by explicit Euler plus the Milstein noise term,
+    following ASCOT5's ``mccc_gc_milstein.c``.  The kick is sub-cycled when
+    the collision rates are fast compared with the orbit step, which the
+    scheme depends on for accuracy in the thermal regime rather than being an
+    implementation detail.  Because :math:`\mu` is
+    constant within a step it is a parameter of the orbit equations rather
+    than a state variable, so the vacuum, ``noK`` and full guiding-centre
+    equations are all supported; which one is used follows
+    ``field.field_type``, as in
+    :func:`~firm3d.field.tracing.trace_particles_boozer`.
 
     For a shear-Alfven-wave field use
-        :func:`trace_particles_boozer_perturbed_with_collisions`, which takes the
-        wave and the same ``(v_par, mu)`` velocity description as
-        :func:`~firm3d.field.tracing.trace_particles_boozer_perturbed`.
+    :func:`trace_particles_boozer_perturbed_with_collisions`, which takes the
+    wave and the same ``(v_par, mu)`` velocity description as
+    :func:`~firm3d.field.tracing.trace_particles_boozer_perturbed`.
 
-        See Hirvijoki et al., *Phys. Plasmas* **20**, 092505 (2013) and Boozer &
-        Kuo-Petravic, *Phys. Fluids* **24**, 851 (1981) for the theoretical basis.
+    See Hirvijoki et al., *Phys. Plasmas* **20**, 092505 (2013) and Boozer &
+    Kuo-Petravic, *Phys. Fluids* **24**, 851 (1981) for the theoretical basis.
 
-        Args:
-            field: The :class:`~firm3d.field.boozermagneticfield.BoozerMagneticField`
-                instance.
-            stz_inits: ``(nparticles, 3)`` array of initial positions
-                :math:`(s, \theta, \zeta)` in Boozer coordinates.
-            parallel_speeds: ``(nparticles,)`` array of initial :math:`v_\parallel`
-                in m/s.
-            backgrounds: A :class:`ThermalBackground` or a list thereof.  When
-                multiple species are provided their collision coefficients are
-                summed.
-            tmax: Integration time in seconds.
-            mass: EP mass in kg.
-            charge: EP charge in C.
-            Ekin: Initial kinetic energy in J.  Either a scalar applied to all
-                particles or a ``(nparticles,)`` array.
-            tol: Default tolerance when solver-specific tolerances are not set.
-            abstol: Absolute tolerance for the DP adaptive step control.
-            reltol: Relative tolerance for the DP adaptive step control.
-            comm: MPI communicator; particles are distributed across ranks.
-            stopping_criteria: List of stopping criteria (same as
-                :func:`~firm3d.field.tracing.trace_particles_boozer`).
-            dt_save: Time interval at which trajectory snapshots are saved (s).
-            forget_exact_path: If ``True``, return only the first and last state
-                of each particle.
-            axis: Coordinate singularity handling (0, 1, or 2; default 2).
-            ode_solver: ``"dormand_prince"`` (recommended) or ``"boost"``.
-            DP_hmin: Minimum step size for the Dormand-Prince solver, in
-                seconds.  When the adaptive step falls below this value the
-                step is accepted anyway.  Prevents the solver from grinding
-                when a particle diffuses deep below the background thermal
-                speed, where the pitch-scattering rate diverges as 1/v^3.
-            rng_seed: Seed for the per-particle Wiener process.  Each particle
-                uses ``rng_seed + particle_index`` so that MPI runs are
-                reproducible.
-            validate_profiles: If ``True`` (default), check up front that the
-                background profiles give :math:`\ln\Lambda > 0` everywhere and
-                raise :class:`ValueError` if not, rather than letting the C++
-                layer abort part-way through a trace.  The check is evaluated at
-                :math:`v \to 0`, where :math:`\ln\Lambda` is smallest, so it is
-                conservative: it rejects profiles that a fast particle which
-                never slows into the thermal range would survive.  Set to
-                ``False`` to trace such a case anyway.
-            mode: Which guiding-centre equations to use: ``"gc"``, ``"gc_vac"``
-                or ``"gc_nok"``.  Defaults to ``"gc_" + field.field_type``;
-                passing a value inconsistent with the field warns and proceeds
-                with the value given.
+    Args:
+        field: The :class:`~firm3d.field.boozermagneticfield.BoozerMagneticField`
+            instance.
+        stz_inits: ``(nparticles, 3)`` array of initial positions
+            :math:`(s, \theta, \zeta)` in Boozer coordinates.
+        parallel_speeds: ``(nparticles,)`` array of initial :math:`v_\parallel`
+            in m/s.
+        backgrounds: A :class:`ThermalBackground` or a list thereof.  When
+            multiple species are provided their collision coefficients are
+            summed.
+        tmax: Integration time in seconds.
+        mass: EP mass in kg.
+        charge: EP charge in C.
+        Ekin: Initial kinetic energy in J.  Either a scalar applied to all
+            particles or a ``(nparticles,)`` array.
+        tol: Default tolerance when solver-specific tolerances are not set.
+        abstol: Absolute tolerance for the DP adaptive step control.
+        reltol: Relative tolerance for the DP adaptive step control.
+        comm: MPI communicator; particles are distributed across ranks.
+        stopping_criteria: List of stopping criteria (same as
+            :func:`~firm3d.field.tracing.trace_particles_boozer`).
+        dt_save: Time interval at which trajectory snapshots are saved (s).
+        forget_exact_path: If ``True``, return only the first and last state
+            of each particle.
+        axis: Coordinate singularity handling (0, 1, or 2; default 2).
+        ode_solver: ``"dormand_prince"`` (recommended) or ``"boost"``.
+        DP_hmin: Minimum step size for the Dormand-Prince solver, in
+            seconds.  When the adaptive step falls below this value the
+            step is accepted anyway.  Prevents the solver from grinding
+            when a particle diffuses deep below the background thermal
+            speed, where the pitch-scattering rate diverges as 1/v^3.
+        rng_seed: Seed for the per-particle Wiener process.  Each particle
+            uses ``rng_seed + particle_index`` so that MPI runs are
+            reproducible.
+        validate_profiles: If ``True`` (default), check up front that the
+            background profiles give :math:`\ln\Lambda > 0` everywhere and
+            raise :class:`ValueError` if not, rather than letting the C++
+            layer abort part-way through a trace.  The check is evaluated at
+            :math:`v \to 0`, where :math:`\ln\Lambda` is smallest, so it is
+            conservative: it rejects profiles that a fast particle which
+            never slows into the thermal range would survive.  Set to
+            ``False`` to trace such a case anyway.
+        mode: Which guiding-centre equations to use: ``"gc"``, ``"gc_vac"``
+            or ``"gc_nok"``.  Defaults to ``"gc_" + field.field_type``;
+            passing a value inconsistent with the field warns and proceeds
+            with the value given.
 
-        Returns:
-            Tuple ``(res_tys, res_hits)`` where each element of ``res_tys`` is a
-            numpy array of shape ``(ntimesteps, 6)`` with columns
-            ``[t, s, θ, ζ, v_par, v]``.  The extra column ``v`` (total speed)
-            allows the kinetic energy :math:`E = \tfrac{1}{2} m v^2` and
-            magnetic moment :math:`\mu = (v^2 - v_\parallel^2) / (2B)` to be
-            reconstructed at each saved point.
+    Returns:
+        Tuple ``(res_tys, res_hits)`` where each element of ``res_tys`` is a
+        numpy array of shape ``(ntimesteps, 6)`` with columns
+        ``[t, s, θ, ζ, v_par, v]``.  The extra column ``v`` (total speed)
+        allows the kinetic energy :math:`E = \tfrac{1}{2} m v^2` and
+        magnetic moment :math:`\mu = (v^2 - v_\parallel^2) / (2B)` to be
+        reconstructed at each saved point.
     """
     if stopping_criteria is None:
         stopping_criteria = []
@@ -523,17 +523,22 @@ def trace_particles_boozer_perturbed_with_collisions(
         _validate_coulomb_log(cpp_backgrounds, float(mass), float(charge))
 
     # B0 only surfaces the Python subclass while a Python reference to it is
-    # alive; if the caller let theirs go out of scope, pybind hands back the
-    # C++ base, which carries no field_type.  Say that, rather than raising an
-    # opaque AttributeError.
-    field_type = getattr(perturbed_field.B0, "field_type", None)
-    if field_type is None and mode is None:
+    # alive; once the caller's goes out of scope pybind hands back the C++
+    # base.  A missing field_type is the readable symptom, but the field is
+    # unusable outright at that point -- its _iota_impl and friends live on the
+    # subclass too, so tracing raises "_iota_impl was not implemented" from
+    # inside the first right-hand-side evaluation.  Refuse here regardless of
+    # mode: supplying one gets past this check and then fails deeper, with an
+    # error naming none of the cause.
+    if getattr(perturbed_field.B0, "field_type", None) is None:
         raise ValueError(
-            "cannot read field_type from perturbed_field.B0, so the orbit "
-            "equations cannot be selected automatically.  Keep a reference to "
-            "the BoozerMagneticField alive for the duration of the call, or "
-            "pass mode explicitly."
+            "perturbed_field.B0 has lost its Python subclass, so the field "
+            "cannot be evaluated (field_type, iota, G and the rest live on the "
+            "subclass).  Keep a reference to the BoozerMagneticField alive for "
+            "the duration of the call -- e.g. bind it to a local -- rather "
+            "than constructing it inline in the ShearAlfvenWave argument."
         )
+    field_type = perturbed_field.B0.field_type
     if mode is not None:
         mode = mode.lower()
         assert mode in ["gc_vac", "gc_nok"]

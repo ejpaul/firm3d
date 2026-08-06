@@ -959,17 +959,19 @@ solve_sympl_wrapper(
 // ==========================================================================
 
 // --------------------------------------------------------------------------
-// solve_sde: drive any static-field guiding-centre right-hand side with the
-// Monte Carlo collision operator.  Output rows are [t, s, theta, zeta, v_par, v].
+// solve_sde: drive any guiding-centre right-hand side with the Monte Carlo
+// collision operator.  Output rows are [t, s, theta, zeta, v_par, v].
 //
-// The orbit state is the ordinary 4-element [s, theta, zeta, v_par]; mu is a
-// parameter of the right-hand side, not a state variable.  That works because
-// the whole collision operator -- drag as well as diffusion -- is applied as a
-// kick at accepted-step boundaries (see milstein_collision_step), so within a
-// step the orbit equations conserve mu exactly.  The consequence is that any
-// static-field guiding-centre right-hand side works unchanged -- vacuum, noK
-// and full -- without being rewritten in (v, xi).  The state width is checked
-// below rather than taken on trust.
+// The orbit state is the ordinary [s, theta, zeta, v_par], optionally with t
+// as a fifth component for the perturbed right-hand sides; mu is a parameter
+// of the right-hand side, not a state variable.  That works because the whole
+// collision operator -- drag as well as diffusion -- is applied as a kick at
+// accepted-step boundaries (see milstein_collision_step), so within a step the
+// orbit equations hold mu fixed.  The consequence is that every right-hand
+// side works unchanged -- vacuum, noK, full, and both shear-Alfven-wave
+// variants -- without being rewritten in (v, xi).  The kick writes v_par and
+// mu and leaves any t component alone.  The state width is checked below
+// rather than taken on trust.
 //
 // At each accepted step the kick converts (v_par, mu) -> (v, xi) using |B| at
 // the current position, applies drift and noise, and converts back.
@@ -1001,7 +1003,7 @@ solve_sde(
     shared_ptr<BoozerMagneticField> field,
     const vector<ThermalBackground>& backgrounds,
     double m_a, double q_a,
-    vector<double> stzv_init,      // [s, theta, zeta, v_par]
+    vector<double> stzv_init,      // [s, theta, zeta, v_par] (+ t if size 5)
     double mu_init,                // magnetic moment [m^2/s^2/T]
     double tau_max,
     double dtau,

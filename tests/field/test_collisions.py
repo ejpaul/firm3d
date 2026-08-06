@@ -943,6 +943,111 @@ class TestPerturbedCollisions(unittest.TestCase):
             f"not updating it",
         )
 
+    def test_zero_amplitude_matches_static_collisional_path(self):
+        """
+        At zero wave amplitude the perturbed path must reproduce the static
+        collisional path, collisions included.
+
+        This is the test that observes the ``set_mu`` overrides this feature
+        adds to the two perturbed right-hand sides.  Nothing else does: the
+        speed column is written as ``sqrt(v_par^2 + 2 mu |B|)`` from the
+        integrator's own ``mu``, so any assertion that recovers ``mu`` from
+        the output returns it by construction and holds even if the orbit
+        integrated a stale value.
+
+        Here the kick's ``mu`` reaches the orbit only through ``set_mu``, and
+        the static path -- whose ``set_mu`` is exercised by the rest of the
+        suite -- provides an independent reference for the same physics, since
+        the perturbed equations reduce to the vacuum ones when Phihat = 0.
+        A background is essential: with no collisions ``mu`` never changes and
+        ``set_mu`` cannot matter.
+
+        Measured: 2.0e-11 as shipped, against 2.0e-04 with both perturbed
+        ``set_mu`` overrides replaced by no-ops -- seven orders of separation,
+        so the bound below is not delicately placed.
+        """
+        field = BoozerAnalytic(1.0, 5.0, 0, 40.0, 0.5, 0.4)
+        saw = ShearAlfvenHarmonic(0.0, 2, 1, 1e5, 0.0, field)
+        bg = ThermalBackground(
+            n_profile=lambda s: 1e21,
+            T_profile=lambda s: 1e3 * ONE_EV,
+            mass=2 * PROTON_MASS,
+            charge=ELEMENTARY_CHARGE,
+        )
+        Ekin = FUSION_ALPHA_PARTICLE_ENERGY
+        v0 = np.sqrt(2 * Ekin / ALPHA_PARTICLE_MASS)
+        vpar0 = 0.6 * v0
+        field.set_points(self._stz)
+        mu0 = (v0**2 - vpar0**2) / (2.0 * field.modB()[0, 0])
+
+        kw = {
+            "tmax": 3e-7,
+            "mass": ALPHA_PARTICLE_MASS,
+            "charge": ALPHA_PARTICLE_CHARGE,
+            "abstol": 1e-11,
+            "reltol": 1e-11,
+            "dt_save": 3e-7,
+            "rng_seed": 7,
+            "backgrounds": bg,
+        }
+        static, _ = trace_particles_boozer_with_collisions(
+            field, self._stz, np.array([vpar0]), Ekin=Ekin, **kw
+        )
+        perturbed, _ = trace_particles_boozer_perturbed_with_collisions(
+            saw, self._stz, np.array([vpar0]), np.array([mu0]), **kw
+        )
+        np.testing.assert_allclose(
+            np.asarray(perturbed[0])[-1, 1:],
+            np.asarray(static[0])[-1, 1:],
+            rtol=1e-8,
+            atol=1e-12,
+            err_msg=(
+                "zero-amplitude perturbed collisional trace disagrees with the "
+                "static one: the kick's mu is not reaching the perturbed orbit "
+                "equations"
+            ),
+        )
+
+    def test_dead_b0_reference_is_refused_with_the_cause(self):
+        """
+        A ShearAlfvenWave whose BoozerMagneticField reference has been dropped
+        must be refused, whether or not mode is supplied.
+
+        B0 returns the Python subclass only while a Python reference to it
+        survives.  Once it does not, the field cannot be evaluated at all --
+        iota, G and modB are all implemented on the subclass -- so tracing
+        fails inside the first right-hand-side evaluation with
+        "_iota_impl was not implemented", which names nothing about the cause.
+        Passing mode explicitly does not help: it gets past the field_type
+        lookup and then fails exactly the same way, deeper.
+        """
+
+        def wave_with_dropped_field():
+            field = BoozerAnalytic(1.0, 5.0, 0, 40.0, 0.5, 0.4)
+            return ShearAlfvenHarmonic(1e-4, 2, 1, 1e5, 0.0, field)
+
+        kw = {
+            "tmax": 1e-8,
+            "mass": ALPHA_PARTICLE_MASS,
+            "charge": ALPHA_PARTICLE_CHARGE,
+            "dt_save": 1e-8,
+            "backgrounds": _zero_background(),
+        }
+        for mode in (None, "gc_vac"):
+            with self.subTest(mode=mode):
+                saw = wave_with_dropped_field()
+                self.assertIsNone(getattr(saw.B0, "field_type", None))
+                with self.assertRaises(ValueError) as cm:
+                    trace_particles_boozer_perturbed_with_collisions(
+                        saw,
+                        self._stz,
+                        np.array([1e6]),
+                        np.array([1e6]),
+                        mode=mode,
+                        **kw,
+                    )
+                self.assertIn("lost its Python subclass", str(cm.exception))
+
     def test_full_k_field_is_rejected(self):
         """There is no full-K perturbed right-hand side; say so, don't guess."""
         saw, _, vpar, mus = self._setup(1e-3, {"I0": 0.5, "K1": 0.3})

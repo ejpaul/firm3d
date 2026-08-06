@@ -27,13 +27,12 @@ public:
     // conserved by the orbit equations, which is why it stays a parameter of
     // the right-hand side rather than becoming a state variable.
     //
-    // The shear-Alfven-wave variants deliberately do not implement this, so
-    // that reaching them fails loudly rather than integrating silently.  They
-    // are excluded for two structural reasons, not because they vary mu
-    // within a step (they hold it fixed too): their state carries t as a
-    // fifth component, which solve_sde's 4-element layout cannot represent,
-    // and the collision kick needs |B| from a BoozerMagneticField rather than
-    // a ShearAlfvenWave.
+    // Every concrete right-hand side in tracing.cpp implements this, the
+    // perturbed ones included: a shear-Alfven wave changes the particle's
+    // energy but leaves mu an adiabatic invariant at omega << Omega_c, so it
+    // is fixed within a step there too.  The throwing default is for any
+    // future right-hand side that cannot hold mu fixed across a step, so that
+    // reaching it fails loudly rather than integrating silently.
     virtual void set_mu(double) {
         throw std::invalid_argument(
             "this right-hand side does not support collisions: mu is not settable"
