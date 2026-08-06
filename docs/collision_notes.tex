@@ -566,6 +566,37 @@ When \texttt{forget\_exact\_path=True} only the first and last rows are retained
 Each particle uses RNG seed $\texttt{rng\_seed} + i$, making multi-particle
 MPI runs fully reproducible.
 
+\subsection{GPU}
+
+\texttt{trace\_particles\_boozer\_with\_collisions\_gpu} runs the same
+coefficient and Milstein routines, compiled for device from this same source
+rather than transcribed, and applies the kick after each accepted orbit step
+with the same sub-cycling.  Four differences follow from the GPU tracer
+rather than from the collision model:
+
+\begin{itemize}
+  \item Only the final state is returned, as $(\text{nparticles},\,6)$ with
+        the same columns as above --- so $E$ and $\mu$ remain recoverable ---
+        rather than the whole trajectory.  The collisionless GPU tracer puts
+        the final step size in the last column instead, since without
+        collisions $v$ never leaves its initial value.
+  \item Stopping criteria are not available.
+  \item A single $v_{\rm total}$ sets the initial speed of every particle,
+        and $\mu$ is derived from it; the CPU entry point takes
+        $(\vpar, \mu)$ per particle.
+  \item Randomness comes from a counter-based Philox generator whose
+        subsequence is keyed on the global particle index, not from
+        \texttt{mt19937\_64} seeded with $\texttt{rng\_seed} + i$.  Both are
+        reproducible and independent of how particles are distributed over
+        ranks or blocks, but they are different streams, so the two tracers
+        agree statistically rather than element by element.
+\end{itemize}
+
+The device cannot raise, so the $\lnL \leq 0$ check described above runs on
+the host before launch.  With \texttt{validate\_profiles=False} that check is
+skipped and the kick is instead silently omitted wherever the model is
+undefined, which the returned array does not mark.
+
 %-----------------------------------------------------------------------
 \section{Python Interface}
 %-----------------------------------------------------------------------

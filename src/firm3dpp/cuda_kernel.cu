@@ -836,7 +836,8 @@ __device__ void check_has_left<CoordSys::Boozer>(bool* has_left, double* state, 
 // ---------------------------------------------------------------------------
 __device__ void collision_kick(double* state, double* mu, double* derivs,
                                double dt_taken,
-                               curandStatePhilox4_32_10_t* rng)
+                               curandStatePhilox4_32_10_t* rng,
+                               double* v_out)
 {
     if (coll_n_bgs_d <= 0) return;
 
@@ -890,13 +891,19 @@ __device__ void collision_kick(double* state, double* mu, double* derivs,
 
     state[3*PARTICLES_PER_BLOCK + tid] = v * xi;
     mu[tid] = v * v * (1.0 - xi*xi) / (2.0 * B);
+    // Publish the speed here, where it is exact.  It cannot be rebuilt from
+    // the output later: |B| would have to come from the derivative buffer,
+    // and stage 6 is evaluated at state + dt*(...), which coincides with the
+    // state only in the instant after a step is accepted -- which is now.
+    v_out[tid] = v;
 }
 
 template<RHS id>
 // mu and rng default to null so callers that do not trace physics -- the
 // timestep probe kernel -- opt out of the collision kick explicitly.
 __device__ void adjust_time(double* t, double* dt, double* state, double* derivs, double* x_temp, bool* has_left, double* dtmax,
-                            double* mu = nullptr, curandStatePhilox4_32_10_t* rng = nullptr){
+                            double* mu = nullptr, curandStatePhilox4_32_10_t* rng = nullptr,
+                            double* v_out = nullptr){
     // A block keeps looping while *any* of its particles is still running, so
     // a particle that is already done still enters here on every remaining
     // iteration.  Without the tmax test below it would keep integrating --
@@ -967,8 +974,8 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
         // collisionless kernels are unaffected.
         constexpr CoordSys coord = map_rhs_to_coord<id>();
         if constexpr (coord == CoordSys::Boozer) {
-            if (mu != nullptr && rng != nullptr) {
-                collision_kick(state, mu, derivs, dt_accepted, rng);
+            if (mu != nullptr && rng != nullptr && v_out != nullptr) {
+                collision_kick(state, mu, derivs, dt_accepted, rng, v_out);
             }
         }
         // check if particle has left the device
@@ -1004,6 +1011,7 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
     __shared__ double state[4 * PARTICLES_PER_BLOCK];
     __shared__ bool has_left[PARTICLES_PER_BLOCK];
     __shared__ curandStatePhilox4_32_10_t rng_state[PARTICLES_PER_BLOCK];
+    __shared__ double v_tot[PARTICLES_PER_BLOCK];
 
 
     bool is_valid = idx < nparticles_d && threadIdx.x < PARTICLES_PER_BLOCK;
@@ -1030,6 +1038,9 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
         if (coll_n_bgs_d > 0) {
             curand_init(coll_seed_d, (unsigned long long)idx, 0ULL, &rng_state[threadIdx.x]);
         }
+        // Correct before any kick, and the value reported for a particle
+        // whose kick is skipped (left the device, or a coefficient failure).
+        v_tot[threadIdx.x] = v_total_d;
     }
     __syncthreads();
 
@@ -1057,7 +1068,7 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
 
         __syncthreads();
         if(is_valid){
-            adjust_time<id>(t, dt, state, derivs, x_temp, has_left, dtmax, mu, &rng_state[threadIdx.x]);
+            adjust_time<id>(t, dt, state, derivs, x_temp, has_left, dtmax, mu, &rng_state[threadIdx.x], v_tot);
         }
         __syncthreads();
     }
@@ -1067,7 +1078,24 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
         for(int i=0; i<4; ++i){
             out[6*idx + i + 1] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
         }
-        out[6*idx + 5] = dt[threadIdx.x];
+        // Last column: the final step size, except under collisions, where it
+        // is the total speed instead.
+        //
+        // Without collisions v == v_total_d for every particle throughout, so
+        // the caller already knows it and dt is the more useful diagnostic.
+        // With collisions v is the quantity that changed -- it carries the
+        // energy, and with |B| it gives back mu -- and nothing else in the
+        // output can recover it, which would leave slowing-down, the final
+        // energy distribution and the trapped fraction unobtainable.  This
+        // matches the layout of the CPU collisional tracer,
+        // trace_particles_boozer_with_collisions, which appends v for the
+        // same reason.
+        constexpr CoordSys out_coord = map_rhs_to_coord<id>();
+        double last = dt[threadIdx.x];
+        if constexpr (out_coord == CoordSys::Boozer) {
+            if (coll_n_bgs_d > 0) last = v_tot[threadIdx.x];
+        }
+        out[6*idx + 5] = last;
     }
     return;
 }

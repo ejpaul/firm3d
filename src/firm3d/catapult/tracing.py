@@ -219,23 +219,21 @@ def trace_particles_boozer_with_collisions_gpu(
     accepted orbit step, sub-cycled when the collision rates are fast relative
     to that step.
 
+    The sixth column is the total speed ``v``, not ``dt`` as in
+    :func:`trace_particles_boozer_gpu`.  Collisions change ``v``, so it is
+    what the run is about: it carries the kinetic energy
+    :math:`E = \\tfrac{1}{2} m v^2`, and with :math:`|B|` at the returned
+    position it gives back :math:`\\mu = (v^2 - v_\\parallel^2)/(2|B|)`.
+    Without it, slowing-down and the final energy distribution could not be
+    recovered from the output at all.  This matches the layout of the CPU
+    entry point, which appends ``v`` for the same reason.
+
     Differences from the CPU entry point:
 
-    * **The speed is not returned, so the energy and magnetic moment cannot
-      be recovered.** The sixth column is ``dt``, matching
-      :func:`trace_particles_boozer_gpu`, where it costs nothing because
-      ``v == vtotal`` for every particle throughout.  Under collisions ``v``
-      changes, and neither it nor ``mu`` nor ``|B|`` is written out, so
-      slowing-down, the final energy distribution, and the trapped/passing
-      fraction are not obtainable from this function.  The CPU entry point
-      returns ``v`` as a sixth column for exactly this reason.  Use it if you
-      need those quantities.
     * ``vtotal`` is the initial speed of every particle, not merely a
       normalisation: ``mu`` is derived from it as
       ``(vtotal**2 - v_par**2) / (2 |B|)``.  Passing ``|v_par| > vtotal``
-      therefore yields a negative ``mu``, which the orbit equations integrate
-      as given while the kick clamps it to zero -- a trace that corresponds
-      to no particle.  Nothing checks this.
+      would therefore give a negative ``mu``, so it is rejected.
     * only the final state is returned, not the trajectory;
     * stopping criteria are not available.
 
@@ -271,9 +269,8 @@ def trace_particles_boozer_with_collisions_gpu(
 
     Returns:
         ``(nparticles, 6)`` array of final states,
-        ``[t, s, theta, zeta, v_par, dt]``, as for
-        :func:`trace_particles_boozer_gpu`.  Note that the sixth column is
-        ``dt``, not the speed -- see above.
+        ``[t, s, theta, zeta, v_par, v]``.  The sixth column differs from
+        :func:`trace_particles_boozer_gpu`, which returns ``dt`` there.
 
     Raises:
         ValueError: If ``field.field_type`` is not ``"vac"`` or ``""``, if

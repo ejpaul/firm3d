@@ -836,6 +836,54 @@ class TestGPUTracing(unittest.TestCase):
             f"zero; the comparison above is not measuring the kick",
         )
 
+        # Column 5 is the speed, which is what makes the energy and mu
+        # recoverable.  Two independent checks, because a column that merely
+        # looked plausible would pass either one alone:
+        #
+        #   - with no collisions the speed is conserved exactly, so the
+        #     zero-density run must return vtotal;
+        #   - with collisions it must not, and against a cold background the
+        #     ensemble must lose energy on average -- the physics collisions
+        #     are here for, and the reason this column exists.
+        # With every coefficient zero the kick changes nothing, so the speed
+        # must come back as the launch speed, up to the energy drift of a
+        # non-symplectic adaptive integrator.  Measured 3.4e-05 here; the
+        # bound below is loose against that but still tight by orders of
+        # magnitude against the ways this column could be wrong -- dt would
+        # read 6e-08 and v_par half the launch speed.
+        #
+        # This assertion is what caught the first version of the column, which
+        # rebuilt v at output time from stage 6 of the derivative buffer.
+        # That stage is evaluated at state + dt*(...), which coincides with
+        # the state only in the instant after a step is accepted, so for any
+        # particle that finished before its block did the |B| was taken at the
+        # wrong point: the drift was 1.0e-02, 300x worse than this.
+        np.testing.assert_allclose(
+            no_kick[:, 5],
+            VELOCITY,
+            rtol=1e-3,
+            err_msg=(
+                "zero-density run does not return the launch speed in column "
+                "5; the speed column is not what is being written"
+            ),
+        )
+        self.assertTrue(np.all(with_coll[:, 5] > 0.0))
+        # Not asserted: that the ensemble slows.  An alpha's slowing-down time
+        # in this background is of order 0.1 s, so over 2e-6 s the drag moves
+        # the mean speed by ~1e-5 relative -- smaller than the spread the
+        # pitch-angle noise puts on it, and it can go either way on one seed.
+        self.assertNotAlmostEqual(
+            float(with_coll[:, 5].mean() / VELOCITY),
+            1.0,
+            places=6,
+            msg="collisional speeds are indistinguishable from the launch speed",
+        )
+        # v >= |v_par| is required for mu = (v^2 - v_par^2)/(2|B|) >= 0.
+        self.assertTrue(
+            np.all(with_coll[:, 5] >= np.abs(with_coll[:, 4]) - 1e-6 * VELOCITY),
+            "speed is below |v_par|, so the recovered mu would be negative",
+        )
+
     def test_boozer_finite_beta(self):
         n_metagrid_pts = 15
 
