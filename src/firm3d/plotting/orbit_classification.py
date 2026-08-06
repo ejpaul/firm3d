@@ -68,39 +68,6 @@ def _isotonic_regression(y, increasing=True):
     return y_mono
 
 
-def _chi_branch_shift(chi_ref, chi_target, period=2 * np.pi):
-    """
-    Shift ``chi_ref`` by an integer multiple of ``period`` to overlap ``chi_target``.
-
-    Args:
-        chi_ref (array-like): Reference chi array to be shifted.
-        chi_target (array-like): Target chi array that defines the desired
-            branch.
-        period (float, optional): Periodicity of chi [radians].
-            Default is :math:`2\\pi`.
-
-    Returns:
-        float: The shift ``k * period`` (integer multiple of ``period``)
-            that minimises the maximum nearest-neighbour distance from
-            any point in ``chi_target`` to the shifted ``chi_ref``.
-    """
-    chi_ref = np.asarray(chi_ref, dtype=float)
-    chi_target = np.atleast_1d(np.asarray(chi_target, dtype=float))
-    if chi_target.size == 0:
-        return 0.0
-    chi_center = np.median(chi_target)
-    k0 = int(np.round((chi_center - np.median(chi_ref)) / period))
-    best_k = k0
-    best_score = np.inf
-    for k in range(k0 - 2, k0 + 3):
-        shifted = chi_ref + k * period
-        score = np.max(np.min(np.abs(chi_target[:, None] - shifted[None, :]), axis=1))
-        if score < best_score:
-            best_score = score
-            best_k = k
-    return best_k * period
-
-
 class OrbitClassification:
     r"""
     A class to classify the trapping state and other diagnostics of a particle based on
@@ -503,7 +470,9 @@ class OrbitClassification:
                     "iota_s": iota_s,
                     "chi_traj_center": chi_traj_center,
                     "res_ty_segment": res_ty[index_start : index_end + 1, :].copy(),
-                    # Field-line sweep and monotonic well (precomputed for plotting)
+                    # Trajectory chi on the same branch as the quantities above,
+                    # so plot_bounce_segment does not have to re-derive it.
+                    "chis_seg": chis_seg.copy(),
                     "chi_grid_mean": chi_grid_mean.copy(),
                     "modB_grid_mean": modB.copy(),
                     "chi_left_mon": chi_left.copy(),
@@ -700,6 +669,7 @@ class OrbitClassification:
         chi_mirror_left = data["chi_mirror_left"]
         chi_mirror_right = data["chi_mirror_right"]
         res_ty_seg = data["res_ty_segment"]
+        chi_traj = data["chis_seg"]
         chi_traj_center = data["chi_traj_center"]
         chi_grid_mean = data["chi_grid_mean"]
         modB_grid_mean = data["modB_grid_mean"]
@@ -715,34 +685,20 @@ class OrbitClassification:
         point[:, 2] = res_ty_seg[:, 3]  # zeta
         self.field.set_points(point)
         modB_traj = self.field.modB()[:, 0]
-        chi_traj_plot = np.unwrap(
-            self.helicity_M * point[:, 1] - self.helicity_N * point[:, 2]
-        )
 
         title_str = f"dchi={dchi:.2f}, dchi_predicted={dchi_predicted:.2f}"
-
-        # Align precomputed field-line χ grid to the same branch as the trajectory.
-        chi_shift = _chi_branch_shift(chi_grid_mean, chi_traj_plot)
-        chi_field = chi_grid_mean + chi_shift
-        chi_min_plot = chi_min + chi_shift
-        chi_mirror_left_plot = chi_mirror_left + chi_shift
-        chi_mirror_right_plot = chi_mirror_right + chi_shift
-        chi_traj_center_plot = chi_traj_center + chi_shift
-
-        chi_left_mon_plot = chi_left_mon + chi_shift
-        chi_right_mon_plot = chi_right_mon + chi_shift
 
         # --- Figure 1: Full field-line well ---
         fig1 = plt.figure()
         plt.plot(
-            chi_field,
+            chi_grid_mean,
             modB_grid_mean,
             color="blue",
             label=r"$\alpha_{\rm mean}$",
             zorder=1,
         )
         plt.plot(
-            chi_left_mon_plot,
+            chi_left_mon,
             modB_left_mon,
             color="magenta",
             linewidth=2,
@@ -751,7 +707,7 @@ class OrbitClassification:
             zorder=3,
         )
         plt.plot(
-            chi_right_mon_plot,
+            chi_right_mon,
             modB_right_mon,
             color="magenta",
             linewidth=2,
@@ -759,7 +715,7 @@ class OrbitClassification:
             zorder=3,
         )
         plt.plot(
-            chi_traj_plot,
+            chi_traj,
             modB_traj,
             color="black",
             label="trajectory",
@@ -768,7 +724,7 @@ class OrbitClassification:
         )
         plt.axhline(modB_crit, color="red", label=r"$B_{\rm crit}$")
         plt.axvline(
-            chi_traj_center_plot,
+            chi_traj_center,
             color="gray",
             linestyle="-.",
             linewidth=1.5,
@@ -783,17 +739,17 @@ class OrbitClassification:
             plt.show()
 
         # --- Figure 2: Zoom on trajectory χ window ---
-        chi_ptp = np.ptp(chi_traj_plot)
+        chi_ptp = np.ptp(chi_traj)
         chi_margin = max(0.01, 0.1 * chi_ptp) if chi_ptp > 0 else 0.01
-        chi_xlim = (chi_traj_plot.min() - chi_margin, chi_traj_plot.max() + chi_margin)
+        chi_xlim = (chi_traj.min() - chi_margin, chi_traj.max() + chi_margin)
 
         def _in_win(chi_arr):
             return (chi_arr >= chi_xlim[0]) & (chi_arr <= chi_xlim[1])
 
-        field_mask = _in_win(chi_field)
+        field_mask = _in_win(chi_grid_mean)
 
-        mon_left_mask = _in_win(chi_left_mon_plot)
-        mon_right_mask = _in_win(chi_right_mon_plot)
+        mon_left_mask = _in_win(chi_left_mon)
+        mon_right_mask = _in_win(chi_right_mon)
         b_parts = [modB_traj, np.array([modB_crit])]
         if field_mask.any():
             b_parts.append(modB_grid_mean[field_mask])
@@ -808,7 +764,7 @@ class OrbitClassification:
         fig2 = plt.figure()
         if np.any(field_mask):
             plt.plot(
-                chi_field[field_mask],
+                chi_grid_mean[field_mask],
                 modB_grid_mean[field_mask],
                 color="blue",
                 label=r"$\alpha_{\rm mean}$",
@@ -817,7 +773,7 @@ class OrbitClassification:
                 zorder=2,
             )
         plt.plot(
-            chi_left_mon_plot,
+            chi_left_mon,
             modB_left_mon,
             color="magenta",
             linewidth=2,
@@ -826,7 +782,7 @@ class OrbitClassification:
             zorder=4,
         )
         plt.plot(
-            chi_right_mon_plot,
+            chi_right_mon,
             modB_right_mon,
             color="magenta",
             linewidth=2,
@@ -834,7 +790,7 @@ class OrbitClassification:
             zorder=4,
         )
         plt.plot(
-            chi_traj_plot,
+            chi_traj,
             modB_traj,
             color="black",
             linestyle="--",
@@ -845,10 +801,10 @@ class OrbitClassification:
         )
         plt.axhline(modB_crit, color="red", label=r"$B_{\rm crit}$")
         for chi_val, col, lbl in (
-            (chi_min_plot, "green", "chi_min"),
-            (chi_mirror_left_plot, "orange", "chi_mirror_left"),
-            (chi_mirror_right_plot, "purple", "chi_mirror_right"),
-            (chi_traj_center_plot, "gray", r"$\chi_{\rm center}$"),
+            (chi_min, "green", "chi_min"),
+            (chi_mirror_left, "orange", "chi_mirror_left"),
+            (chi_mirror_right, "purple", "chi_mirror_right"),
+            (chi_traj_center, "gray", r"$\chi_{\rm center}$"),
         ):
             if chi_xlim[0] <= chi_val <= chi_xlim[1]:
                 plt.axvline(chi_val, color=col, linestyle=":", label=lbl)
@@ -865,7 +821,7 @@ class OrbitClassification:
         vpar_traj = res_ty_seg[:, 4]
         fig3 = plt.figure()
         plt.plot(
-            chi_traj_plot,
+            chi_traj,
             vpar_traj,
             color="black",
             linestyle="--",
@@ -876,9 +832,9 @@ class OrbitClassification:
         plt.axhline(
             0, color="red", linewidth=1, linestyle="-", label=r"$v_{\parallel}=0$"
         )
-        if chi_xlim[0] <= chi_traj_center_plot <= chi_xlim[1]:
+        if chi_xlim[0] <= chi_traj_center <= chi_xlim[1]:
             plt.axvline(
-                chi_traj_center_plot,
+                chi_traj_center,
                 color="gray",
                 linestyle=":",
                 label=r"$\chi_{\rm center}$",
