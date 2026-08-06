@@ -24,6 +24,7 @@ try:
 except Exception:
     HAS_SIMSOPT = False
     InterpolatedField = type(None)
+from firm3d.catapult.tracing import trace_particles_boozer_gpu
 from firm3d.catapult.utils import (
     boozer_interpolant,
     boozer_saw_interpolant,
@@ -727,7 +728,6 @@ class TestGPUTracing(unittest.TestCase):
         ### test timesteps
         is_small = test_timestep(field, nfp, stz, vpar_init, VELOCITY, field.psi0, tol)
         self.assertTrue(is_small)
-
 
     def test_boozer_collisions(self):
         """
