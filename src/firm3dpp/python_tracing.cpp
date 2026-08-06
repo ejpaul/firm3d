@@ -127,6 +127,29 @@ void init_tracing(py::module_ &m){
         py::arg("rng_seed")=uint64_t(0)
     );
 
+    m.def("particle_guiding_center_boozer_perturbed_collision_tracing",
+        &particle_guiding_center_boozer_perturbed_collision_tracing,
+        py::arg("perturbed_field"),
+        py::arg("stz_init"),
+        py::arg("m"),
+        py::arg("q"),
+        py::arg("vtang"),
+        py::arg("mu_init"),
+        py::arg("tmax"),
+        py::arg("backgrounds"),
+        py::arg("vacuum"),
+        py::arg("noK"),
+        py::arg("stopping_criteria")=vector<shared_ptr<StoppingCriterion>>{},
+        py::arg("dt_save")=1e-6,
+        py::arg("forget_exact_path")=false,
+        py::arg("axis")=2,
+        py::arg("abstol")=1e-9,
+        py::arg("reltol")=1e-9,
+        py::arg("ode_solver")="dormand_prince",
+        py::arg("DP_hmin")=0.0,
+        py::arg("rng_seed")=uint64_t(0)
+    );
+
     m.def("particle_guiding_center_boozer_tracing", &particle_guiding_center_boozer_tracing,
         py::arg("field"),
         py::arg("stz_init"),

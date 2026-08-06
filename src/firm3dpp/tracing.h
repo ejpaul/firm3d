@@ -122,6 +122,29 @@ particle_guiding_center_boozer_collision_tracing(
 );
 
 tuple<vector<vector<double>>, vector<vector<double>>>
+particle_guiding_center_boozer_perturbed_collision_tracing(
+        shared_ptr<ShearAlfvenWave> perturbed_field,
+        vector<double> stz_init,
+        double m,
+        double q,
+        double vtang,
+        double mu_init,
+        double tmax,
+        const vector<ThermalBackground>& backgrounds,
+        bool vacuum,
+        bool noK,
+        vector<shared_ptr<StoppingCriterion>> stopping_criteria={},
+        double dt_save=1e-6,
+        bool forget_exact_path=false,
+        int axis=2,
+        double abstol=1e-9,
+        double reltol=1e-9,
+        string ode_solver="dormand_prince",
+        double DP_hmin=0.0,
+        uint64_t rng_seed=0
+);
+
+tuple<vector<vector<double>>, vector<vector<double>>>
 particle_guiding_center_boozer_tracing(
         shared_ptr<BoozerMagneticField> field,
         vector<double> stz_init,

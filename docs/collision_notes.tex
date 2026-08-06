@@ -839,9 +839,19 @@ against the analytic Spitzer estimate (right).}
 %-----------------------------------------------------------------------
 
 \begin{itemize}
-  \item \textbf{Vacuum field:} electric fields, $E\times B$ drifts, and
-        electromagnetic perturbations are not included in the collision model
-        (though perturbations can be combined via the existing SAW tracing infrastructure).
+  \item \textbf{Equilibrium electric field:} a background $E$ field and its
+        $E\times B$ drift are not included.  Shear-Alfven-wave perturbations
+        \emph{are} supported, through
+        \texttt{trace\_particles\_boozer\_perturbed\_with\_collisions}: the
+        wave does work on the particle, so the speed is not conserved between
+        kicks, but $\mu$ remains an adiabatic invariant at
+        $\omega\ll\Omega_c$, which is what the splitting of
+        Section~\ref{sec:splitting} requires.  The kick reconstructs
+        $v=\sqrt{\vpar^2+2\mu|B_0|}$ at each step, so a changing energy is
+        carried correctly; verified against the collisionless perturbed
+        tracer to $5\times10^{-15}$ at a wave amplitude that changes the
+        speed by $13\%$.  There is no full-$K$ perturbed right-hand side, so
+        only \texttt{gc\_vac} and \texttt{gc\_noK} are available there.
 
   \item \textbf{Maxwellian backgrounds:} the collision operator assumes each
         background species has a local Maxwellian distribution function.  Distorted

@@ -46,15 +46,17 @@ import scipy.special
 import scipy.stats
 
 import firm3dpp as sopp
-from firm3d.field.boozermagneticfield import BoozerAnalytic
+from firm3d.field.boozermagneticfield import BoozerAnalytic, ShearAlfvenHarmonic
 from firm3d.field.collisions import (
     ThermalBackground,
+    trace_particles_boozer_perturbed_with_collisions,
     trace_particles_boozer_with_collisions,
 )
 from firm3d.field.tracing import (
     IterationStoppingCriterion,
     MaxToroidalFluxStoppingCriterion,
     trace_particles_boozer,
+    trace_particles_boozer_perturbed,
 )
 from firm3d.util.constants import (
     ALPHA_PARTICLE_CHARGE,
@@ -798,6 +800,163 @@ class TestNonVacuumOrbitEquations(unittest.TestCase):
             f"vacuum and full GC equations agree to {rel.max():.2e} on this "
             f"field, so this configuration cannot detect the wrong choice",
         )
+
+
+# ---------------------------------------------------------------------------
+# Perturbed (shear-Alfven-wave) collisional tracing
+# ---------------------------------------------------------------------------
+
+
+class TestPerturbedCollisions(unittest.TestCase):
+    """
+    Collisions in a shear-Alfven-wave field.
+
+    The wave does work on the particle, so the speed is not conserved between
+    kicks.  The operator splitting survives that because it needs mu to be
+    invariant across an orbit step, not v: at SAW frequencies
+    (omega << Omega_c) mu remains an adiabatic invariant, which is why the
+    perturbed right-hand sides carry it as a constructor parameter in the
+    first place.  The kick reconstructs v from v_par^2 + 2 mu |B0| each time,
+    so a changing energy is handled.
+    """
+
+    _tmax = 2e-7
+    _tol = 1e-11
+    _stz = np.array([[0.3, 0.0, 0.0]])
+
+    def _setup(self, Phihat, field_kwargs=None):
+        # The field must stay referenced: ShearAlfvenWave.B0 only returns the
+        # Python subclass (and hence field_type) while a Python reference to
+        # it survives.  Returned alongside the wave for that reason.
+        field = BoozerAnalytic(1.0, 5.0, 0, 40.0, 0.5, 0.4, **(field_kwargs or {}))
+        self._field = field
+        saw = ShearAlfvenHarmonic(Phihat, 2, 1, 1e5, 0.0, field)
+        v0 = np.sqrt(2 * FUSION_ALPHA_PARTICLE_ENERGY / ALPHA_PARTICLE_MASS)
+        field.set_points(self._stz)
+        B0 = field.modB()[0, 0]
+        vpar0 = 0.6 * v0
+        mu0 = (v0**2 - vpar0**2) / (2.0 * B0)
+        return saw, v0, np.array([vpar0]), np.array([mu0])
+
+    def _kw(self):
+        return {
+            "tmax": self._tmax,
+            "mass": ALPHA_PARTICLE_MASS,
+            "charge": ALPHA_PARTICLE_CHARGE,
+            "abstol": self._tol,
+            "reltol": self._tol,
+            "dt_save": self._tmax,
+        }
+
+    def test_collisionless_limit_matches_perturbed_tracer(self):
+        """
+        At zero density the collisional path must reproduce
+        trace_particles_boozer_perturbed, including when the wave is strong
+        enough to change the energy substantially.
+        """
+        for Phihat in (1e-3, 1e6):
+            with self.subTest(Phihat=Phihat):
+                saw, v0, vpar, mus = self._setup(Phihat)
+                c, _ = trace_particles_boozer_perturbed_with_collisions(
+                    saw,
+                    self._stz,
+                    vpar,
+                    mus,
+                    backgrounds=_zero_background(),
+                    ode_solver="dormand_prince",
+                    **self._kw(),
+                )
+                n, _ = trace_particles_boozer_perturbed(
+                    saw,
+                    self._stz,
+                    vpar,
+                    mus,
+                    ODE_solver="dormand_prince",
+                    **self._kw(),
+                )
+                np.testing.assert_allclose(
+                    np.asarray(c[0])[-1, 1:5],
+                    np.asarray(n[0])[-1, 1:5],
+                    rtol=1e-9,
+                    err_msg=f"perturbed collisional path diverges at Phihat={Phihat}",
+                )
+
+    def test_wave_does_work_on_the_particle(self):
+        """
+        The premise the splitting is built on: v is *not* conserved here.
+
+        Without this the test above could pass on a wave too weak to matter,
+        which would say nothing about whether a changing energy is handled.
+        """
+        saw, v0, vpar, mus = self._setup(1e6)
+        res, _ = trace_particles_boozer_perturbed_with_collisions(
+            saw,
+            self._stz,
+            vpar,
+            mus,
+            backgrounds=_zero_background(),
+            ode_solver="dormand_prince",
+            **self._kw(),
+        )
+        dv = np.asarray(res[0])[-1, 5] / v0 - 1.0
+        self.assertGreater(
+            abs(dv),
+            1e-2,
+            f"wave changed the speed by only {dv:.2e}; too weak "
+            f"to exercise a non-conserved energy",
+        )
+
+    def test_collisions_change_mu(self):
+        """
+        With a background present mu must evolve, since the kick rewrites it
+        from the post-kick (v, xi).  Collisionlessly it is held fixed.
+        """
+        saw, v0, vpar, mus = self._setup(1e-3)
+        kw = dict(self._kw())
+        kw["dt_save"] = self._tmax / 20
+        out = {}
+        for label, bg in [
+            ("collisionless", _zero_background()),
+            ("collisional", _hot_background()),
+        ]:
+            res, _ = trace_particles_boozer_perturbed_with_collisions(
+                saw,
+                self._stz,
+                vpar,
+                mus,
+                backgrounds=bg,
+                ode_solver="dormand_prince",
+                rng_seed=3,
+                **kw,
+            )
+            t = np.asarray(res[0])
+            saw.B0.set_points(np.column_stack([t[:, 1], t[:, 2], t[:, 3]]))
+            B = np.array(saw.B0.modB()).flatten()
+            out[label] = (t[:, 5] ** 2 - t[:, 4] ** 2) / (2.0 * B)
+        drift_free = np.abs(out["collisionless"] / mus[0] - 1).max()
+        drift_coll = np.abs(out["collisional"] / mus[0] - 1).max()
+        self.assertLess(drift_free, 1e-6, "mu moved without collisions")
+        self.assertGreater(
+            drift_coll,
+            10 * max(drift_free, 1e-12),
+            f"mu barely moved with collisions ({drift_coll:.2e}); the kick is "
+            f"not updating it",
+        )
+
+    def test_full_k_field_is_rejected(self):
+        """There is no full-K perturbed right-hand side; say so, don't guess."""
+        saw, _, vpar, mus = self._setup(1e-3, {"I0": 0.5, "K1": 0.3})
+        self.assertEqual(saw.B0.field_type, "")
+        with self.assertRaises(ValueError) as cm:
+            trace_particles_boozer_perturbed_with_collisions(
+                saw,
+                self._stz,
+                vpar,
+                mus,
+                backgrounds=_zero_background(),
+                **self._kw(),
+            )
+        self.assertIn("full-K", str(cm.exception))
 
 
 # ---------------------------------------------------------------------------

@@ -140,6 +140,12 @@ class GuidingCenterVacuumBoozerPerturbedRHS : public BaseRHS {
             return Size;
         }
 
+        // Collisions update mu between accepted steps.  The wave changes
+        // the particle's energy, but mu is still an adiabatic invariant
+        // at SAW frequencies (omega << Omega_c), so it is constant within
+        // a step exactly as in the static-field variants.
+        void set_mu(double mu_new) override { mu = mu_new; }
+
         void operator()(const vector<double> &ys, vector<double> &dydt, const double t) override {
             vector<double> stzvt(Size), stzvtdot(Size);
             y_to_stzvt(ys, stzvt, axis, vnorm, tnorm);
@@ -243,6 +249,12 @@ class GuidingCenterNoKBoozerPerturbedRHS : public BaseRHS {
         int get_state_size() const override {
             return Size;
         }
+
+        // Collisions update mu between accepted steps.  The wave changes
+        // the particle's energy, but mu is still an adiabatic invariant
+        // at SAW frequencies (omega << Omega_c), so it is constant within
+        // a step exactly as in the static-field variants.
+        void set_mu(double mu_new) override { mu = mu_new; }
 
         void operator()(const vector<double> &ys, vector<double> &dydt, const double t) override {
             vector<double> stzvt(Size), stzvtdot(Size);
@@ -1006,11 +1018,18 @@ solve_sde(
     double DP_hmin,
     uint64_t rng_seed)
 {
-    const int state_size = 4;
-    if (rhs.get_state_size() != state_size)
+    // 4 for a static field, [s, theta, zeta, v_par]; 5 for a perturbed one,
+    // which carries t as a fifth component.  stzvt_to_y/y_to_stzvt handle both,
+    // and the kick writes only v_par and the mu parameter, so t round-trips
+    // untouched.
+    const int state_size = rhs.get_state_size();
+    if (state_size != 4 && state_size != 5)
         throw std::invalid_argument(
-            "solve_sde requires a 4-element [s, theta, zeta, v_par] right-hand "
-            "side; the perturbed variants carry t as a fifth component"
+            "solve_sde requires a 4- or 5-element guiding-centre right-hand side"
+        );
+    if ((int)stzv_init.size() != state_size)
+        throw std::invalid_argument(
+            "solve_sde: initial state width does not match the right-hand side"
         );
 
     // Set up RNG
@@ -1203,6 +1222,108 @@ solve_sde(
     }
 
     return std::make_tuple(res, res_hits);
+}
+
+// --------------------------------------------------------------------------
+// Public entry point: collision tracing in a shear-Alfven-wave field
+//
+// The wave does work on the particle, so the speed is not conserved between
+// kicks -- but mu still is, at SAW frequencies (omega << Omega_c), which is
+// all the operator splitting requires.  The orbit state carries t as a fifth
+// component; the kick writes only v_par and mu, so t passes through it
+// untouched.  |B| for the (v_par, mu) <-> (v, xi) conversion comes from the
+// equilibrium field B0, matching what the perturbed right-hand sides use.
+// --------------------------------------------------------------------------
+tuple<vector<vector<double>>, vector<vector<double>>>
+particle_guiding_center_boozer_perturbed_collision_tracing(
+    shared_ptr<ShearAlfvenWave> perturbed_field,
+    vector<double> stz_init,
+    double m,
+    double q,
+    double vtang,
+    double mu_init,
+    double tmax,
+    const vector<ThermalBackground>& backgrounds,
+    bool vacuum,
+    bool noK,
+    vector<shared_ptr<StoppingCriterion>> stopping_criteria,
+    double dt_save,
+    bool forget_exact_path,
+    int axis,
+    double abstol,
+    double reltol,
+    string ode_solver,
+    double DP_hmin,
+    uint64_t rng_seed)
+{
+    if (ode_solver != "boost" && ode_solver != "dormand_prince")
+        throw std::invalid_argument(
+            "collision tracing requires ode_solver \"boost\" or \"dormand_prince\"");
+
+    Array2 stzt({{stz_init[0], stz_init[1], stz_init[2], 0.0}});
+    perturbed_field->set_points(stzt);
+    auto field = perturbed_field->get_B0();
+    double modB = field->modB()(0);
+
+    // vtotal at the launch point sets the velocity normalisation, as in the
+    // collisionless perturbed tracer.  It is not conserved thereafter.
+    double vtotal = std::sqrt(vtang * vtang + 2.0 * mu_init * modB);
+    if (!(vtotal > 0.0))
+        throw std::invalid_argument(
+            "perturbed collision tracing: vtang and mu give zero initial speed");
+
+    double G0    = std::abs(field->G()(0));
+    double r0    = G0 / modB;
+    double vnorm = vtotal;
+    double tnorm = r0 * 2.0 * M_PI / vtotal;
+
+    double dtau_max = 0.25;
+    double dtau     = 1e-3 * dtau_max;
+
+    double tau_max   = tmax / tnorm;
+    double dtau_save = dt_save / tnorm;
+
+    // [s, theta, zeta, v_par, t]
+    vector<double> stzvt_init = {
+        stz_init[0], stz_init[1], stz_init[2], vtang, 0.0
+    };
+
+    std::unique_ptr<BaseRHS> rhs;
+    if (vacuum) {
+        rhs = std::make_unique<GuidingCenterVacuumBoozerPerturbedRHS>(
+            perturbed_field, m, q, mu_init, axis, vnorm, tnorm);
+    } else if (noK) {
+        rhs = std::make_unique<GuidingCenterNoKBoozerPerturbedRHS>(
+            perturbed_field, m, q, mu_init, axis, vnorm, tnorm);
+    } else {
+        throw std::invalid_argument(
+            "perturbed collision tracing supports vacuum_saw and nok_saw only; "
+            "there is no full-K perturbed right-hand side"
+        );
+    }
+
+    return solve_sde(
+        *rhs,
+        field,
+        backgrounds,
+        m, q,
+        stzvt_init,
+        mu_init,
+        tau_max,
+        dtau,
+        dtau_max,
+        abstol,
+        reltol,
+        stopping_criteria,
+        dtau_save,
+        forget_exact_path,
+        axis,
+        vnorm,
+        tnorm,
+        ode_solver,
+        DP_hmin,
+        rng_seed
+    );
 }
 
 // --------------------------------------------------------------------------
