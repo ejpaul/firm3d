@@ -318,7 +318,10 @@ FIRM3D_HD inline void milstein_collision_step(
 {
     // Noise amplitudes
     double g_v  = std::sqrt(coef.D_par > 0.0 ? 2.0 * coef.D_par : 0.0);
-    double gx2  = coef.nu_D * (1.0 - xi * xi);
+    // Factored rather than 1 - xi*xi: at |xi| -> 1 the direct form cancels,
+    // and this amplitude multiplies the pitch-angle noise that carries a
+    // barely-passing particle across the trapped-passing boundary.
+    double gx2  = coef.nu_D * (1.0 - xi) * (1.0 + xi);
     double g_xi = std::sqrt(gx2 > 0.0 ? gx2 : 0.0);
 
     // Deterministic drift, evaluated at the pre-step (v, xi) as in ASCOT5
