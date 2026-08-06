@@ -6,9 +6,18 @@
 #include <limits>
 #include <stdexcept>
 #include <algorithm>
-#include <functional>
 
 using std::vector;
+
+// The collision physics is compiled for both host and device so the GPU runs
+// the same source the CPU tests pin, rather than a transcription of it.  Only
+// the pure math carries this: anything touching std::vector or throwing stays
+// host-only, below.
+#ifdef __CUDACC__
+  #define FIRM3D_HD __host__ __device__
+#else
+  #define FIRM3D_HD
+#endif
 
 // Physical constants (SI)
 static constexpr double COLL_PI          = 3.14159265358979323846;
@@ -25,13 +34,13 @@ static constexpr double COLL_CUTOFF      = 0.1;
 // Chandrasekhar G function: G(x) = [erf(x) - (2x/sqrt(pi)) exp(-x^2)] / (2x^2)
 // Satisfies G'(x) = (2/sqrt(pi)) exp(-x^2) - 2 G(x)/x
 // --------------------------------------------------------------------------
-inline double chandrasekhar_G(double x) {
+FIRM3D_HD inline double chandrasekhar_G(double x) {
     if (x == 0.0) return 0.0;
     return (std::erf(x) - (2.0 * x / COLL_SQRT_PI) * std::exp(-x * x)) / (2.0 * x * x);
 }
 
 // dG/dx = (2/sqrt(pi)) exp(-x^2) - 2 G(x)/x
-inline double chandrasekhar_G_deriv(double x) {
+FIRM3D_HD inline double chandrasekhar_G_deriv(double x) {
     if (x == 0.0) return 2.0 / (3.0 * COLL_SQRT_PI);
     return (2.0 / COLL_SQRT_PI) * std::exp(-x * x) - 2.0 * chandrasekhar_G(x) / x;
 }
@@ -65,6 +74,37 @@ struct ThermalBackground {
     double T(double s) const { return interp(T_grid, s); }
 };
 
+
+// --------------------------------------------------------------------------
+// Device-safe view of one background species.
+//
+// The profiles are already sampled onto a uniform s-grid by the Python layer,
+// so a view needs only the samples and the grid bounds -- no container, and
+// nothing to free.  The same struct is what a CUDA kernel would hold in
+// constant memory.
+// --------------------------------------------------------------------------
+struct ThermalBackgroundView {
+    const double* n_grid;    // number density m^-3, n_points samples
+    const double* T_grid;    // temperature J, n_points samples
+    int    n_points;         // >= 2
+    double s_min, s_max;
+    double mass;             // kg
+    double charge;           // C (signed)
+
+    FIRM3D_HD double interp(const double* vals, double s) const {
+        double lo = s_min, hi = s_max;
+        s = s < lo ? lo : (s > hi ? hi : s);
+        double ds = (hi - lo) / (n_points - 1);
+        int i = (int)((s - lo) / ds);
+        i = i < 0 ? 0 : (i > n_points - 2 ? n_points - 2 : i);
+        double t = (s - (lo + i * ds)) / ds;
+        return vals[i] * (1.0 - t) + vals[i + 1] * t;
+    }
+
+    FIRM3D_HD double n(double s) const { return interp(n_grid, s); }
+    FIRM3D_HD double T(double s) const { return interp(T_grid, s); }
+};
+
 // --------------------------------------------------------------------------
 // Collision coefficients for EP (species a) against one Maxwellian background.
 //
@@ -85,12 +125,19 @@ struct CollisionCoefficients {
     double v_cutoff;    // m/s   (reflecting speed boundary, ASCOT5 style)
 };
 
-inline CollisionCoefficients compute_collision_coefficients(
+// Status returned by the device-safe core.  A kernel cannot throw, so the
+// unphysical-Coulomb-logarithm case is reported rather than raised; the host
+// wrapper below turns it back into an exception.
+enum CollisionStatus { COLL_OK = 0, COLL_LNLAMBDA_NONPOSITIVE = 1 };
+
+FIRM3D_HD inline int compute_collision_coefficients_core(
     double v,                     // EP speed [m/s]
     double s,                     // flux surface label
     double m_a,                   // EP mass [kg]
     double q_a,                   // EP charge [C]
-    const vector<ThermalBackground>& backgrounds)
+    const ThermalBackgroundView* backgrounds,
+    int n_backgrounds,
+    CollisionCoefficients* out)
 {
     CollisionCoefficients c = {0.0, 0.0, 0.0, 0.0, 0.0};
 
@@ -101,19 +148,21 @@ inline CollisionCoefficients compute_collision_coefficients(
     // first background species (Tb[0]); the coldest one is the conservative
     // generalization when species temperatures differ.
     double inv_lD_sq = 0.0;
-    double T_min = std::numeric_limits<double>::infinity();
-    for (const auto& bg : backgrounds) {
+    double T_min = 1.0 / 0.0;   // +inf without <limits>
+    for (int ib = 0; ib < n_backgrounds; ++ib) {
+        const ThermalBackgroundView& bg = backgrounds[ib];
         double n_b = bg.n(s), T_b = bg.T(s);
         if (n_b > 0.0 && T_b > 0.0) {
             inv_lD_sq += n_b * bg.charge * bg.charge / (COLL_EPSILON0 * T_b);
-            T_min = std::min(T_min, T_b);
+            T_min = T_b < T_min ? T_b : T_min;
         }
     }
     double lambda_D = (inv_lD_sq > 0.0) ? 1.0 / std::sqrt(inv_lD_sq) : 0.0;
-    if (T_min < std::numeric_limits<double>::infinity())
+    if (T_min < 1.0 / 0.0)
         c.v_cutoff = COLL_CUTOFF * std::sqrt(T_min / m_a);
 
-    for (const auto& bg : backgrounds) {
+    for (int ib = 0; ib < n_backgrounds; ++ib) {
+        const ThermalBackgroundView& bg = backgrounds[ib];
         double n_b = bg.n(s);
         double T_b = bg.T(s);
         if (n_b <= 0.0 || T_b <= 0.0) continue;
@@ -145,22 +194,14 @@ inline CollisionCoefficients compute_collision_coefficients(
         double bcl      = std::abs(q_a * q_b)
                           / (4.0 * COLL_PI * COLL_EPSILON0 * m_r * v_eff_sq);
         double bqm      = COLL_HBAR / (2.0 * m_r * std::sqrt(v_eff_sq));
-        double b_min    = std::max(bcl, bqm);
+        double b_min    = bcl > bqm ? bcl : bqm;
         double lnL      = std::log(lambda_D / b_min);
         if (lnL <= 0.0) {
             // The Debye length is smaller than the minimum impact
             // parameter: the binary-collision model is undefined and the
-            // coefficients would change sign.  This happens when the
-            // background temperature goes to zero at finite density --
-            // fail loudly (ASCOT5 aborts such markers via its input
-            // evaluation errors) rather than integrate garbage.
-            char msg[256];
-            std::snprintf(msg, sizeof(msg),
-                "collisions: ln_Lambda = %.3f <= 0 (v=%.3e m/s, s=%.3f, "
-                "n_b=%.3e m^-3, T_b=%.3e J): background profiles give an "
-                "unphysical Coulomb logarithm; keep T finite where n > 0",
-                lnL, v, s, n_b, T_b);
-            throw std::runtime_error(msg);
+            // coefficients would change sign.  Report rather than raise --
+            // this runs on device too; the host wrapper throws.
+            return COLL_LNLAMBDA_NONPOSITIVE;
         }
         // A marginal-but-positive ln_Lambda (< 2) is reported once, up front,
         // by _validate_coulomb_log() in collisions.py.  Warning from here is
@@ -200,6 +241,52 @@ inline CollisionCoefficients compute_collision_coefficients(
         c.nu_D      += nu_D_b;
         c.K         += K_b;
     }
+    *out = c;
+    return COLL_OK;
+}
+
+// --------------------------------------------------------------------------
+// Host wrapper: keeps the vector-of-ThermalBackground interface and restores
+// the exception, so every existing caller and the whole test suite are
+// unaffected by the split.  The physics is entirely in the core above, which
+// is what a device build compiles.
+// --------------------------------------------------------------------------
+inline CollisionCoefficients compute_collision_coefficients(
+    double v,
+    double s,
+    double m_a,
+    double q_a,
+    const vector<ThermalBackground>& backgrounds)
+{
+    vector<ThermalBackgroundView> views;
+    views.reserve(backgrounds.size());
+    for (const auto& bg : backgrounds) {
+        ThermalBackgroundView vw;
+        vw.n_grid   = bg.n_grid.data();
+        vw.T_grid   = bg.T_grid.data();
+        vw.n_points = (int)bg.s_grid.size();
+        vw.s_min    = bg.s_grid.front();
+        vw.s_max    = bg.s_grid.back();
+        vw.mass     = bg.mass;
+        vw.charge   = bg.charge;
+        views.push_back(vw);
+    }
+
+    CollisionCoefficients c = {0.0, 0.0, 0.0, 0.0, 0.0};
+    int status = compute_collision_coefficients_core(
+        v, s, m_a, q_a, views.data(), (int)views.size(), &c);
+
+    if (status == COLL_LNLAMBDA_NONPOSITIVE) {
+        // Re-derive the offending species for the message; the core returns a
+        // status only, since it also runs where throwing is impossible.
+        char msg[256];
+        std::snprintf(msg, sizeof(msg),
+            "collisions: ln_Lambda <= 0 (v=%.3e m/s, s=%.3f): background "
+            "profiles give an unphysical Coulomb logarithm, which happens when "
+            "T falls to zero at finite density; keep T finite where n > 0",
+            v, s);
+        throw std::runtime_error(msg);
+    }
     return c;
 }
 
@@ -221,7 +308,7 @@ inline CollisionCoefficients compute_collision_coefficients(
 // mu fixed across a step, so any static-field guiding-centre right-hand side
 // can be driven by this operator without being rewritten in (v, xi).
 // --------------------------------------------------------------------------
-inline void milstein_collision_step(
+FIRM3D_HD inline void milstein_collision_step(
     double& v,
     double& xi,
     const CollisionCoefficients& coef,
@@ -230,8 +317,9 @@ inline void milstein_collision_step(
     double dW_xi)                // N(0,h) increment for xi
 {
     // Noise amplitudes
-    double g_v  = std::sqrt(std::max(0.0, 2.0 * coef.D_par));
-    double g_xi = std::sqrt(std::max(0.0, coef.nu_D * (1.0 - xi * xi)));
+    double g_v  = std::sqrt(coef.D_par > 0.0 ? 2.0 * coef.D_par : 0.0);
+    double gx2  = coef.nu_D * (1.0 - xi * xi);
+    double g_xi = std::sqrt(gx2 > 0.0 ? gx2 : 0.0);
 
     // Deterministic drift, evaluated at the pre-step (v, xi) as in ASCOT5
     double drift_v  = coef.K * h;
@@ -255,7 +343,7 @@ inline void milstein_collision_step(
         v = 2.0 * coef.v_cutoff - v;
     if (std::fabs(xi) > 1.0)
         xi = ((xi > 0.0) - (xi < 0.0)) * (2.0 - std::fabs(xi));
-    xi = std::max(-1.0, std::min(1.0, xi));
+    xi = xi < -1.0 ? -1.0 : (xi > 1.0 ? 1.0 : xi);
 }
 
 // --------------------------------------------------------------------------
@@ -285,7 +373,7 @@ static constexpr double COLL_SUBSTEP_SAFETY = 0.05;
 // the collision timescale; accuracy then degrades rather than the run hanging.
 static constexpr int COLL_MAX_SUBSTEPS = 10000;
 
-inline int collision_substeps(
+FIRM3D_HD inline int collision_substeps(
     double v,
     const CollisionCoefficients& coef,
     double h)
@@ -293,17 +381,19 @@ inline int collision_substeps(
     if (!(h > 0.0) || !(v > 0.0)) return 1;   // also rejects NaN
 
     // Drift terms scale as h, so dividing the step by n divides them by n.
-    double n_needed = std::max(coef.nu_D * h,                    // pitch drift
-                               std::abs(coef.K) * h / v)         // speed drift
-                      / COLL_SUBSTEP_SAFETY;
+    double r_pitch = coef.nu_D * h;                              // pitch drift
+    double r_speed = std::fabs(coef.K) * h / v;                  // speed drift
+    double n_needed = (r_pitch > r_speed ? r_pitch : r_speed) / COLL_SUBSTEP_SAFETY;
 
     // The diffusive excursion scales as sqrt(h), so it falls only as
     // sqrt(n): bounding it to the same fraction needs n = (rate/safety)^2,
     // not rate/safety.  Getting this wrong misses the stated bound by the
     // ratio itself -- a factor of 100 at rate = 5.
-    double diff = std::sqrt(std::max(0.0, 2.0 * coef.D_par * h)) / v;
+    double d2 = 2.0 * coef.D_par * h;
+    double diff = std::sqrt(d2 > 0.0 ? d2 : 0.0) / v;
     double n_diff = diff / COLL_SUBSTEP_SAFETY;
-    n_needed = std::max(n_needed, n_diff * n_diff);
+    double n_sq = n_diff * n_diff;
+    n_needed = n_needed > n_sq ? n_needed : n_sq;
 
     // Compare in double before converting: casting a non-finite or
     // out-of-range double to int is undefined behaviour, and on x86-64 it
