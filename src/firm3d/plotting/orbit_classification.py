@@ -377,21 +377,6 @@ class OrbitClassification:
             #   ζ = (M*α − χ)   / (N − ι*M)
             _denom = self.helicity_N - iota_s * self.helicity_M
 
-            # Critical |B| for this segment, evaluated at the bounce point
-            # (index_start), where vpar ~ 0 by construction. lam is conserved
-            # along the trajectory only to numerical/integration precision, so
-            # evaluating at the segment's own mirror point avoids averaging
-            # 1/lam over interior samples, which can be noisy or ill-behaved.
-            point_bounce = np.zeros((1, 3))
-            point_bounce[0, :] = res_ty[index_start, 1:4]
-            self.field.set_points(point_bounce)
-            modB_bounce = self.field.modB()[0, 0]
-            vpar_bounce = res_ty[index_start, 4]
-            lam_bounce = (2 * self.Ekin / self.mass - vpar_bounce**2) / (
-                modB_bounce * 2 * self.Ekin / self.mass
-            )
-            modB_crit_traj = 1 / lam_bounce
-
             # Compute radial excursion during this bounce
             ds = res_ty[index_end, 1] - res_ty[index_start, 1]
             dss.append(ds)
@@ -483,12 +468,8 @@ class OrbitClassification:
             # Force monotonic |B| on each side of the well minimum.
             modB_left_mon = _isotonic_regression(modB_left, increasing=False)
             modB_right_mon = _isotonic_regression(modB_right, increasing=True)
-            chi_mirror_left = chi_left[
-                np.argmin(np.abs(modB_left_mon - modB_crit_traj))
-            ]
-            chi_mirror_right = chi_right[
-                np.argmin(np.abs(modB_right_mon - modB_crit_traj))
-            ]
+            chi_mirror_left = chi_left[np.argmin(np.abs(modB_left_mon - modB_crit))]
+            chi_mirror_right = chi_right[np.argmin(np.abs(modB_right_mon - modB_crit))]
 
             # Predicted dchi: 2× distance from chi_min to the nearer mirror point.
             dchi_predicted = np.min(
@@ -514,7 +495,6 @@ class OrbitClassification:
                     "dchi": dchi,
                     "dchi_predicted": dchi_predicted,
                     "modB_crit": modB_crit,
-                    "modB_crit_traj": modB_crit_traj,
                     "chi_min": chi_min,
                     "chi_mirror_left": chi_mirror_left,
                     "chi_mirror_right": chi_mirror_right,
@@ -716,7 +696,6 @@ class OrbitClassification:
         dchi = data["dchi"]
         dchi_predicted = data["dchi_predicted"]
         modB_crit = data["modB_crit"]
-        modB_crit_traj = data["modB_crit_traj"]
         chi_min = data["chi_min"]
         chi_mirror_left = data["chi_mirror_left"]
         chi_mirror_right = data["chi_mirror_right"]
@@ -788,7 +767,6 @@ class OrbitClassification:
             zorder=5,
         )
         plt.axhline(modB_crit, color="red", label=r"$B_{\rm crit}$")
-        plt.axhline(modB_crit_traj, color="green", label=r"$B_{\rm crit, traj}$")
         plt.axvline(
             chi_traj_center_plot,
             color="gray",
@@ -866,7 +844,6 @@ class OrbitClassification:
             zorder=3,
         )
         plt.axhline(modB_crit, color="red", label=r"$B_{\rm crit}$")
-        plt.axhline(modB_crit_traj, color="green", label=r"$B_{\rm crit, traj}$")
         for chi_val, col, lbl in (
             (chi_min_plot, "green", "chi_min"),
             (chi_mirror_left_plot, "orange", "chi_mirror_left"),
