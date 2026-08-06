@@ -1,5 +1,4 @@
 import numpy as np
-from scipy.interpolate import PchipInterpolator
 
 __all__ = ["OrbitClassification"]
 
@@ -67,45 +66,6 @@ def _isotonic_regression(y, increasing=True):
         y_mono[index : index + block_count] = block_sum / block_weight
         index += block_count
     return y_mono
-
-
-def _monotonic_fit(x, y, x_eval=None, increasing=True):
-    r"""
-    Force monotonicity on non-monotonic samples.
-
-    Applies isotonic regression on the sample points in array order (left/right
-    branch direction). If ``x_eval`` differs from ``x``, evaluates a
-    shape-preserving cubic (PCHIP) through the isotonic values on sorted ``x``;
-    PCHIP preserves the monotonicity of its input data.
-
-    Args:
-        x (array-like): Independent-variable coordinates of the sample
-            points, in the order they appear along the branch.
-        y (array-like): Dependent-variable values at each sample point.
-        x_eval (array-like, optional): Coordinates at which to evaluate
-            the monotonic fit. If ``None`` (default), returns values at
-            the original ``x`` locations.
-        increasing (bool, optional): If ``True`` (default), enforce a
-            non-decreasing fit; if ``False``, enforce non-increasing.
-
-    Returns:
-        ndarray: Monotonic fit values evaluated at ``x_eval`` (or at ``x``
-            if ``x_eval`` is ``None``).
-    """
-    x = np.asarray(x, dtype=float)
-    y = np.asarray(y, dtype=float)
-    if x_eval is None:
-        x_eval = x
-    x_eval = np.asarray(x_eval, dtype=float)
-    if y.size < 2:
-        return np.interp(x_eval, x, y)
-
-    if x_eval is x or (x_eval.shape == x.shape and np.array_equal(x_eval, x)):
-        return _isotonic_regression(y, increasing=increasing)
-
-    y_mono = _isotonic_regression(y, increasing=increasing)
-    sort_idx = np.argsort(x)
-    return PchipInterpolator(x[sort_idx], y_mono[sort_idx], extrapolate=False)(x_eval)
 
 
 def _chi_branch_shift(chi_ref, chi_target, period=2 * np.pi):
@@ -268,11 +228,11 @@ class OrbitClassification:
 
         Args:
             res_ty (ndarray): Trajectory array with shape (ntimes, ncols) containing:
-                - Column 0: time [SI units, seconds]
+                - Column 0: time [seconds]
                 - Column 1: s (radial flux coordinate)
                 - Column 2: theta (poloidal Boozer angle) [radians]
                 - Column 3: zeta (toroidal Boozer angle) [radians]
-                - Column 4: vpar (parallel velocity) [SI units, m/s]
+                - Column 4: vpar (parallel velocity) [m/s]
 
             res_hit (ndarray): Hit points array with shape (nhits, ncols)
                 containing:
@@ -309,7 +269,7 @@ class OrbitClassification:
                 - 'dchis' (ndarray): Change in helical angle chi over
                   each segment [radians]
                 - 'dchis_predicted' (ndarray): Expected dchi based on
-                  mirror point locations [radians]
+                  mirror point locations in a monotonic well [radians]
                 - 'gammacs' (list): Gamma_c parameter =
                   (2/π)*arctan(|ds|/|dalpha|) for each segment
                 - 'Jpars' (list): Parallel action J_|| for each
@@ -333,6 +293,16 @@ class OrbitClassification:
                 - 'gammac_mean' (float): Mean value of gamma_c over all
                   bounce segments
 
+                **Diagnostics:**
+                - 'debug_data' (list): Per-segment dictionaries of the
+                  intermediate quantities consumed by
+                  :meth:`plot_bounce_segment`: the mean-field-line |B|
+                  sweep, its monotonic well fit, the mirror-point and
+                  well-minimum locations, and the trajectory segment
+                  itself. Same length as 'status'; entries are ``None``
+                  for segments where these quantities are undefined (the
+                  pre-first-bounce segment).
+
         Notes:
             - Bounce segments are identified by finding times when
               res_hit[:,1]==0 (vpar plane hits)
@@ -349,12 +319,6 @@ class OrbitClassification:
               dchi_total > barely_trapped_crit.
               When no classification is possible, returns zeros.
             - Requires at least 4 bounces for Jpar_var computation
-            - A bounce segment is skipped (with a warning) if the helicity
-              vector (M, N) is resonant with the local rotational transform
-              on that segment (N - iota*M = 0), since chi cannot be swept at
-              fixed alpha in that case. This shortens the per-segment arrays
-              rather than raising, so batch scans over many particles are not
-              aborted by one resonant segment.
         """
 
         # Compute all of the times when the particle bounces off vpar plane
@@ -370,29 +334,22 @@ class OrbitClassification:
 
         # Unwrap theta to handle periodic boundary crossings (prevents jumps at ±π)
         thetas = np.unwrap(res_ty[:, 2])
-        # zeta accumulates continuously along the trajectory (the tracer never
-        # wraps it mod 2*pi), so no unwrap is needed here.
         zetas = res_ty[:, 3]
 
-        # Extract initial conditions
         point0 = np.zeros((1, 3))
-        point0[0, :] = res_ty[0, 1:4]  # Initial position [s, theta, zeta]
-        vpar_init = res_ty[0, 4]  # Initial parallel velocity [m/s]
+        point0[0, :] = res_ty[0, 1:4]
+        vpar_init = res_ty[0, 4]
 
-        # Compute trapping parameter λ = v_perp^2 / (v^2 * B)
-        # From energy conservation: v^2 = vpar^2 + vperp^2 = 2*Ekin/mass
-        # At mirror point: vpar=0, so vperp^2 = v^2, giving B_mirror = v^2/(λ*v^2) = 1/λ
         self.field.set_points(point0)
         modB_0 = self.field.modB()[0, 0]
         lam = (2 * self.Ekin / self.mass - vpar_init**2) / (
             modB_0 * 2 * self.Ekin / self.mass
         )
-        modB_crit = 1 / lam  # Critical |B| at mirror points
+        modB_crit = 1 / lam
 
         # Initialize arrays to store per-bounce-segment diagnostics
         Jpars = []  # Parallel action variable for each half-bounce
         s_means = []  # Mean radial position during each bounce
-        alpha_means = []  # Mean field line label alpha during each bounce segment
         dchis = []  # Change in helical angle for each bounce segment
         dchis_predicted = []  # Expected dchi based on mirror point locations
         gammacs = []  # Orbit width parameter gamma_c for each segment
@@ -405,11 +362,8 @@ class OrbitClassification:
             index_start = np.argmin(np.abs(bounce_times[j] - res_ty[:, 0]))
             index_end = np.argmin(np.abs(bounce_times[j + 1] - res_ty[:, 0]))
 
-            # Compute mean radial position and rotational transform up front:
-            # if the helicity vector is resonant with iota on this segment
-            # (checked below), the segment is skipped before any per-segment
-            # list is appended, so all per-segment arrays stay in sync without
-            # needing placeholder values.
+            # Mean surface for this segment and its rotational transform, used
+            # to define the field line that modB is swept along below.
             mean_s = np.mean(res_ty[index_start : index_end + 1, 1])
             point = np.zeros((1, 3))
             point[0, 0] = mean_s
@@ -417,7 +371,7 @@ class OrbitClassification:
             iota_s = self.field.iota()[0, 0]
 
             # Sample modB along the mean field line sweeping ±2π in χ at fixed α.
-            # Using χ as the sweep variable gives a grid uniform in χ and centred
+            # Using χ as the sweep variable gives a grid uniform in χ and centered
             # on the trajectory.  Inverting χ = M*θ − N*ζ and α = θ − ι*ζ gives:
             #   θ = (N*α − ι*χ) / (N − ι*M)
             #   ζ = (M*α − χ)   / (N − ι*M)
@@ -444,9 +398,6 @@ class OrbitClassification:
 
             # Compute change in helical angle chi = M*theta - N*zeta
             # This is the primary quantity used for classification.
-            # thetas and zetas accumulate continuously along the trajectory
-            # (never wrapped mod 2*pi by the tracer), so chi is already
-            # continuous here and does not need a further np.unwrap.
             dtheta = thetas[index_end] - thetas[index_start]
             dzeta = zetas[index_end] - zetas[index_start]
             chis_seg = (
@@ -454,7 +405,7 @@ class OrbitClassification:
                 - self.helicity_N * zetas[index_start : index_end + 1]
             )
             dchi = np.abs(chis_seg[-1] - chis_seg[0])
-            dchis.append(np.abs(dchi))
+            dchis.append(dchi)
 
             s_means.append(mean_s)
 
@@ -462,7 +413,6 @@ class OrbitClassification:
             theta_seg = res_ty[index_start : index_end + 1, 2]
             zeta_seg = res_ty[index_start : index_end + 1, 3]
             mean_alpha = np.mean(np.unwrap(theta_seg - iota_s * zeta_seg))
-            alpha_means.append(mean_alpha)
 
             # Trajectory chi center: used to center the field-line sweep and to
             # locate the bounding peaks.
@@ -491,7 +441,7 @@ class OrbitClassification:
             idx_center = len(chi_grid_mean) // 2
 
             # Nearest |B| peak on the low-chi side (left half) and high-chi side
-            # (right half).  chi_grid_mean is increasing so lower indices = lower chi.
+            # (right half).
             idx_l_peak = int(np.argmax(modB[:idx_center]))
             idx_r_peak = idx_center + int(np.argmax(modB[idx_center:]))
             # Identified maxima are more than a field period apart
@@ -531,24 +481,14 @@ class OrbitClassification:
             modB_right = modB[min_loc : idx_r_peak + 1]
 
             # Force monotonic |B| on each side of the well minimum.
-            modB_left_mon = _monotonic_fit(
-                chi_left, modB_left, chi_left, increasing=False
-            )
-            modB_right_mon = _monotonic_fit(
-                chi_right, modB_right, chi_right, increasing=True
-            )
+            modB_left_mon = _isotonic_regression(modB_left, increasing=False)
+            modB_right_mon = _isotonic_regression(modB_right, increasing=True)
             chi_mirror_left = chi_left[
                 np.argmin(np.abs(modB_left_mon - modB_crit_traj))
             ]
             chi_mirror_right = chi_right[
                 np.argmin(np.abs(modB_right_mon - modB_crit_traj))
             ]
-
-            # Classification quantities derived from already-available variables.
-            dalpha = dtheta - iota_s * dzeta
-            dalphas.append(dalpha)
-            gammac = (2 / np.pi) * np.arctan(np.abs(ds) / np.abs(dalpha))
-            gammacs.append(gammac)
 
             # Predicted dchi: 2× distance from chi_min to the nearer mirror point.
             dchi_predicted = np.min(
@@ -559,6 +499,12 @@ class OrbitClassification:
                 ]
             )
             dchis_predicted.append(dchi_predicted)
+
+            # Classification quantities derived from already-available variables.
+            dalpha = dtheta - iota_s * dzeta
+            dalphas.append(dalpha)
+            gammac = (2 / np.pi) * np.arctan(np.abs(ds) / np.abs(dalpha))
+            gammacs.append(gammac)
 
             # Per-segment data for plot_bounce_segment.  Field-line sweep and
             # monotonic-fit arrays are stored here so plot_bounce_segment only
@@ -640,6 +586,8 @@ class OrbitClassification:
                 s_means = np.insert(s_means, 0, 0)
                 dalphas = np.insert(dalphas, 0, 0)
                 dss = np.insert(dss, 0, 0)
+                # Keep debug_data aligned with status/dchis.
+                debug_data.insert(0, None)
                 banana_frac = 0.0
                 barely_trapped_frac = 1.0
                 ripple_trapped_frac = 0.0
@@ -648,17 +596,6 @@ class OrbitClassification:
                 banana_frac = 0.0
                 barely_trapped_frac = 0.0
                 ripple_trapped_frac = 0.0
-            Jpar_var = 0.0
-            gammac_mean = 0.0
-            ntransitions = 0
-        elif len(dchis) == 0:
-            # Every bounce segment was skipped (e.g. each one was resonant
-            # with the helicity vector; see per-segment skip above). Fall
-            # back to the same "cannot classify" defaults as nbounce == 0.
-            status = np.array([])
-            banana_frac = 0.0
-            barely_trapped_frac = 0.0
-            ripple_trapped_frac = 0.0
             Jpar_var = 0.0
             gammac_mean = 0.0
             ntransitions = 0
