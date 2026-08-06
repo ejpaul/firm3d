@@ -728,6 +728,77 @@ class TestGPUTracing(unittest.TestCase):
         is_small = test_timestep(field, nfp, stz, vpar_init, VELOCITY, field.psi0, tol)
         self.assertTrue(is_small)
 
+
+    def test_boozer_collisions(self):
+        """
+        Collisional GPU tracing against the collisionless path.
+
+        The discriminating assertion is that the two differ: if the kick were
+        a no-op -- the species count never reaching the device, the constant
+        memory not populated, the RNG dead -- the collisional trace would
+        reproduce the collisionless one exactly, and every other check here
+        would still pass.
+        """
+        from firm3d.catapult.tracing import (
+            trace_particles_boozer_gpu,
+            trace_particles_boozer_with_collisions_gpu,
+        )
+        from firm3d.field.collisions import ThermalBackground
+        from firm3d.util.constants import ELEMENTARY_CHARGE, ONE_EV, PROTON_MASS
+
+        n_metagrid_pts = 15
+        boozmn_filename = "examples/inputs/boozmn_aten_rescaled_low_res.nc"
+        bri, field, nfp = get_field(boozmn_filename, n_metagrid_pts, True)
+
+        VELOCITY = np.sqrt(2 * ENERGY / MASS)
+        n = 256
+        rng = np.random.default_rng(0)
+        stz = np.column_stack(
+            [
+                np.full(n, 0.3),
+                rng.uniform(0, 2 * np.pi, n),
+                rng.uniform(0, 2 * np.pi, n),
+            ]
+        )
+        vpar = 0.5 * VELOCITY * np.ones(n)
+
+        # Dense and cold, so the collision rates are fast enough to move the
+        # ensemble measurably within a short trace.
+        bg = ThermalBackground(
+            n_profile=lambda s: 1e21,
+            T_profile=lambda s: 1e3 * ONE_EV,
+            mass=2 * PROTON_MASS,
+            charge=ELEMENTARY_CHARGE,
+        )
+        kw = {
+            "tmax": 2e-6,
+            "mass": MASS,
+            "charge": CHARGE,
+            "vtotal": VELOCITY,
+            "tol": 1e-8,
+            "ns": 15,
+            "ntheta": 15,
+            "nzeta": 15,
+        }
+
+        without = trace_particles_boozer_gpu(field, stz, vpar, **kw)
+        with_coll = trace_particles_boozer_with_collisions_gpu(
+            field, stz, vpar, backgrounds=bg, rng_seed=0, **kw
+        )
+
+        self.assertEqual(with_coll.shape, (n, 6))
+        self.assertTrue(np.all(np.isfinite(with_coll)), "non-finite GPU results")
+
+        # v_par must have been perturbed relative to the collisionless run.
+        dv = np.abs(with_coll[:, 4] - without[:, 4])
+        frac_moved = np.mean(dv > 1e-6 * VELOCITY)
+        self.assertGreater(
+            frac_moved,
+            0.9,
+            f"only {frac_moved:.2f} of particles differ from the collisionless "
+            f"run; the collision kick is not reaching the device",
+        )
+
     def test_boozer_finite_beta(self):
         n_metagrid_pts = 15
 

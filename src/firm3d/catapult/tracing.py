@@ -1,4 +1,8 @@
-__all__ = ["trace_particles_boozer_gpu", "trace_particles_cartesian_gpu"]
+__all__ = [
+    "trace_particles_boozer_gpu",
+    "trace_particles_boozer_with_collisions_gpu",
+    "trace_particles_cartesian_gpu",
+]
 import numpy as np
 
 import firm3dpp
@@ -185,3 +189,111 @@ def trace_particles_cartesian_gpu(
     )
     last_time = np.reshape(last_time, (nparticles, 6))
     return last_time
+
+
+def trace_particles_boozer_with_collisions_gpu(
+    field,
+    stz_inits,
+    parallel_speeds,
+    backgrounds,
+    tmax,
+    mass,
+    charge,
+    vtotal,
+    tol,
+    ns,
+    ntheta,
+    nzeta,
+    dt=None,
+    rng_seed=0,
+    validate_profiles=True,
+):
+    """
+    Trace particles in Boozer coordinates on the GPU, including Monte Carlo
+    Coulomb collisions.
+
+    The collision operator is the one
+    :func:`~firm3d.field.collisions.trace_particles_boozer_with_collisions`
+    uses, compiled for device from the same source, so the coefficients are
+    not a separate implementation.  It is applied as a kick after each
+    accepted orbit step, sub-cycled when the collision rates are fast relative
+    to that step.
+
+    Differences from the CPU entry point, which are properties of the GPU
+    tracer rather than of collisions:
+
+    * a single ``vtotal`` sets the velocity normalisation for every particle,
+      as in :func:`trace_particles_boozer_gpu`, rather than per-particle
+      ``(v_par, mu)``;
+    * only the final state is returned, not the trajectory;
+    * stopping criteria are not available.
+
+    Results are not comparable element-by-element with the CPU tracer even at
+    a fixed seed: the two draw from different generators (Philox against
+    mt19937_64) and take different step sequences, so agreement is
+    statistical.
+
+    Args:
+        field: A :class:`~firm3d.field.boozermagneticfield.BoozerMagneticField`
+            with ``field_type`` ``"vac"`` or ``""``.
+        stz_inits: ``(nparticles, 3)`` array of initial ``(s, theta, zeta)``.
+        parallel_speeds: ``(nparticles,)`` array of initial ``v_par`` in m/s.
+        backgrounds: A :class:`~firm3d.field.collisions.ThermalBackground` or a
+            list of them; coefficients are summed over species.
+        tmax: Integration time in seconds.
+        mass: EP mass in kg.
+        charge: EP charge in C.
+        vtotal: Speed setting the velocity normalisation, in m/s.
+        tol: Tolerance for the adaptive step control.
+        ns, ntheta, nzeta: Interpolant resolution.
+        dt: Initial step size; ``None`` lets the tracer choose.
+        rng_seed: Base seed.  Each particle uses a Philox stream keyed on its
+            global index, so results do not depend on the block layout.
+        validate_profiles: Check up front that the profiles give a usable
+            Coulomb logarithm.  The device cannot raise, so this is the only
+            place an unphysical profile is reported.
+
+    Returns:
+        ``(nparticles, 6)`` array of final states,
+        ``[t, s, theta, zeta, v_par, dt]``, as for
+        :func:`trace_particles_boozer_gpu`.
+    """
+    from firm3d.field.collisions import ThermalBackground, _validate_coulomb_log
+
+    nparticles = stz_inits.shape[0]
+    if field.field_type not in ["vac", ""]:
+        raise ValueError(
+            f"Unsupported field type {field.field_type} for Boozer tracing, "
+            f"expected 'vac' or ''"
+        )
+    vacuum = field.field_type == "vac"
+
+    if isinstance(backgrounds, ThermalBackground):
+        backgrounds = [backgrounds]
+    cpp_backgrounds = [b._to_cpp() for b in backgrounds]
+    if validate_profiles:
+        _validate_coulomb_log(cpp_backgrounds, float(mass), float(charge))
+
+    srange, trange, zrange, quad_info, maxJ = boozer_interpolant(
+        field, field.nfp, ns, ntheta, nzeta, vacuum=vacuum
+    )
+    last_time = firm3dpp.boozer_collision_gpu_tracing(
+        quad_pts=quad_info,
+        srange=srange,
+        trange=trange,
+        zrange=zrange,
+        stz_init=stz_inits,
+        m=mass,
+        q=charge,
+        vtotal=vtotal,
+        vtang=parallel_speeds,
+        tmax=tmax,
+        tol=tol,
+        dt_in=-np.ones(nparticles) if dt is None else dt * np.ones(nparticles),
+        psi0=field.psi0,
+        nparticles=nparticles,
+        backgrounds=cpp_backgrounds,
+        vacuum=vacuum,
+        rng_seed=int(rng_seed),
+    )
+    return np.reshape(last_time, (nparticles, 6))
