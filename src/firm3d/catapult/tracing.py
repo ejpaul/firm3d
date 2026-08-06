@@ -273,12 +273,18 @@ def trace_particles_boozer_with_collisions_gpu(
         :func:`trace_particles_boozer_gpu`, which returns ``dt`` there.
 
     Raises:
-        ValueError: If ``field.field_type`` is not ``"vac"`` or ``""``, if
-            ``parallel_speeds`` does not match ``stz_inits`` in length, or if
-            the profiles give an unphysical Coulomb logarithm and
-            ``validate_profiles`` is set.
+        ValueError: If ``field.field_type`` is not ``"vac"`` or ``""``; if
+            ``backgrounds`` is empty or holds more than
+            ``firm3dpp.COLL_MAX_SPECIES`` species; if ``parallel_speeds``
+            does not match ``stz_inits`` in length or exceeds ``vtotal`` in
+            magnitude; or if the profiles give an unphysical Coulomb
+            logarithm and ``validate_profiles`` is set.
     """
-    from firm3d.field.collisions import ThermalBackground, _validate_coulomb_log
+    from firm3d.field.collisions import (
+        ThermalBackground,
+        _validate_coulomb_log,
+        _validate_species_count,
+    )
 
     nparticles = stz_inits.shape[0]
     if field.field_type not in ["vac", ""]:
@@ -321,6 +327,17 @@ def trace_particles_boozer_with_collisions_gpu(
 
     if isinstance(backgrounds, ThermalBackground):
         backgrounds = [backgrounds]
+    if len(backgrounds) == 0:
+        # The kernel selects column 5 on the species count: with none uploaded
+        # it writes dt, as the collisionless tracer does, and the documented
+        # [t, s, theta, zeta, v_par, v] layout would silently not hold.  A call
+        # to a function named ..._with_collisions asking for no collisions is
+        # a mistake worth naming rather than serving.
+        raise ValueError(
+            "backgrounds is empty; use trace_particles_boozer_gpu for a "
+            "collisionless trace"
+        )
+    _validate_species_count(backgrounds)
     cpp_backgrounds = [b._to_cpp() for b in backgrounds]
     if validate_profiles:
         _validate_coulomb_log(cpp_backgrounds, float(mass), float(charge))

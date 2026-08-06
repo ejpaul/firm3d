@@ -72,7 +72,8 @@ class ThermalBackground:
         charge: Species charge in C (signed).
         n_grid_points: Number of uniformly-spaced points in ``s`` on which
             the profiles are pre-evaluated before passing to C++.  The C++
-            layer uses linear interpolation between these points.
+            layer uses linear interpolation between these points, so at least
+            two are required; fewer raises :class:`ValueError`.
 
     Example::
 
@@ -127,6 +128,27 @@ class ThermalBackground:
         bg.mass = self.mass
         bg.charge = self.charge
         return bg
+
+
+def _validate_species_count(backgrounds):
+    """
+    Refuse more background species than the C++ layer can hold.
+
+    ``compute_collision_coefficients`` builds a fixed-size buffer bounded by
+    ``COLL_MAX_SPECIES`` and throws above it, but it is called once per
+    collision sub-step per particle, so left to itself that limit fires from
+    part-way through a trace on whichever rank owns the first particle to
+    reach it -- and under MPI the ranks that never reach it block forever in
+    the ``allgather``.  This is the same argument
+    :func:`_validate_coulomb_log` makes for checking the profiles up front,
+    and it is why this runs unconditionally rather than under
+    ``validate_profiles``: the limit is structural, not a physics diagnostic.
+    """
+    if len(backgrounds) > sopp.COLL_MAX_SPECIES:
+        raise ValueError(
+            f"at most {sopp.COLL_MAX_SPECIES} background species are "
+            f"supported, but {len(backgrounds)} were given"
+        )
 
 
 def _validate_coulomb_log(cpp_backgrounds, mass, charge):
@@ -361,6 +383,7 @@ def trace_particles_boozer_with_collisions(
     # Accept a single background or a list
     if isinstance(backgrounds, ThermalBackground):
         backgrounds = [backgrounds]
+    _validate_species_count(backgrounds)
     cpp_backgrounds = [b._to_cpp() for b in backgrounds]
     if validate_profiles:
         _validate_coulomb_log(cpp_backgrounds, float(mass), float(charge))
@@ -525,6 +548,7 @@ def trace_particles_boozer_perturbed_with_collisions(
 
     if isinstance(backgrounds, ThermalBackground):
         backgrounds = [backgrounds]
+    _validate_species_count(backgrounds)
     cpp_backgrounds = [b._to_cpp() for b in backgrounds]
     if validate_profiles:
         _validate_coulomb_log(cpp_backgrounds, float(mass), float(charge))
@@ -539,12 +563,13 @@ def trace_particles_boozer_perturbed_with_collisions(
     # error naming none of the cause.
     if getattr(perturbed_field.B0, "field_type", None) is None:
         raise ValueError(
-            "perturbed_field.B0 exposes no field_type, so it is not an "
-            "evaluable BoozerMagneticField subclass: field_type, iota, G and "
-            "the rest are defined on the Python subclass, and pybind is "
-            "handing back the bare C++ base.  Usually this means the "
-            "subclass was constructed inline in the ShearAlfvenWave argument "
-            "and collected; bind it to a local that outlives the call."
+            "perturbed_field.B0 exposes no field_type, so pybind is handing "
+            "back the bare C++ base rather than the Python subclass.  The "
+            "field cannot be evaluated in that state: field_type is defined "
+            "on the subclass, as are the _iota_impl and _G_impl that the "
+            "base-class methods dispatch to.  Usually this means the subclass "
+            "was constructed inline in the ShearAlfvenWave argument and "
+            "collected; bind it to a local that outlives the call."
         )
     field_type = perturbed_field.B0.field_type
     if mode is not None:

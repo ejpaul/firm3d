@@ -837,14 +837,10 @@ class TestGPUTracing(unittest.TestCase):
         )
 
         # Column 5 is the speed, which is what makes the energy and mu
-        # recoverable.  Two independent checks, because a column that merely
-        # looked plausible would pass either one alone:
-        #
-        #   - with no collisions the speed is conserved exactly, so the
-        #     zero-density run must return vtotal;
-        #   - with collisions it must not, and against a cold background the
-        #     ensemble must lose energy on average -- the physics collisions
-        #     are here for, and the reason this column exists.
+        # recoverable.  Checked against two references, because a column that
+        # merely looked plausible would satisfy either alone: the launch speed
+        # (which the zero-density run must return) and the zero-density run
+        # itself (which the collisional one must not match).
         # With every coefficient zero the kick changes nothing, so the speed
         # must come back as the launch speed, up to the energy drift of a
         # non-symplectic adaptive integrator.  Measured 3.4e-05 here; the
@@ -867,17 +863,23 @@ class TestGPUTracing(unittest.TestCase):
                 "5; the speed column is not what is being written"
             ),
         )
-        self.assertTrue(np.all(with_coll[:, 5] > 0.0))
-        # Not asserted: that the ensemble slows.  An alpha's slowing-down time
-        # in this background is of order 0.1 s, so over 2e-6 s the drag moves
-        # the mean speed by ~1e-5 relative -- smaller than the spread the
-        # pitch-angle noise puts on it, and it can go either way on one seed.
-        self.assertNotAlmostEqual(
-            float(with_coll[:, 5].mean() / VELOCITY),
-            1.0,
-            places=6,
-            msg="collisional speeds are indistinguishable from the launch speed",
+        # The collisional speeds must differ from the zero-density ones, not
+        # merely from the launch speed.  Comparing against VELOCITY instead
+        # would be satisfied by the 3.4e-05 integrator drift measured above --
+        # 68x any threshold worth setting -- so it would pass with the
+        # coefficients zeroed.  The zero-density run carries that same drift,
+        # so differencing against it cancels the drift and leaves the kick.
+        moved_v = np.mean(np.abs(with_coll[:, 5] - no_kick[:, 5]) > 1e-6 * VELOCITY)
+        self.assertGreater(
+            moved_v,
+            0.9,
+            f"only {moved_v:.2f} of speeds differ from the zero-density run; "
+            f"the kick is not changing the speed it reports",
         )
+        # Not asserted: that the ensemble slows on average.  An alpha's
+        # slowing-down time in this background is of order 0.1 s, so over
+        # 2e-6 s drag moves the mean by ~1e-5 relative -- below the spread the
+        # pitch-angle noise puts on it, and it can go either way on one seed.
         # v >= |v_par| is required for mu = (v^2 - v_par^2)/(2|B|) >= 0.
         self.assertTrue(
             np.all(with_coll[:, 5] >= np.abs(with_coll[:, 4]) - 1e-6 * VELOCITY),

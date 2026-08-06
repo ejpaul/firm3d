@@ -578,12 +578,16 @@ rather than from the collision model:
   \item Only the final state is returned, as $(\text{nparticles},\,6)$ with
         the same columns as above --- so $E$ and $\mu$ remain recoverable ---
         rather than the whole trajectory.  The collisionless GPU tracer puts
-        the final step size in the last column instead, since without
-        collisions $v$ never leaves its initial value.
+        the final step size in the last column instead: for the unperturbed
+        kernels $v$ never leaves its initial value, so nothing is lost.  (The
+        SAW kernels do change $v$, since the wave does work on the particle,
+        but they have no collisional entry point.)
   \item Stopping criteria are not available.
-  \item A single $v_{\rm total}$ sets the initial speed of every particle,
-        and $\mu$ is derived from it; the CPU entry point takes
-        $(\vpar, \mu)$ per particle.
+  \item A single scalar $v_{\rm total}$ sets the initial speed of every
+        particle, and $\mu$ is derived from it.  The CPU entry point derives
+        $v_{\rm total}$ the same way, from \texttt{Ekin}, but accepts a
+        per-particle array there.  (The \emph{perturbed} CPU entry point is
+        the one that takes $(\vpar, \mu)$ directly.)
   \item Randomness comes from a counter-based Philox generator whose
         subsequence is keyed on the global particle index, not from
         \texttt{mt19937\_64} seeded with $\texttt{rng\_seed} + i$.  Both are

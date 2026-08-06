@@ -1031,15 +1031,21 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
         // are distributed over blocks -- the GPU analogue of the CPU's
         // rng_seed + particle_index.
         //
-        // Gated on the species count: curand_init is documented as costing
-        // considerably more than drawing from an initialised state, and every
-        // collisionless kernel -- Cartesian, Boozer, both SAW variants --
-        // instantiates this same template.  They must not pay for it.
+        // Gated on the species count: every collisionless kernel --
+        // Cartesian, Boozer, both SAW variants -- instantiates this same
+        // template, and none of them ever draws from the generator, since
+        // collision_kick returns at coll_n_bgs_d <= 0 before touching it.
+        // The shared allocation itself is still made for every instantiation;
+        // only the seeding is skipped.
         if (coll_n_bgs_d > 0) {
             curand_init(coll_seed_d, (unsigned long long)idx, 0ULL, &rng_state[threadIdx.x]);
         }
-        // Correct before any kick, and the value reported for a particle
-        // whose kick is skipped (left the device, or a coefficient failure).
+        // Correct before any kick has run.  collision_kick overwrites this
+        // on every step it completes, so a particle whose kick is skipped
+        // later (B <= 0, v <= 0, or a coefficient failure) reports the speed
+        // from its last completed kick, not this one.  Note the kick runs
+        // before check_has_left, so a departing particle is kicked on its
+        // final step and does report that.
         v_tot[threadIdx.x] = v_total_d;
     }
     __syncthreads();
@@ -1081,8 +1087,11 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
         // Last column: the final step size, except under collisions, where it
         // is the total speed instead.
         //
-        // Without collisions v == v_total_d for every particle throughout, so
+        // For the collisionless Boozer kernels v == v_total_d throughout, so
         // the caller already knows it and dt is the more useful diagnostic.
+        // (The SAW kernels are the exception -- the wave does work on the
+        // particle -- but they have no collisional entry point, so they take
+        // the dt branch here regardless.)
         // With collisions v is the quantity that changed -- it carries the
         // energy, and with |B| it gives back mu -- and nothing else in the
         // output can recover it, which would leave slowing-down, the final
@@ -1120,9 +1129,8 @@ static vector<double*> upload_collision_backgrounds(
     vector<double*> owned;
     int n = (int)backgrounds.size();
     if (n > COLL_MAX_SPECIES) {
-        // Format the limit rather than naming the macro: the preprocessor
-        // does not substitute inside a string literal, so the literal form
-        // told the caller neither the limit nor what they passed.
+        // Format the limit and the count.  The message used to name
+        // COLL_MAX_SPECIES literally, which told the caller neither.
         char msg[160];
         std::snprintf(msg, sizeof(msg),
             "GPU collision tracing supports at most %d background species, "
@@ -1140,6 +1148,20 @@ static vector<double*> upload_collision_backgrounds(
     ThermalBackgroundView views[COLL_MAX_SPECIES];
     for (int i = 0; i < n; ++i) {
         const ThermalBackground& bg = backgrounds[i];
+        // Same check the host wrapper makes, for the same reason: the sizes
+        // below are taken from s_grid, so a shorter n_grid or T_grid is a host
+        // over-read copied straight into device memory.
+        if (bg.s_grid.size() < 2 ||
+            bg.n_grid.size() < bg.s_grid.size() ||
+            bg.T_grid.size() < bg.s_grid.size()) {
+            char gmsg[200];
+            std::snprintf(gmsg, sizeof(gmsg),
+                "collisions: species %d has s_grid of %zu points with n_grid "
+                "%zu and T_grid %zu; at least 2 points are required and the "
+                "sample arrays must be no shorter than s_grid",
+                i, bg.s_grid.size(), bg.n_grid.size(), bg.T_grid.size());
+            throw std::invalid_argument(gmsg);
+        }
         int np = (int)bg.s_grid.size();
         double *n_d = nullptr, *T_d = nullptr;
         gpuErrchk(cudaMalloc(&n_d, np * sizeof(double)));
@@ -1300,12 +1322,21 @@ extern "C" vector<double> boozer_collision_gpu_tracing(py::array_t<double> quad_
     // the normal return would let a throw anywhere below leave collisions
     // switched on for the next call in this process, with freed-but-live
     // pointers behind it.
+    //
+    // The calls stay gpuErrchk-wrapped even though this is a destructor: the
+    // usual objection does not apply, because gpuAssert exits rather than
+    // throwing.  Dropping the check would silence exactly the failure that
+    // matters -- a reset that did not take leaves coll_n_bgs_d non-zero over
+    // freed pointers, which is the state this guard exists to prevent.
     struct CollisionStateGuard {
         vector<double*> owned;
+        CollisionStateGuard(const CollisionStateGuard&) = delete;
+        CollisionStateGuard& operator=(const CollisionStateGuard&) = delete;
+        explicit CollisionStateGuard(vector<double*> p) : owned(std::move(p)) {}
         ~CollisionStateGuard() {
             int zero = 0;
-            cudaMemcpyToSymbol(coll_n_bgs_d, &zero, sizeof(zero));
-            for (double* p : owned) cudaFree(p);
+            gpuErrchk(cudaMemcpyToSymbol(coll_n_bgs_d, &zero, sizeof(zero)));
+            for (double* p : owned) gpuErrchk(cudaFree(p));
         }
     } coll_state{upload_collision_backgrounds(backgrounds, rng_seed)};
 

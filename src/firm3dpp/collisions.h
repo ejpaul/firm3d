@@ -145,9 +145,10 @@ FIRM3D_HD inline int compute_collision_coefficients_core(
     // HUGE_VAL rather than std::numeric_limits<double>::infinity(): the
     // latter is a constexpr *host* function, which nvcc rejects in device
     // code unless built with --expt-relaxed-constexpr, and this project does
-    // not pass it.  A literal 1.0/0.0 would also work but is folded away
-    // under -ffast-math / --use_fast_math, silently disabling the guard
-    // below.
+    // not pass it.  (A literal 1.0/0.0 would work equally well here; HUGE_VAL
+    // just says what is meant.  Neither is robust to -ffast-math, which this
+    // project also does not pass -- under -ffinite-math-only the guard below
+    // folds either way.)
     double T_min = HUGE_VAL;
     for (int ib = 0; ib < n_backgrounds; ++ib) {
         const ThermalBackgroundView& bg = backgrounds[ib];
@@ -273,6 +274,23 @@ inline CollisionCoefficients compute_collision_coefficients(
     ThermalBackgroundView views[COLL_MAX_SPECIES];
     for (int ib = 0; ib < n_bg; ++ib) {
         const ThermalBackground& bg = backgrounds[ib];
+        // Checked here, not only in the Python ThermalBackground, because the
+        // struct's grids are public and pybind-writable: a caller holding a
+        // raw firm3dpp.ThermalBackground reaches this function without ever
+        // passing through that constructor.  Linear interpolation needs two
+        // nodes, and the sample arrays are indexed by the s-grid's length, so
+        // a short one is an out-of-bounds read -- on device, of raw memory.
+        if (bg.s_grid.size() < 2 ||
+            bg.n_grid.size() < bg.s_grid.size() ||
+            bg.T_grid.size() < bg.s_grid.size()) {
+            char gmsg[200];
+            std::snprintf(gmsg, sizeof(gmsg),
+                "collisions: species %d has s_grid of %zu points with n_grid "
+                "%zu and T_grid %zu; at least 2 points are required and the "
+                "sample arrays must be no shorter than s_grid",
+                ib, bg.s_grid.size(), bg.n_grid.size(), bg.T_grid.size());
+            throw std::invalid_argument(gmsg);
+        }
         views[ib].n_grid   = bg.n_grid.data();
         views[ib].T_grid   = bg.T_grid.data();
         views[ib].n_points = (int)bg.s_grid.size();
@@ -295,13 +313,18 @@ inline CollisionCoefficients compute_collision_coefficients(
         // is dominated by the coldest dense species -- so report the active
         // species with the smallest T_b rather than looking for T_b == 0,
         // which is only the limiting case and usually not what was passed.
+        // Mirror the core's own skip condition exactly (n_b > 0 AND T_b > 0):
+        // a species the core never evaluated cannot be the one that tripped
+        // the check, and with only the n_b test a species at T_b == 0 would
+        // always win the smallest-T comparison and be blamed for it.
         int worst = -1;
-        double T_worst = 0.0;
+        double n_worst = 0.0, T_worst = 0.0;
         for (int ib = 0; ib < n_bg; ++ib) {
             double n_b = views[ib].n(s), T_b = views[ib].T(s);
-            if (!(n_b > 0.0)) continue;
+            if (!(n_b > 0.0) || !(T_b > 0.0)) continue;
             if (worst < 0 || T_b < T_worst) {
-                worst = (int)ib;
+                worst = ib;
+                n_worst = n_b;
                 T_worst = T_b;
             }
         }
@@ -311,7 +334,7 @@ inline CollisionCoefficients compute_collision_coefficients(
                 "collisions: ln_Lambda <= 0 (v=%.3e m/s, s=%.3f): species %d "
                 "has n_b=%.3e m^-3 with T_b=%.3e J, an unphysical Coulomb "
                 "logarithm; keep T finite where n > 0",
-                v, s, worst, views[worst].n(s), views[worst].T(s));
+                v, s, worst, n_worst, T_worst);
         } else {
             std::snprintf(msg, sizeof(msg),
                 "collisions: ln_Lambda <= 0 (v=%.3e m/s, s=%.3f) over %d "

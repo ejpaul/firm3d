@@ -75,6 +75,11 @@ void init_tracing(py::module_ &m){
     py::class_<StepSizeStoppingCriterion, shared_ptr<StepSizeStoppingCriterion>, StoppingCriterion>(m, "StepSizeStoppingCriterion", py::module_local())
         .def(py::init<double>());
 
+    // Exposed so the Python entry points can reject too many species up front
+    // and collectively, rather than letting the C++ limit fire from part-way
+    // through a trace on whichever rank owns the offending particle.
+    m.attr("COLL_MAX_SPECIES") = py::int_(COLL_MAX_SPECIES);
+
     py::class_<ThermalBackground>(m, "ThermalBackground")
         .def(py::init<>())
         .def_readwrite("s_grid",     &ThermalBackground::s_grid)
