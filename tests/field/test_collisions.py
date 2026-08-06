@@ -1048,6 +1048,63 @@ class TestPerturbedCollisions(unittest.TestCase):
                     )
                 self.assertIn("lost its Python subclass", str(cm.exception))
 
+    def test_stopping_criterion_fires_and_pins_the_hit_layout(self):
+        """
+        Stopping criteria on the perturbed collisional path.
+
+        The hit row is the only place the post-kick state is exposed to the
+        caller, and it was previously untested here.  It also pins the
+        ``res_hits`` layout, which is a trap for anyone migrating from
+        :func:`~firm3d.field.tracing.trace_particles_boozer_perturbed`:
+        ``solve_sde`` emits ``[t, index, s, theta, zeta, v_par, v]`` while the
+        collisionless perturbed tracer's seventh column is ``t``.  Both are
+        seven wide, so reading the wrong one yields a speed where a time was
+        expected with no shape error to catch it -- here 1.3e7 against 2e-7.
+        """
+        saw, _, vpar, mus = self._setup(1e-3)
+        # s runs 0.30 -> 0.42 over _tmax on this fixture, so this is crossed
+        # partway rather than at either end.
+        s_stop = 0.35
+        kw = self._kw()
+        kw["dt_save"] = 2e-8
+        res, hits = trace_particles_boozer_perturbed_with_collisions(
+            saw,
+            self._stz,
+            vpar,
+            mus,
+            backgrounds=_zero_background(),
+            stopping_criteria=[MaxToroidalFluxStoppingCriterion(s_stop)],
+            **kw,
+        )
+        traj, hit = np.asarray(res[0]), np.asarray(hits[0])
+
+        self.assertEqual(
+            hit.shape, (1, 7), f"expected one 7-column hit, got {hit.shape}"
+        )
+        self.assertEqual(hit[0, 1], -1.0, "hit should index the first criterion")
+        self.assertGreaterEqual(hit[0, 2], s_stop, "hit recorded below the threshold")
+        self.assertLess(
+            traj[-1, 0], self._tmax, "trace ran to tmax despite the criterion firing"
+        )
+        self.assertEqual(
+            traj.shape[1], 6, "res_tys must stay [t, s, theta, zeta, v_par, v]"
+        )
+
+        # Column 6 is a speed, not the time.  With no background mu is fixed,
+        # so it is reconstructible from the hit's own position and v_par.
+        field = self._field
+        field.set_points(np.array([hit[0, 2:5]]))
+        v_expected = np.sqrt(hit[0, 5] ** 2 + 2.0 * mus[0] * field.modB()[0, 0])
+        self.assertAlmostEqual(
+            hit[0, 6] / v_expected,
+            1.0,
+            places=9,
+            msg=(
+                f"hit column 6 is {hit[0, 6]:.6e}; expected the speed "
+                f"{v_expected:.6e}, not the time {hit[0, 0]:.3e}"
+            ),
+        )
+
     def test_full_k_field_is_rejected(self):
         """There is no full-K perturbed right-hand side; say so, don't guess."""
         saw, _, vpar, mus = self._setup(1e-3, {"I0": 0.5, "K1": 0.3})
