@@ -31,16 +31,25 @@ import unittest
 import numpy as np
 from scipy.stats import kstest, maxwell
 
+from firm3d.util.constants import (  # noqa: E402
+    ELECTRON_MASS,
+    ONE_EV,
+    PROTON_MASS,
+)
+from firm3d.util.constants import (
+    ELEMENTARY_CHARGE as E_CHARGE,
+)
 from tests.field.collision_helpers import (
     collision_coefficients,
     evolve_velocity_ensemble,
 )
 
-ONE_EV = 1.602176634e-19
-PROTON_MASS = 1.67262192369e-27
-ELECTRON_MASS = 9.1093837015e-31
+# The measured alpha mass, which is 0.76% below the library's
+# ALPHA_PARTICLE_MASS (2*m_p + 2*m_n, i.e. the free constituents with no
+# binding-energy defect).  Kept local deliberately: these helpers check
+# against analytic velocity-space solutions where the physical value is the
+# meaningful one, and m_a enters Gamma quadratically.
 ALPHA_MASS = 6.644657e-27
-E_CHARGE = 1.602176634e-19
 
 # Proton test particles on a proton background, T = 1 keV, boosted density.
 T_B = 1e3 * ONE_EV

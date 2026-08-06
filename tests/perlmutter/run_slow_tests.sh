@@ -32,7 +32,7 @@ WORK=${SLURM_SUBMIT_DIR:-.}/slow-tests-$SLURM_JOB_ID
 mkdir -p "$WORK"
 
 srun -n 64 --output="$WORK/pytest-%t.log" \
-    python -m pytest tests/field/test_collisions.py -m slow -v
+    python -m pytest tests/field/test_collisions.py -v
 EXIT=$?
 
 echo "=== rank 0 pytest output ==="

@@ -36,9 +36,14 @@ to include stochastic Coulomb collisions for an energetic particle (EP) tracing 
 one or more Maxwellian background species.
 
 The approach couples the deterministic guiding-centre (GC) orbit equations in Boozer
-coordinates with a Milstein stochastic term for the velocity-space diffusion. The full
-state vector is $(s,\theta,\zeta,v,\xi)$, where $v=|\bm{v}|$ is the total speed and
-$\xi = \vpar/v$ is the pitch.
+coordinates with a Milstein stochastic term for the velocity-space diffusion.  The
+integrated state is the ordinary GC state $(s,\theta,\zeta,\vpar)$ at fixed magnetic
+moment $\mu$; the collision operator acts on the velocity-space pair
+$(v,\xi)$, where $v=|\bm{v}|$ is the total speed and $\xi=\vpar/v$ the pitch, as a
+kick applied between orbit steps (Section~\ref{sec:splitting}).  Because $\mu$ is
+constant across an orbit step it is a parameter of the orbit equations rather than a
+state variable, which is what allows the vacuum, $K=0$ and full GC equations all to be
+driven by the same collision operator.
 
 Primary references:
 \begin{itemize}
@@ -71,7 +76,10 @@ $\theta$ the poloidal angle, and $\zeta$ the toroidal angle, the vacuum GC equat
 \end{align}
 where $\psi_0$ is the reference poloidal flux, $G(s)$ is the covariant toroidal
 field component, and $\iota(s)$ is the rotational transform.  The magnetic moment
-$\mu = v^2(1-\xi^2)/(2B)$ is reconstructed locally at each evaluation.
+$\mu = v^2(1-\xi^2)/(2B)$ is held fixed through an orbit step and updated by the
+collision kick.  The vacuum equations are shown here for concreteness; the $K=0$ and
+full GC equations of \texttt{trace\_particles\_boozer} are supported identically and
+are selected from the field's \texttt{field\_type}.
 
 With collisions the equations for $v$ and $\xi$ acquire deterministic drift terms
 (Section~\ref{sec:coefs}) and stochastic noise terms (Section~\ref{sec:milstein}).
@@ -173,7 +181,7 @@ The quantum branch $b_{\mathrm{qm}} > b_{\mathrm{cl}}$ applies when
 \end{equation}
 i.e.\ when the de~Broglie wavelength of the reduced mass particle exceeds the
 classical distance of closest approach.  For 3.52\,MeV $\alpha$-particles
-scattering off 10\,keV electrons one finds $b_{\mathrm{qm}} \approx 22\,b_{\mathrm{cl}}$,
+scattering off 10\,keV electrons one finds $b_{\mathrm{qm}} \approx 6.9\,b_{\mathrm{cl}}$,
 so the quantum branch is active throughout alpha slowing-down against electrons.
 If $\lnL \leq 0$ (Debye length below the minimum impact parameter, e.g.\
 $T_b \to 0$ at finite density) the binary-collision model is undefined and
@@ -363,8 +371,9 @@ simultaneously (Eq.~\eqref{eq:debye}), prior to the per-species loop.
 
 \subsection{Full SDE System}
 
-The complete SDE for the five-dimensional state $(s,\theta,\zeta,v,\xi)$ is
-\cite{hirvijoki2013}
+The system being solved is the following, written in the natural velocity-space
+variables \cite{hirvijoki2013}.  Section~\ref{sec:splitting} describes how it is split
+between the orbit stepper and the collision kick.
 
 \begin{align}
   \dd s      &= \dot s_{\mathrm{orb}}\,\dd t, \\
@@ -394,13 +403,19 @@ are generated and applied via the Milstein method \cite{kloeden1992}:
 
 \begin{align}
   v  &\leftarrow v
+     + K\,h
      + g_v\,\Delta W_v
      + \half\frac{\partial g_v}{\partial v}\bigl(\Delta W_v^2 - h\bigr),
   \\[4pt]
   \xi &\leftarrow \xi
+     - \xi\,\nu_D\,h
      + g_\xi\,\Delta W_\xi
      + \half\frac{\partial g_\xi}{\partial \xi}\bigl(\Delta W_\xi^2 - h\bigr),
 \end{align}
+The deterministic drift terms $K h$ and $-\xi\nu_D h$ are applied here, by
+explicit Euler, rather than inside the orbit right-hand side; this matches
+ASCOT5's \texttt{mccc\_gc\_milstein.c} and is what keeps $\mu$ constant across
+an orbit step.
 where the noise amplitudes and their derivatives are
 \begin{align}
   g_v  &= \sqrt{2D_{\parallel}},
@@ -458,8 +473,9 @@ unaffected.
 
 \subsection{Dormand--Prince Solver}
 
-The deterministic ODE part (all five components of the drift) is integrated
-with the classic 4(5)-order embedded Dormand--Prince (FSAL) method \cite{dormand1980}.
+The orbit equations --- the four components $(\dot s,\dot\theta,\dot\zeta,\dot\vpar)$
+at fixed $\mu$, with no collision terms --- are integrated with the classic embedded
+Dormand--Prince (FSAL) method \cite{dormand1980}.
 Step-size control uses mixed absolute/relative tolerances:
 \begin{equation}
   \mathrm{err}_i = \bigl|y_i^{(5)} - y_i^{(4)}\bigr|
@@ -472,21 +488,68 @@ Default tolerances: $\delta_{\mathrm{abs}}=\delta_{\mathrm{rel}}=10^{-9}$.
 The parameter \texttt{DP\_hmin} (default \texttt{0.0}) sets a lower bound on the
 physical step size $h$ in seconds.  A value of $10^{-10}$--$10^{-9}$\,s prevents the
 solver from stalling at bounce points while keeping steps small enough that the orbital
-dynamics remain accurate.
+dynamics remain accurate.  Note this bounds the \emph{orbit} stepper only: the
+collision terms are no longer part of the right-hand side, so the stiffness they
+introduce as $v\to0$ is handled by the sub-cycling of Section~\ref{sec:subcycling},
+not by this floor.
 
 \subsection{Operator Splitting}
+\label{sec:splitting}
 
-The SDE is solved via Lie--Trotter operator splitting:
+The system is solved via Lie--Trotter operator splitting:
 \begin{enumerate}
-  \item \textbf{Deterministic half:} advance $(s,\theta,\zeta,v,\xi)$ by one DP step
-        of physical time $h$ using the full drift
-        $(\dot s,\dot\theta,\dot\zeta,K,-\xi\nu_D+\dot\xi_{\mathrm{mirror}})$.
-  \item \textbf{Stochastic half:} apply Milstein noise to $(v,\xi)$ at the accepted
-        state, using $h$ as the diffusion window.
+  \item \textbf{Orbit half:} advance $(s,\theta,\zeta,\vpar)$ by one adaptive DP
+        step of physical time $h$ at fixed $\mu$, using the orbit drift only.
+        No collision term appears in this right-hand side.
+  \item \textbf{Collision half:} at the accepted state, convert
+        $(\vpar,\mu)\to(v,\xi)$ using $|B|$ at the current position, apply the
+        drift and Milstein noise of Section~\ref{sec:milstein} over the window
+        $h$, and convert back, which yields the updated $\mu$.
 \end{enumerate}
-The trajectory is saved \emph{before} the Milstein step at each
+Placing the whole collision operator in the second half is what makes $\mu$
+exactly conserved by the first, so $\mu$ can be a parameter of the orbit
+equations rather than a state variable.  Any static-field GC right-hand side is
+then usable unchanged.
+
+The trajectory is saved \emph{before} the collision kick at each
 $t_{\mathrm{save}}$ checkpoint, so saved states correspond to the deterministic
 prediction (consistent with the standard output convention).
+
+\subsection{Sub-Cycling of the Collision Kick}
+\label{sec:subcycling}
+
+The orbit stepper sizes $h$ from orbit dynamics alone, so the collision terms
+have no influence on it.  Applying them as a single explicit-Euler kick over
+that whole step is inaccurate whenever the collision rates are fast compared
+with $h$ --- the thermal regime, where $\nu_D$ and $K$ diverge as $v\to0$.
+Left uncorrected the equilibrium tracks the orbit tolerance instead of the
+physics: the Maxwellian-equilibration test returned
+$\langle E\rangle/T_b = 7.8,\,3.1,\,3.0,\,1.3$ at
+$\delta = 10^{-6},10^{-8},10^{-10},10^{-12}$, against an expected $3/2$.
+
+The kick is therefore sub-divided into $n$ sub-steps, with
+\begin{equation}
+  n = \max\!\left(
+      \frac{\nu_D h}{\varepsilon},\;
+      \frac{|K| h}{\varepsilon v},\;
+      \left[\frac{\sqrt{2 D_\parallel h}}{\varepsilon v}\right]^{2}
+    \right),
+  \qquad \varepsilon = 0.05,
+  \label{eq:nsub}
+\end{equation}
+capped at $10^4$.  The two drift terms scale as $h$ and so fall linearly in
+$n$; the diffusive excursion scales as $\sqrt{h}$ and so falls only as
+$\sqrt{n}$, which is why it enters squared.  The coefficients are re-evaluated
+and $n$ re-derived from the remaining time after each sub-step, since $v$
+changes within the kick.  Splitting is exact for the driving noise: a Wiener
+increment over $h$ is the sum of $n$ independent increments over $h/n$.
+
+Sub-cycling is cheap because the particle position is frozen during a kick, so
+a sub-step costs a coefficient evaluation and no field evaluation.  For 3.52
+MeV alphas $n=1$ throughout; only thermal-speed particles sub-cycle.  ASCOT5
+reaches the same place from the other direction, with error estimates that
+shorten its collision step (\texttt{mccc\_gc\_milstein.c}: \texttt{kappa\_k}
+for drift, \texttt{kappa\_d0}/\texttt{kappa\_d1} for diffusion).
 
 %-----------------------------------------------------------------------
 \section{Output Format}
@@ -563,16 +626,20 @@ unit tests of the coefficient formulae, pure-Python velocity-space relaxation
 tests with no compiled module or magnetic field, end-to-end tests of the full
 production tracer (guiding-centre orbits $+$ Milstein noise), and cross-code
 validation against ASCOT5 \cite{ascot5code} in both a controlled uniform
-plasma and a full reactor-scale 3D stellarator equilibrium.  All numbers
-below are reproducible from \texttt{tests/field/test\_collisions.py},
-\texttt{tests/field/test\_collisions\_local.py}, and the examples referenced
-in each subsection.
+plasma.  Every number in Sections~\ref{sec:local-tests} and
+\ref{sec:e2e-tests} was re-measured against the current tree and is
+reproducible from \texttt{tests/field/test\_collisions.py} and
+\texttt{tests/field/test\_collisions\_local.py}.  The cross-code comparison of
+Section~\ref{sec:ascot5-uniform} is the exception and is marked as such: it
+came from a driver script that has been removed pending a reworked validation
+example, so its numbers predate the current integrator and have not been
+regenerated.
 
 \subsection{Analytic Coefficient Unit Tests}
 
 \texttt{TestCollisionCoefficients} checks the Chandrasekhar function
 $G(x)$ and its derivative against known limits ($G(0)=0$,
-$G(x{\to}\infty)\to 1/2x^2$, sign change of $G'$ near $x\approx 0.92$),
+$G(x{\to}\infty)\to 1/2x^2$, sign change of $G'$ near $x\approx 0.968$),
 verifies $K<0$ (drag always decelerates) and $\nu_D>0$ for arbitrary finite
 backgrounds, and checks the expected scalings $K\propto n_b$,
 $K\propto q_a^2$, $\nu_D\propto n_b$, and additivity across species to
@@ -605,9 +672,9 @@ law.
 \toprule
 Test & $\langle E\rangle/T_b$ (target $1.5$) & KS $p$-value & Pass \\
 \midrule
-Cold start ($E_0=0.45\,T_b$) & $1.446$ & $0.037$ & \checkmark \\
-Hot start ($E_0=4.5\,T_b$)   & $1.486$ & $0.095$ & \checkmark \\
-Stationarity (start at equilibrium) & $1.500$ & $0.777$ & \checkmark \\
+Cold start ($E_0=0.45\,T_b$) & $1.492$ & $0.344$ & \checkmark \\
+Hot start ($E_0=4.5\,T_b$)   & $1.537$ & $0.251$ & \checkmark \\
+Stationarity (start at equilibrium) & $1.445$ & $0.064$ & \checkmark \\
 \bottomrule
 \end{tabular}
 \caption{Relaxation of a proton ensemble in a $1$\,keV proton background
@@ -617,8 +684,8 @@ against the Maxwell speed law at the background temperature.}
 \end{table}
 
 The same ensemble also verifies pitch isotropisation: starting from
-$\xi_0=1$, the relaxed ensemble gives $\langle\xi\rangle = 0.009$ (target
-$0$) and $\langle\xi^2\rangle = 0.330$ (target $1/3$), consistent with
+$\xi_0=1$, the relaxed ensemble gives $\langle\xi\rangle = 0.006$ (target
+$0$) and $\langle\xi^2\rangle = 0.336$ (target $1/3$), consistent with
 convergence to $\xi\sim\mathcal{U}(-1,1)$.  A short-time drift check on
 $3.52$\,MeV $\alpha$-particles against $10$\,keV electrons, over a window
 short enough that $K(v)$ is nearly constant (Doppler shift in speed
@@ -644,17 +711,22 @@ velocity-space-only integration of Section~\ref{sec:local-tests}.
 \toprule
 Test & Measured & Target & Pass \\
 \midrule
-Hot start ($E_0=4.5\,T_b$), $\langle E\rangle/T_b$  & $1.392$ & $1.5$ & \checkmark \\
-Cold start ($E_0=0.45\,T_b$), $\langle E\rangle/T_b$ & $1.601$ & $1.5$ & \checkmark \\
-Pitch isotropisation, $\langle\xi\rangle$           & $-0.019$ & $0$ & \checkmark \\
-Pitch isotropisation, $\langle\xi^2\rangle$         & $0.326$ & $1/3$ & \checkmark \\
+Hot start ($E_0=4.5\,T_b$), $\langle E\rangle/T_b$  & $1.590$ & $1.5$ & \checkmark \\
+Cold start ($E_0=0.45\,T_b$), $\langle E\rangle/T_b$ & $1.799$ & $1.5$ & \checkmark \\
+Pitch isotropisation, $\langle\xi\rangle$           & $+0.029$ & $0$ & \checkmark \\
+Pitch isotropisation, $\langle\xi^2\rangle$         & $0.331$ & $1/3$ & \checkmark \\
 Pitch broadening ($\xi_0=0$), $\mathrm{std}(\xi)$    & $0.418$ & $>0.05$ & \checkmark \\
 \bottomrule
 \end{tabular}
 \caption{End-to-end equilibration through the production tracer:
 $40$ protons on a $1$\,keV proton background, $n_b=10^{21}\,\mathrm{m}^{-3}$,
-$8$ relaxation times, ITER-scale confining field.  All particles remain
-confined and finite throughout (no losses, no NaN states).}
+$8$ relaxation times, on the near-axis confining field of
+\texttt{Test\-Maxwellian\-Equilibration} ($R_0 = 8$\,m).  All particles remain
+confined and finite throughout (no losses, no NaN states).  The final row is
+measured separately by \texttt{Test\-Pitch\-Isotropization}, on a different
+field and background.  $N=40$ gives a Monte Carlo spread of order $0.2$ on
+$\langle E\rangle/T_b$, which is why these sit further from $3/2$ than the
+$N=4000$ velocity-space figures of Section~\ref{sec:local-tests}.}
 \end{table}
 
 \paragraph{The pitch-decay benchmark and its correction.}
@@ -720,6 +792,19 @@ circular tokamak; firm3d's \texttt{BoozerAnalytic} at the same $R_0,B_0$
 scale), but since the plasma is uniform the compared quantities ---
 mean slowing-down time to $50$\,keV and $\langle E(t)\rangle$ --- are
 geometry-insensitive, isolating the collision operator itself.
+
+\paragraph{Provenance.}  Unlike every other number in this section, the
+figures below have \emph{not} been regenerated against the current tree.
+They were produced by a driver script that has since been removed pending a
+reworked validation example, and they predate three changes that move them:
+the magnetic moment becoming a parameter of the orbit equations rather than a
+state variable, the collision drift moving into a sub-cycled kick
+(Section~\ref{sec:subcycling}), and the correction of
+\texttt{ALPHA\_PARTICLE\_MASS} from the sum of free constituents to the
+measured value, which lowers the alpha mass by $0.76\%$ and raises the birth
+speed by $0.38\%$.  Treat the agreement recorded here as evidence about the
+coefficient set --- which is unchanged and is pinned directly against ASCOT5
+in Section~\ref{sec:coefs} --- rather than about the current integrator.
 
 \begin{table}[h]
 \centering
