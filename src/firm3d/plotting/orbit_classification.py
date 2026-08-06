@@ -1,71 +1,7 @@
 import numpy as np
+from scipy.optimize import isotonic_regression
 
 __all__ = ["OrbitClassification"]
-
-
-def _isotonic_regression(y, increasing=True):
-    r"""
-    Isotonic regression (pool-adjacent-violators) on uniformly spaced samples.
-
-    Returns the unique least-squares monotonic sequence closest to ``y``.
-    Use ``increasing=False`` on the branch approaching the ``|B|`` minimum
-    and ``increasing=True`` on the branch leaving it, so that the fitted
-    well is guaranteed to be monotone on each side even when the raw field
-    data contains small ripples or numerical noise.
-
-    The algorithm works by scanning ``y`` left-to-right and maintaining a
-    stack of constant-value *blocks*. Each new element starts as its own
-    block. Whenever the mean of the last block drops below the mean of the
-    preceding block (violating monotonicity), the two blocks are merged and
-    their common value is set to the pooled mean. Merging continues
-    (upward through the stack) until the sequence is again non-decreasing.
-    The result is the minimum-norm projection of ``y`` onto the cone of
-    non-decreasing sequences.
-
-    Notes:
-        - The decreasing case is handled by reversing ``y``, applying the
-          increasing solver, and reversing the result.
-
-    Args:
-        y (array-like): 1-D sequence of values to fit.
-        increasing (bool, optional): If ``True`` (default), fit a
-            non-decreasing sequence; if ``False``, fit a non-increasing
-            sequence.
-
-    Returns:
-        ndarray: Isotonic (monotone) approximation of ``y``, same shape as
-            the input.
-    """
-    y = np.asarray(y, dtype=float)
-    if y.size <= 1:
-        return y
-    if not increasing:
-        return _isotonic_regression(y[::-1], increasing=True)[::-1]
-
-    block_sums = [float(y[0])]
-    block_weights = [1.0]
-    block_counts = [1]
-    for value in y[1:]:
-        block_sums.append(float(value))
-        block_weights.append(1.0)
-        block_counts.append(1)
-        while (
-            len(block_sums) >= 2
-            and block_sums[-2] / block_weights[-2] > block_sums[-1] / block_weights[-1]
-        ):
-            block_sums[-2] += block_sums[-1]
-            block_weights[-2] += block_weights[-1]
-            block_counts[-2] += block_counts[-1]
-            del block_sums[-1], block_weights[-1], block_counts[-1]
-
-    y_mono = np.empty(y.size)
-    index = 0
-    for block_sum, block_weight, block_count in zip(
-        block_sums, block_weights, block_counts
-    ):
-        y_mono[index : index + block_count] = block_sum / block_weight
-        index += block_count
-    return y_mono
 
 
 class OrbitClassification:
@@ -432,9 +368,12 @@ class OrbitClassification:
             modB_left = modB[idx_l_peak : min_loc + 1]
             modB_right = modB[min_loc : idx_r_peak + 1]
 
-            # Force monotonic |B| on each side of the well minimum.
-            modB_left_mon = _isotonic_regression(modB_left, increasing=False)
-            modB_right_mon = _isotonic_regression(modB_right, increasing=True)
+            # Force monotonic |B| on each side of the well minimum, so the
+            # crossing with modB_crit is unique even if the branch is rippled.
+            # chi_left runs peak -> minimum, so its |B| must be non-increasing;
+            # chi_right runs minimum -> peak, so its |B| must be non-decreasing.
+            modB_left_mon = isotonic_regression(modB_left, increasing=False).x
+            modB_right_mon = isotonic_regression(modB_right, increasing=True).x
             chi_mirror_left = chi_left[np.argmin(np.abs(modB_left_mon - modB_crit))]
             chi_mirror_right = chi_right[np.argmin(np.abs(modB_right_mon - modB_crit))]
 
