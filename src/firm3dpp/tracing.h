@@ -2,6 +2,7 @@
 #include <memory>
 #include <vector>
 #include <cstdint>
+#include <stdexcept>
 #include "boozermagneticfield.h"
 #include "shearalfvenwave.h"
 #include "regular_grid_interpolant_3d.h"
@@ -20,6 +21,24 @@ public:
     virtual ~BaseRHS() = default;
     virtual void operator()(const vector<double>& y, vector<double>& dydt, double t) = 0;
     virtual int get_state_size() const = 0;
+
+    // Collisions change the magnetic moment, so the collision integrator has
+    // to update mu between accepted steps.  Within a step mu is exactly
+    // conserved by the orbit equations, which is why it stays a parameter of
+    // the right-hand side rather than becoming a state variable.
+    //
+    // The shear-Alfven-wave variants deliberately do not implement this, so
+    // that reaching them fails loudly rather than integrating silently.  They
+    // are excluded for two structural reasons, not because they vary mu
+    // within a step (they hold it fixed too): their state carries t as a
+    // fifth component, which solve_sde's 4-element layout cannot represent,
+    // and the collision kick needs |B| from a BoozerMagneticField rather than
+    // a ShearAlfvenWave.
+    virtual void set_mu(double) {
+        throw std::invalid_argument(
+            "this right-hand side does not support collisions: mu is not settable"
+        );
+    }
 };
 
 // Overloaded solve() function that accepts a BaseRHS object
@@ -89,6 +108,8 @@ particle_guiding_center_boozer_collision_tracing(
         double vtang,
         double tmax,
         const vector<ThermalBackground>& backgrounds,
+        bool vacuum,
+        bool noK,
         vector<shared_ptr<StoppingCriterion>> stopping_criteria={},
         double dt_save=1e-6,
         bool forget_exact_path=false,

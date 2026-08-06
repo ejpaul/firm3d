@@ -55,6 +55,10 @@ class GuidingCenterVacuumBoozerRHS : public BaseRHS {
             return Size;
         }
 
+        // Collisions update mu between accepted steps; within a step the
+        // orbit equations conserve it exactly.
+        void set_mu(double mu_new) override { mu = mu_new; }
+
         void operator()(const vector<double> &ys, vector<double> &dydt, const double t) override {
             vector<double> stzv(Size), stzvdot(Size);
             y_to_stzvt(ys, stzv, axis, vnorm, tnorm);
@@ -332,6 +336,10 @@ class GuidingCenterNoKBoozerRHS : public BaseRHS {
             return Size;
         }
 
+        // Collisions update mu between accepted steps; within a step the
+        // orbit equations conserve it exactly.
+        void set_mu(double mu_new) override { mu = mu_new; }
+
         void operator()(const vector<double> &ys, vector<double> &dydt, const double t) override {
             vector<double> stzv(Size), stzvdot(Size);
             y_to_stzvt(ys, stzv, axis, vnorm, tnorm);
@@ -399,6 +407,10 @@ class GuidingCenterBoozerRHS : public BaseRHS {
         int get_state_size() const override {
             return Size;
         }
+
+        // Collisions update mu between accepted steps; within a step the
+        // orbit equations conserve it exactly.
+        void set_mu(double mu_new) override { mu = mu_new; }
 
         void operator()(const vector<double> &ys, vector<double> &dydt, const double t) override {
             vector<double> stzv(Size), stzvdot(Size);
@@ -931,121 +943,54 @@ solve_sympl_wrapper(
 
 
 // ==========================================================================
-// Collision integrator: GC equations in (v, xi) space
+// Collision integrator: orbit equations at fixed mu, plus a collision kick
 // ==========================================================================
 
 // --------------------------------------------------------------------------
-// RHS for vacuum GC equations with collision drift, state = [s,theta,zeta,v,xi]
-// --------------------------------------------------------------------------
-class GuidingCenterVacuumCollisionBoozerRHS : public BaseRHS {
-    /*
-     * State: [s, theta, zeta, v, xi]  where v = |v_total|, xi = v_par / v.
-     *
-     * Deterministic drift (orbit + collision drag):
-     *   sdot   = -dBdtheta * m v^2(1+xi^2)/(2 B q psi0)
-     *   thdot  =  dBds    * m v^2(1+xi^2)/(2 B q psi0) + iota*xi*v*B/G
-     *   zetdot =  xi*v*B/G
-     *   vdot   =  K(v,s)   [collision drag only; zero collisionlessly]
-     *   xidot  = -(iota*dBdtheta + dBdzeta)*v*(1-xi^2)/(2G)  - xi*nu_D
-     *
-     * mu = v^2*(1-xi^2)/(2B) is recomputed at each evaluation.
-     */
-    private:
-        Array2 stz = xt::zeros<double>({1, 3});
-        shared_ptr<BoozerMagneticField> field;
-        double m, q;
-        vector<ThermalBackground> backgrounds;
-        double m_a, q_a;
-    public:
-        int axis;
-        double vnorm, tnorm;
-        static constexpr int Size = 5;
-
-        GuidingCenterVacuumCollisionBoozerRHS(
-            shared_ptr<BoozerMagneticField> field,
-            double m, double q,
-            const vector<ThermalBackground>& backgrounds,
-            int axis, double vnorm, double tnorm)
-            : field(field), m(m), q(q), backgrounds(backgrounds),
-              m_a(m), q_a(q), axis(axis), vnorm(vnorm), tnorm(tnorm) {}
-
-        int get_state_size() const override { return Size; }
-
-        void operator()(const vector<double>& ys, vector<double>& dydt, const double t) override {
-            vector<double> stzv_xi(Size), dot(Size);
-            y_to_stzv_xi(ys, stzv_xi, axis, vnorm);
-
-            stz(0, 0) = stzv_xi[0];
-            stz(0, 1) = stzv_xi[1];
-            stz(0, 2) = stzv_xi[2];
-            double v   = stzv_xi[3];
-            double xi  = stzv_xi[4];
-
-            field->set_points(stz);
-            double psi0       = field->psi0;
-            double modB       = field->modB_ref()(0);
-            double G          = field->G_ref()(0);
-            double iota       = field->iota_ref()(0);
-            auto modB_derivs  = field->modB_derivs_ref();
-            double dmodBds    = modB_derivs(0);
-            double dmodBdtheta= modB_derivs(1);
-            double dmodBdzeta = modB_derivs(2);
-
-            double s = stzv_xi[0];
-            double fak1 = m * v * v * (1.0 + xi * xi) / (2.0 * modB);  // m*(vpar^2/B + mu)
-
-            // Spatial orbit equations (vacuum)
-            dot[0] = -dmodBdtheta * fak1 / (q * psi0);
-            dot[1] =  dmodBds    * fak1 / (q * psi0) + iota * xi * v * modB / G;
-            dot[2] =  xi * v * modB / G;
-
-            // Mirror force on xi (orbit)
-            dot[4] = -(iota * dmodBdtheta + dmodBdzeta) * v * (1.0 - xi * xi) / (2.0 * G);
-
-            // Collision drift terms (deterministic)
-            if (!backgrounds.empty() && v > 0.0) {
-                auto coef = compute_collision_coefficients(v, s, m_a, q_a, backgrounds);
-                dot[3]  = coef.K;           // vdot from drag
-                dot[4] += -xi * coef.nu_D;  // xidot from deterministic pitch drift
-            } else {
-                dot[3] = 0.0;
-            }
-
-            stzv_xi_dot_to_ydot(dot, stzv_xi, dydt, axis, vnorm, tnorm);
-        }
-};
-
-// --------------------------------------------------------------------------
-// solve_sde: like solve() but applies Milstein noise to (v, xi) after each
-// accepted step.  Output rows are [t, s, theta, zeta, v_par, v] (6 elements).
+// solve_sde: drive any static-field guiding-centre right-hand side with the
+// Monte Carlo collision operator.  Output rows are [t, s, theta, zeta, v_par, v].
+//
+// The orbit state is the ordinary 4-element [s, theta, zeta, v_par]; mu is a
+// parameter of the right-hand side, not a state variable.  That works because
+// the whole collision operator -- drag as well as diffusion -- is applied as a
+// kick at accepted-step boundaries (see milstein_collision_step), so within a
+// step the orbit equations conserve mu exactly.  The consequence is that any
+// static-field guiding-centre right-hand side works unchanged -- vacuum, noK
+// and full -- without being rewritten in (v, xi).  The state width is checked
+// below rather than taken on trust.
+//
+// At each accepted step the kick converts (v_par, mu) -> (v, xi) using |B| at
+// the current position, applies drift and noise, and converts back.
 //
 // Why this is a separate loop rather than a flag on solve():
 //
-// The Milstein kick perturbs (v, xi) at the end of an accepted step and then
-// re-initializes the stepper from the perturbed state, which discards the
-// dense-output interpolant for the step just taken.  That imposes an ordering
-// on the loop body which solve() does not satisfy:
+// The kick perturbs the state at the end of an accepted step and then
+// re-initializes the stepper, which discards the dense-output interpolant for
+// the step just taken.  That imposes an ordering on the loop body which
+// solve() does not satisfy:
 //
 //   * the path must be saved BEFORE the kick, while the interpolant is still
 //     valid (solve() saves after the stopping check);
 //   * the tau_max endpoint must be captured eagerly into y_at_tmax, since
 //     after re-initialization it can no longer be interpolated back to;
 //   * stopping criteria cannot use dense-output root finding, so they are
-//     evaluated at the post-noise step endpoint only.
+//     evaluated at the post-kick step endpoint only.
 //
 // The last point is why phase-plane and v_par-plane crossings (the `phases`
 // and `vpars` arguments of solve()) are not offered here: a velocity-space
 // crossing is ill-defined when a discontinuous kick lands on the step
 // endpoint.  Spatial phase crossings would still be well-defined within a
-// step -- the noise only touches (v, xi) -- so they could be recovered later
-// by root-finding on the pre-kick interpolant.
+// step, so they could be recovered later by root-finding on the pre-kick
+// interpolant.
 // --------------------------------------------------------------------------
 tuple<vector<vector<double>>, vector<vector<double>>>
 solve_sde(
     BaseRHS& rhs,
+    shared_ptr<BoozerMagneticField> field,
     const vector<ThermalBackground>& backgrounds,
     double m_a, double q_a,
-    vector<double> stzv_xi_init,   // [s, theta, zeta, v, xi]
+    vector<double> stzv_init,      // [s, theta, zeta, v_par]
+    double mu_init,                // magnetic moment [m^2/s^2/T]
     double tau_max,
     double dtau,
     double dtau_max,
@@ -1061,7 +1006,12 @@ solve_sde(
     double DP_hmin,
     uint64_t rng_seed)
 {
-    const int state_size = 5;
+    const int state_size = 4;
+    if (rhs.get_state_size() != state_size)
+        throw std::invalid_argument(
+            "solve_sde requires a 4-element [s, theta, zeta, v_par] right-hand "
+            "side; the perturbed variants carry t as a fifth component"
+        );
 
     // Set up RNG
     std::mt19937_64 rng(rng_seed);
@@ -1069,30 +1019,51 @@ solve_sde(
 
     vector<vector<double>> res;
     vector<vector<double>> res_hits;
-    vector<double> y(state_size), stzv_xi(state_size);
+    vector<double> y(state_size), stzv(state_size);
 
     std::unique_ptr<ODESolver> solver = make_ode_solver(
         ode_solver, abstol, reltol, dtau_max, DP_hmin, tnorm);
 
+    // mu is carried alongside the state and updated by the kick.
+    double mu = mu_init;
+    rhs.set_mu(mu);
+
+    Array2 stz_pt = xt::zeros<double>({1, 3});
+    auto modB_at = [&](double s, double theta, double zeta) -> double {
+        stz_pt(0, 0) = s;
+        stz_pt(0, 1) = theta;
+        stz_pt(0, 2) = zeta;
+        field->set_points(stz_pt);
+        return field->modB_ref()(0);
+    };
+
+    // Speed reconstructed from the orbit state and the mu in force for the
+    // step the sample was taken in: v^2 = v_par^2 + 2 mu |B|.
+    auto speed_at = [&](const vector<double>& sv, double mu_now) -> double {
+        double vperp2 = 2.0 * mu_now * modB_at(sv[0], sv[1], sv[2]);
+        if (vperp2 < 0.0) vperp2 = 0.0;
+        return std::sqrt(sv[3] * sv[3] + vperp2);
+    };
+
     // Helper: build a 6-element save record [t, s, theta, zeta, v_par, v]
-    auto make_record = [&](double t_phys, const vector<double>& sv) -> vector<double> {
-        // sv = [s, theta, zeta, v, xi]
-        double v_par = sv[3] * sv[4];
-        return {t_phys, sv[0], sv[1], sv[2], v_par, sv[3]};
+    auto make_record = [&](double t_phys, const vector<double>& sv,
+                           double mu_now) -> vector<double> {
+        return {t_phys, sv[0], sv[1], sv[2], sv[3], speed_at(sv, mu_now)};
     };
 
     // Save initial state
-    stzv_xi_to_y(stzv_xi_init, y, axis, vnorm);
-    res.push_back(make_record(0.0, stzv_xi_init));
+    stzvt_to_y(stzv_init, y, axis, vnorm, tnorm);
+    res.push_back(make_record(0.0, stzv_init, mu));
 
     solver->initialize(y, 0.0, dtau, rhs);
 
     double tau = 0.0;
     int iter = 0;
     bool stop = false;
-    // Capture the state at tau_max before any Milstein re-initialization destroys
-    // the dense-output interval.  Set when the step crosses tau_max.
+    // Capture the state at tau_max before any re-initialization destroys the
+    // dense-output interval.  Set when the step crosses tau_max.
     vector<double> y_at_tmax(state_size);
+    double mu_at_tmax = mu;
     bool y_at_tmax_saved = false;
 
     do {
@@ -1103,7 +1074,9 @@ solve_sde(
         double h_taken     = tau_current - tau_last;  // normalised step
         tau = tau_current;
 
-        // ---- Save path (BEFORE Milstein re-init, while dense output is valid) ----
+        // ---- Save path (BEFORE the kick, while dense output is valid) ----
+        // mu is the value in force for this step, which is what the samples
+        // interpolated from it were integrated with.
         {
             double tau_save_last = (std::floor(tau_last / dtau_save) + 1) * dtau_save;
             vector<double> y_save(state_size), sv_save(state_size);
@@ -1113,61 +1086,87 @@ solve_sde(
                 if (tau_save != 0.0) {
                     solver->calc_state(tau_save, y_save);
                     if (!forget_exact_path) {
-                        y_to_stzv_xi(y_save, sv_save, axis, vnorm);
-                        res.push_back(make_record(tau_save * tnorm, sv_save));
+                        y_to_stzvt(y_save, sv_save, axis, vnorm, tnorm);
+                        res.push_back(make_record(tau_save * tnorm, sv_save, mu));
                     }
                 }
             }
             // When this step crosses tau_max, capture the interpolated endpoint
-            // before the Milstein re-init moves t_old_ past tau_max.
+            // before the kick moves t_old_ past tau_max.
             if (tau_current >= tau_max && !y_at_tmax_saved) {
                 solver->calc_state(tau_max, y_at_tmax);
+                mu_at_tmax = mu;
                 y_at_tmax_saved = true;
             }
         }
 
-        // ---- Milstein noise applied to (v, xi) at tau_current ----
+        // ---- Collision kick applied to (v, xi) at tau_current ----
         {
             vector<double> y_now = solver->current_state();
-            y_to_stzv_xi(y_now, stzv_xi, axis, vnorm);
-            double v_now  = stzv_xi[3];
-            double xi_now = stzv_xi[4];
-            double s_now  = stzv_xi[0];
+            y_to_stzvt(y_now, stzv, axis, vnorm, tnorm);
 
-            // A forced-minimum step (DP_hmin) can integrate v through zero;
-            // reflect through the origin (v -> -v reverses the direction
-            // along the field line, so xi -> -xi).
-            if (v_now < 0.0) {
-                v_now  = -v_now;
-                xi_now = -xi_now;
-                stzv_xi[3] = v_now;
-                stzv_xi[4] = xi_now;
-            }
+            if (!backgrounds.empty()) {
+                double B = modB_at(stzv[0], stzv[1], stzv[2]);
+                double vperp2 = 2.0 * mu * B;
+                if (vperp2 < 0.0) vperp2 = 0.0;
+                double v_now = std::sqrt(stzv[3] * stzv[3] + vperp2);
 
-            if (!backgrounds.empty() && v_now > 0.0) {
-                auto coef = compute_collision_coefficients(v_now, s_now, m_a, q_a, backgrounds);
-                double h_phys = h_taken * tnorm;
-                double sqrt_h = std::sqrt(h_phys);
-                double dW_v  = normal_dist(rng) * sqrt_h;
-                double dW_xi = normal_dist(rng) * sqrt_h;
-                milstein_collision_step(v_now, xi_now, coef, h_phys, dW_v, dW_xi);
-                stzv_xi[3] = v_now;
-                stzv_xi[4] = xi_now;
-                stzv_xi_to_y(stzv_xi, y_now, axis, vnorm);
-                // Re-initialize so the next step's FSAL k1 uses the post-noise state.
-                solver->initialize(y_now, tau_current, solver->get_hnext(), rhs);
+                if (v_now > 0.0 && B > 0.0) {
+                    double xi_now = stzv[3] / v_now;
+                    xi_now = std::max(-1.0, std::min(1.0, xi_now));
+
+                    auto coef = compute_collision_coefficients(
+                        v_now, stzv[0], m_a, q_a, backgrounds);
+                    double h_phys = h_taken * tnorm;
+
+                    // Sub-cycle so the collision rates are resolved: the orbit
+                    // stepper sized h from orbit dynamics alone.  Position is
+                    // frozen here, so a sub-step costs a coefficient
+                    // evaluation and no field evaluation.
+                    // The count is re-derived from the remaining time as the
+                    // particle slows, because nu_D and |K| grow like 1/v^3:
+                    // sizing it once at the entry speed would under-resolve
+                    // precisely the thermalising particles the sub-cycling
+                    // exists to serve.
+                    double t_left = h_phys;
+                    auto c = coef;
+                    while (t_left > 0.0) {
+                        int nsub = collision_substeps(v_now, c, t_left);
+                        double h_sub  = t_left / nsub;
+                        double sqrt_h = std::sqrt(h_sub);
+                        double dW_v  = normal_dist(rng) * sqrt_h;
+                        double dW_xi = normal_dist(rng) * sqrt_h;
+                        milstein_collision_step(v_now, xi_now, c, h_sub, dW_v, dW_xi);
+                        t_left -= h_sub;
+                        if (t_left <= 0.0) break;
+                        c = compute_collision_coefficients(
+                                v_now, stzv[0], m_a, q_a, backgrounds);
+                    }
+
+                    // Back to the orbit variables.  v is non-negative by
+                    // construction and xi is confined to [-1, 1] by the
+                    // boundary conditions, so mu >= 0 here.
+                    stzv[3] = v_now * xi_now;
+                    mu = v_now * v_now * (1.0 - xi_now * xi_now) / (2.0 * B);
+                    rhs.set_mu(mu);
+
+                    stzvt_to_y(stzv, y_now, axis, vnorm, tnorm);
+                    // Re-initialize so the next step's FSAL k1 uses the
+                    // post-kick state and the updated mu.
+                    solver->initialize(y_now, tau_current, solver->get_hnext(), rhs);
+                }
             }
         }
 
-        // ---- Check stopping criteria (post-noise state) ----
+        // ---- Check stopping criteria (post-kick state) ----
         {
             vector<double> y_check = solver->current_state();
-            y_to_stzv_xi(y_check, stzv_xi, axis, vnorm);
+            y_to_stzvt(y_check, stzv, axis, vnorm, tnorm);
             double t_current    = tau_current * tnorm;
-            double s_current    = stzv_xi[0];
-            double th_current   = stzv_xi[1];
-            double z_current    = stzv_xi[2];
-            double vpar_current = stzv_xi[3] * stzv_xi[4];  // v * xi
+            double s_current    = stzv[0];
+            double th_current   = stzv[1];
+            double z_current    = stzv[2];
+            double vpar_current = stzv[3];
 
             for (int i = 0; i < (int)stopping_criteria.size(); ++i) {
                 if (stopping_criteria[i] && (*stopping_criteria[i])(
@@ -1177,7 +1176,7 @@ solve_sde(
                     vector<double> hit = {t_current, -1.0 - double(i)};
                     hit.push_back(s_current); hit.push_back(th_current);
                     hit.push_back(z_current); hit.push_back(vpar_current);
-                    hit.push_back(stzv_xi[3]);  // v
+                    hit.push_back(speed_at(stzv, mu));
                     res_hits.push_back(hit);
                     break;
                 }
@@ -1192,21 +1191,22 @@ solve_sde(
     if (t_end - res.back()[0] > 1e-15) {
         vector<double> sv_fin(state_size);
         if (y_at_tmax_saved) {
-            // Use the state captured before Milstein re-init (accurate interpolation).
-            y_to_stzv_xi(y_at_tmax, sv_fin, axis, vnorm);
+            // Use the state captured before the kick (accurate interpolation).
+            y_to_stzvt(y_at_tmax, sv_fin, axis, vnorm, tnorm);
+            res.push_back(make_record(t_end, sv_fin, mu_at_tmax));
         } else {
             // tau_max == tau_current (stop case): current_state() is exact.
             vector<double> y_fin = solver->current_state();
-            y_to_stzv_xi(y_fin, sv_fin, axis, vnorm);
+            y_to_stzvt(y_fin, sv_fin, axis, vnorm, tnorm);
+            res.push_back(make_record(t_end, sv_fin, mu));
         }
-        res.push_back(make_record(t_end, sv_fin));
     }
 
     return std::make_tuple(res, res_hits);
 }
 
 // --------------------------------------------------------------------------
-// Public entry point: collision tracing (vacuum GC only for now)
+// Public entry point: collision tracing (vacuum, noK, or full GC)
 // --------------------------------------------------------------------------
 tuple<vector<vector<double>>, vector<vector<double>>>
 particle_guiding_center_boozer_collision_tracing(
@@ -1218,6 +1218,8 @@ particle_guiding_center_boozer_collision_tracing(
     double vtang,                 // initial v_par [m/s]
     double tmax,
     const vector<ThermalBackground>& backgrounds,
+    bool vacuum,
+    bool noK,
     vector<shared_ptr<StoppingCriterion>> stopping_criteria,
     double dt_save,
     bool forget_exact_path,
@@ -1246,22 +1248,40 @@ particle_guiding_center_boozer_collision_tracing(
     double tau_max  = tmax / tnorm;
     double dtau_save = dt_save / tnorm;
 
-    // Initial xi = v_par / v_total; clamp to [-1, 1]
-    double xi_init = vtang / vtotal;
-    xi_init = std::max(-1.0, std::min(1.0, xi_init));
+    // mu is set from the initial pitch and held across each orbit step; the
+    // collision kick updates it.  Clamp v_par so vperp2 cannot go negative
+    // from a caller passing |vtang| marginally above vtotal.
+    double vtang_c = std::max(-vtotal, std::min(vtotal, vtang));
+    double vperp2  = vtotal * vtotal - vtang_c * vtang_c;
+    if (vperp2 < 0.0) vperp2 = 0.0;
+    double mu_init = vperp2 / (2.0 * modB);
 
-    vector<double> stzv_xi_init = {
-        stz_init[0], stz_init[1], stz_init[2], vtotal, xi_init
+    vector<double> stzv_init = {
+        stz_init[0], stz_init[1], stz_init[2], vtang_c
     };
 
-    auto rhs = GuidingCenterVacuumCollisionBoozerRHS(
-        field, m, q, backgrounds, axis, vnorm, tnorm);
+    // Any static-field guiding-centre right-hand side can be driven by the
+    // collision operator, since mu is a settable parameter rather than a
+    // state variable.  Selection mirrors particle_guiding_center_boozer_tracing.
+    std::unique_ptr<BaseRHS> rhs;
+    if (vacuum) {
+        rhs = std::make_unique<GuidingCenterVacuumBoozerRHS>(
+            field, m, q, mu_init, axis, vnorm, tnorm);
+    } else if (noK) {
+        rhs = std::make_unique<GuidingCenterNoKBoozerRHS>(
+            field, m, q, mu_init, axis, vnorm, tnorm);
+    } else {
+        rhs = std::make_unique<GuidingCenterBoozerRHS>(
+            field, m, q, mu_init, axis, vnorm, tnorm);
+    }
 
     return solve_sde(
-        rhs,
+        *rhs,
+        field,
         backgrounds,
         m, q,
-        stzv_xi_init,
+        stzv_init,
+        mu_init,
         tau_max,
         dtau,
         dtau_max,

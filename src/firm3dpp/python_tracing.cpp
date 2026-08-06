@@ -78,6 +78,32 @@ void init_tracing(py::module_ &m){
         .def_readwrite("mass",       &ThermalBackground::mass)
         .def_readwrite("charge",     &ThermalBackground::charge);
 
+    py::class_<CollisionCoefficients>(m, "CollisionCoefficients")
+        .def_readonly("D_par",     &CollisionCoefficients::D_par)
+        .def_readonly("dD_par_dv", &CollisionCoefficients::dD_par_dv)
+        .def_readonly("nu_D",      &CollisionCoefficients::nu_D)
+        .def_readonly("K",         &CollisionCoefficients::K)
+        .def_readonly("v_cutoff",  &CollisionCoefficients::v_cutoff);
+
+    // Exposed so the test suite can compare the shipped coefficients against
+    // an independent Python transcription.  Without this the only way to
+    // reach them is through a full trace, so a sign or factor error in
+    // collisions.h is invisible to a direct assertion.
+    m.def("compute_collision_coefficients", &compute_collision_coefficients,
+        py::arg("v"),
+        py::arg("s"),
+        py::arg("m_a"),
+        py::arg("q_a"),
+        py::arg("backgrounds")
+    );
+
+    // Sub-step count the collision kick would use for one orbit step.
+    m.def("collision_substeps", &collision_substeps,
+        py::arg("v"),
+        py::arg("coef"),
+        py::arg("h")
+    );
+
     m.def("particle_guiding_center_boozer_collision_tracing",
         &particle_guiding_center_boozer_collision_tracing,
         py::arg("field"),
@@ -88,6 +114,8 @@ void init_tracing(py::module_ &m){
         py::arg("vtang"),
         py::arg("tmax"),
         py::arg("backgrounds"),
+        py::arg("vacuum"),
+        py::arg("noK"),
         py::arg("stopping_criteria")=vector<shared_ptr<StoppingCriterion>>{},
         py::arg("dt_save")=1e-6,
         py::arg("forget_exact_path")=false,

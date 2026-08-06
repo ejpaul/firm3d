@@ -68,17 +68,18 @@ struct ThermalBackground {
 // --------------------------------------------------------------------------
 // Collision coefficients for EP (species a) against one Maxwellian background.
 //
-// Returns the summed coefficients needed for the GC SDE in (v, xi) space:
+// Returns the summed coefficients for the collision kick in (v, xi):
 //   D_par      : parallel velocity diffusion  [m^2/s^3]
-//   dD_par_dv  : d(D_par)/dv               [m/s^3]  (for Milstein)
-//   nu_D       : pitch-angle scattering freq [s^-1]
+//   dD_par_dv  : d(D_par)/dv               [m/s^2]  (for Milstein)
+//   nu_D       : pitch-angle scattering freq [s^-1]; also the deterministic
+//                pitch drift, dxi/dt|_coll = -xi * nu_D
 //   K          : deterministic drift in v   [m/s^2]
 //                K = Q + d(D_par)/dv + 2*D_par/v
-//   nu_D_det   : deterministic drift coeff for xi: dxi/dt|_coll = -xi * nu_D
+//   v_cutoff   : reflecting speed boundary  [m/s]
 // --------------------------------------------------------------------------
 struct CollisionCoefficients {
     double D_par;       // m^2/s^3
-    double dD_par_dv;   // m/s^3
+    double dD_par_dv;   // m/s^2
     double nu_D;        // s^-1
     double K;           // m/s^2  (total deterministic drift in v)
     double v_cutoff;    // m/s   (reflecting speed boundary, ASCOT5 style)
@@ -163,16 +164,15 @@ inline CollisionCoefficients compute_collision_coefficients(
         }
         // A marginal-but-positive ln_Lambda (< 2) is reported once, up front,
         // by _validate_coulomb_log() in collisions.py.  Warning from here is
-        // not viable: this runs once per species per right-hand-side
-        // evaluation -- roughly seven times per accepted step, per particle --
-        // so a single cold region would emit millions of duplicate lines and
+        // not viable: this runs once per species per collision sub-step, so a
+        // single cold region would emit millions of duplicate lines and
         // dominate the run.
 
         double G      = chandrasekhar_G(x);
         double Gp     = chandrasekhar_G_deriv(x);   // dG/dx
         double erf_x  = std::erf(x);
 
-        // Prefactor: Gamma = n_b q_a^2 q_b^2 lnL / (4 pi eps0^2 m_a^2)  [m^2/s^3 * m]
+        // Prefactor: Gamma = n_b q_a^2 q_b^2 lnL / (4 pi eps0^2 m_a^2)  [m^3/s^4]
         double Gamma  = n_b * q_a * q_a * q_b * q_b * lnL
                         / (4.0 * COLL_PI * COLL_EPSILON0 * COLL_EPSILON0 * m_a * m_a);
 
@@ -204,14 +204,28 @@ inline CollisionCoefficients compute_collision_coefficients(
 }
 
 // --------------------------------------------------------------------------
-// Apply one Milstein noise step to (v, xi) after an accepted DP step of size h.
+// Apply one collision step to (v, xi) after an accepted orbit step of size h:
+// deterministic drift by explicit Euler, plus the Milstein noise term.
 // Modifies v and xi in-place.
+//
+// This matches the (v, xi) half of ASCOT5's mccc_gc_milstein.c.  ASCOT5
+// additionally displaces the guiding centre by the spatial diffusion DX and
+// works in the plasma flow frame; both are omitted here (see the notes'
+// Validity and Limitations section):
+//
+//   vout  = vin  + K*h        + sqrt(2 D_par) dW_v  + (1/2) dD_par/dv (dW_v^2 - h)
+//   xiout = xiin - xi*nu_D*h  + sqrt(nu_D(1-xi^2)) dW_xi - (1/2) xi nu_D (dW_xi^2 - h)
+//
+// Keeping the drift here rather than inside the adaptive orbit right-hand
+// side is what lets the orbit equations stay in (s, theta, zeta, v_par) with
+// mu fixed across a step, so any static-field guiding-centre right-hand side
+// can be driven by this operator without being rewritten in (v, xi).
 // --------------------------------------------------------------------------
 inline void milstein_collision_step(
     double& v,
     double& xi,
     const CollisionCoefficients& coef,
-    double h,                    // accepted DP step size [s] (physical time)
+    double h,                    // accepted orbit step size [s] (physical time)
     double dW_v,                 // N(0,h) increment for v
     double dW_xi)                // N(0,h) increment for xi
 {
@@ -219,12 +233,16 @@ inline void milstein_collision_step(
     double g_v  = std::sqrt(std::max(0.0, 2.0 * coef.D_par));
     double g_xi = std::sqrt(std::max(0.0, coef.nu_D * (1.0 - xi * xi)));
 
+    // Deterministic drift, evaluated at the pre-step (v, xi) as in ASCOT5
+    double drift_v  = coef.K * h;
+    double drift_xi = -xi * coef.nu_D * h;
+
     // Milstein corrections
     double milstein_v  = 0.5 * coef.dD_par_dv * (dW_v * dW_v - h);
     double milstein_xi = -0.5 * xi * coef.nu_D  * (dW_xi * dW_xi - h);
 
-    v  += g_v  * dW_v  + milstein_v;
-    xi += g_xi * dW_xi + milstein_xi;
+    v  += drift_v  + g_v  * dW_v  + milstein_v;
+    xi += drift_xi + g_xi * dW_xi + milstein_xi;
 
     // Boundary conditions, following ASCOT5 (mccc_gc_milstein.c):
     //  - the speed reflects off the thermal cutoff v_cutoff, so the
@@ -238,4 +256,61 @@ inline void milstein_collision_step(
     if (std::fabs(xi) > 1.0)
         xi = ((xi > 0.0) - (xi < 0.0)) * (2.0 - std::fabs(xi));
     xi = std::max(-1.0, std::min(1.0, xi));
+}
+
+// --------------------------------------------------------------------------
+// Sub-stepping control for the collision kick.
+//
+// The orbit integrator chooses its step from orbit dynamics alone; the
+// collision terms get no vote.  Applying them as one explicit-Euler kick over
+// that whole step is badly inaccurate whenever the collision rates are fast
+// compared with it -- which is exactly the thermal regime, where nu_D and K
+// diverge as v -> 0.  Measured on the Maxwellian-equilibration test, a single
+// kick per orbit step gave <E>/T_b = 7.8 instead of 1.5 at tol = 1e-6, the
+// error shrinking only as the orbit tolerance (and hence h) was tightened.
+//
+// Sub-cycling fixes this at almost no cost: the particle position is frozen
+// during a kick, so a sub-step needs no field evaluation, only a coefficient
+// re-evaluation at the updated speed.  ASCOT5 reaches the same place from the
+// other direction, with a dedicated error estimate that shortens its
+// collision step (mccc_gc_milstein.c, the kappa_k drift/diffusion limits).
+//
+// Splitting is exact for the noise: a Wiener increment over h is the sum of n
+// independent increments over h/n.
+// --------------------------------------------------------------------------
+
+// Fraction of a collision timescale a single sub-step may cover.
+static constexpr double COLL_SUBSTEP_SAFETY = 0.05;
+// Runaway guard.  Hitting this means the orbit step is enormously longer than
+// the collision timescale; accuracy then degrades rather than the run hanging.
+static constexpr int COLL_MAX_SUBSTEPS = 10000;
+
+inline int collision_substeps(
+    double v,
+    const CollisionCoefficients& coef,
+    double h)
+{
+    if (!(h > 0.0) || !(v > 0.0)) return 1;   // also rejects NaN
+
+    // Drift terms scale as h, so dividing the step by n divides them by n.
+    double n_needed = std::max(coef.nu_D * h,                    // pitch drift
+                               std::abs(coef.K) * h / v)         // speed drift
+                      / COLL_SUBSTEP_SAFETY;
+
+    // The diffusive excursion scales as sqrt(h), so it falls only as
+    // sqrt(n): bounding it to the same fraction needs n = (rate/safety)^2,
+    // not rate/safety.  Getting this wrong misses the stated bound by the
+    // ratio itself -- a factor of 100 at rate = 5.
+    double diff = std::sqrt(std::max(0.0, 2.0 * coef.D_par * h)) / v;
+    double n_diff = diff / COLL_SUBSTEP_SAFETY;
+    n_needed = std::max(n_needed, n_diff * n_diff);
+
+    // Compare in double before converting: casting a non-finite or
+    // out-of-range double to int is undefined behaviour, and on x86-64 it
+    // yields INT_MIN, which the n < 1 clamp below would then turn into a
+    // single sub-step -- the runaway guard failing open in exactly the
+    // regime it exists for.
+    if (!(n_needed > 1.0)) return 1;                      // NaN lands here
+    if (n_needed >= (double)COLL_MAX_SUBSTEPS) return COLL_MAX_SUBSTEPS;
+    return (int)std::ceil(n_needed);
 }

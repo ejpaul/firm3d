@@ -129,14 +129,14 @@ def _validate_coulomb_log(cpp_backgrounds, mass, charge):
     once if :math:`0 < \ln\Lambda < 2`, where the binary-collision
     approximation is marginal.  Both diagnostics are reported once per call
     for the worst point in the domain; the C++ layer cannot do this, since it
-    sees one (v, s) at a time from inside the ODE right-hand side and would
-    have to emit the warning on every evaluation.
+    sees one (v, s) at a time inside the collision kick and would have to emit
+    the warning on every sub-step.
 
     ``compute_collision_coefficients`` in ``collisions.h`` throws when
     :math:`\ln\Lambda \le 0`, which happens when the temperature falls to
     zero at finite density.  Left to the C++ layer that throw fires from
-    inside the ODE right-hand side, part-way through a trace, on whichever
-    rank happens to own the offending particle -- and under MPI the healthy
+    part-way through a trace, on whichever rank happens to own the offending
+    particle -- and under MPI the healthy
     ranks then block forever in the ``allgather`` below.  Checking here
     turns it into a collective failure: every rank holds identical profiles,
     so every rank raises before any tracing starts.
@@ -258,16 +258,37 @@ def trace_particles_boozer_with_collisions(
     DP_hmin=0.0,
     rng_seed=0,
     validate_profiles=True,
+    mode=None,
 ):
     r"""
     Trace guiding-centre particles including Monte Carlo Coulomb collisions
     with one or more Maxwellian background species.
 
-    Uses adaptive Dormand-Prince for the full deterministic drift in
-    :math:`(s, \theta, \zeta, v, \xi)` coordinates, followed by a Milstein
-    noise step for :math:`(v, \xi)` at each accepted step.  See Hirvijoki
-    et al., *Phys. Plasmas* **20**, 092505 (2013) and Boozer & Kuo-Petravic,
-    *Phys. Fluids* **24**, 851 (1981) for the theoretical basis.
+    The orbit is advanced by adaptive Dormand-Prince in
+    :math:`(s, \theta, \zeta, v_\parallel)` at fixed :math:`\mu`, and the
+    collision operator is applied as a kick to :math:`(v, \xi)` at each
+    accepted step -- drift by explicit Euler plus the Milstein noise term,
+    following ASCOT5's ``mccc_gc_milstein.c``.  The kick is sub-cycled when
+    the collision rates are fast compared with the orbit step, which the
+    scheme depends on for accuracy in the thermal regime rather than being an
+    implementation detail.  Because :math:`\mu` is
+    constant within a step it is a parameter of the orbit equations rather
+    than a state variable, so the vacuum, ``noK`` and full guiding-centre
+    equations are all supported; which one is used follows
+    ``field.field_type``, as in
+    :func:`~firm3d.field.tracing.trace_particles_boozer`.
+
+    Shear-Alfven-wave (perturbed) fields are *not* supported: they do work on
+    the particle, so :math:`\mu` is not conserved across an orbit step and the
+    splitting above does not hold.  This function takes a
+    :class:`~firm3d.field.boozermagneticfield.BoozerMagneticField`, so a
+    perturbed field cannot be passed in the first place; the perturbed
+    right-hand sides additionally leave ``set_mu`` unimplemented, so a future
+    caller that reached them would raise rather than silently integrate the
+    wrong equations.
+
+    See Hirvijoki et al., *Phys. Plasmas* **20**, 092505 (2013) and Boozer &
+    Kuo-Petravic, *Phys. Fluids* **24**, 851 (1981) for the theoretical basis.
 
     Args:
         field: The :class:`~firm3d.field.boozermagneticfield.BoozerMagneticField`
@@ -311,6 +332,10 @@ def trace_particles_boozer_with_collisions(
             conservative: it rejects profiles that a fast particle which
             never slows into the thermal range would survive.  Set to
             ``False`` to trace such a case anyway.
+        mode: Which guiding-centre equations to use: ``"gc"``, ``"gc_vac"``
+            or ``"gc_nok"``.  Defaults to ``"gc_" + field.field_type``;
+            passing a value inconsistent with the field warns and proceeds
+            with the value given.
 
     Returns:
         Tuple ``(res_tys, res_hits)`` where each element of ``res_tys`` is a
@@ -336,6 +361,23 @@ def trace_particles_boozer_with_collisions(
     if validate_profiles:
         _validate_coulomb_log(cpp_backgrounds, float(mass), float(charge))
 
+    # Select the orbit equations from the field, exactly as
+    # trace_particles_boozer does.  Before this existed the collisional tracer
+    # always used the vacuum equations, so a finite-beta field was silently
+    # traced with the wrong orbits.
+    if mode is not None:
+        mode = mode.lower()
+        assert mode in ["gc", "gc_vac", "gc_nok"]
+        if "gc_" + field.field_type != mode:
+            warnings.warn(
+                f"Prescribed mode is inconsistent with field_type. "
+                f"Proceeding with mode={mode}.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+    else:
+        mode = "gc_" + field.field_type
+
     nparticles = stz_inits.shape[0]
     assert len(parallel_speeds) == nparticles
 
@@ -353,6 +395,7 @@ def trace_particles_boozer_with_collisions(
     # for a rank that has already unwound.  Capture instead, agree on the
     # outcome collectively, then raise everywhere.
     failure = None
+    failure_exc = None
     for i in range(first, last):
         seed_i = int(rng_seed) + i
         try:
@@ -365,18 +408,23 @@ def trace_particles_boozer_with_collisions(
                 float(parallel_speeds[i]),
                 float(tmax),
                 cpp_backgrounds,
-                stopping_criteria,
-                float(dt_save),
-                bool(forget_exact_path),
-                int(axis),
-                float(abstol),
-                float(reltol),
-                str(ode_solver),
-                float(DP_hmin),
-                seed_i,
+                vacuum=(mode == "gc_vac"),
+                noK=(mode == "gc_nok"),
+                stopping_criteria=stopping_criteria,
+                dt_save=float(dt_save),
+                forget_exact_path=bool(forget_exact_path),
+                axis=int(axis),
+                abstol=float(abstol),
+                reltol=float(reltol),
+                ode_solver=str(ode_solver),
+                DP_hmin=float(DP_hmin),
+                rng_seed=seed_i,
             )
-        except Exception as exc:  # noqa: BLE001 - re-raised below
+        except Exception as exc:
+            # Recorded rather than raised, so that every rank reaches the
+            # allgather below; re-raised with `from` on all ranks afterwards.
             failure = f"particle {i}: {type(exc).__name__}: {exc}"
+            failure_exc = exc
             break
         if not forget_exact_path:
             res_tys.append(np.asarray(res_ty))
@@ -396,6 +444,6 @@ def trace_particles_boozer_with_collisions(
         res_tys = [i for o in comm.allgather(res_tys) for i in o]
         res_hits = [i for o in comm.allgather(res_hits) for i in o]
     elif failure is not None:
-        raise RuntimeError(f"collision tracing failed on {failure}")
+        raise RuntimeError(f"collision tracing failed on {failure}") from failure_exc
 
     return res_tys, res_hits
