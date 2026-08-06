@@ -46,7 +46,12 @@ import scipy.special
 import scipy.stats
 
 import firm3dpp as sopp
-from firm3d.field.boozermagneticfield import BoozerAnalytic, ShearAlfvenHarmonic
+from firm3d.field.boozermagneticfield import (
+    BoozerAnalytic,
+    BoozerRadialInterpolant,
+    InterpolatedBoozerField,
+    ShearAlfvenHarmonic,
+)
 from firm3d.field.collisions import (
     ThermalBackground,
     trace_particles_boozer_perturbed_with_collisions,
@@ -1243,6 +1248,93 @@ class TestCppCoefficientsMatchMirror(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Collision-kick sub-cycling
 # ---------------------------------------------------------------------------
+
+
+class TestInterpolatedField(unittest.TestCase):
+    """
+    Collisional tracing on an InterpolatedBoozerField.
+
+    Every other test in this file traces BoozerAnalytic, which evaluates the
+    field from closed-form expressions.  Real use is an interpolant built from
+    a boozmn file, and that is also what the GPU entry point takes, so the
+    combination needs at least one test that reaches it -- the kick calls
+    modB_ref() on whatever field it is handed.
+    """
+
+    _FILE = "examples/inputs/boozmn_aten_rescaled_low_res.nc"
+
+    @classmethod
+    def setUpClass(cls):
+        # bri must stay referenced: InterpolatedBoozerField does not keep it
+        # alive, and evaluating a field whose source has been collected fails
+        # inside the first right-hand-side call.
+        cls.bri = BoozerRadialInterpolant(cls._FILE, 3, enforce_vacuum=True)
+        cls.field = InterpolatedBoozerField(
+            cls.bri, 3, ns_interp=15, ntheta_interp=15, nzeta_interp=15
+        )
+
+    def test_kick_reaches_the_interpolated_field(self):
+        """
+        The collisional trace must differ from the collisionless one.
+
+        Not a physics check -- the drag is checked against closed forms
+        elsewhere.  This asserts that the kick actually ran when the field is
+        an interpolant, which finiteness alone would not: a kick that silently
+        did nothing here would leave a perfectly plausible trace behind.
+
+        The separation is small on purpose.  An alpha's slowing-down time in
+        this background is of order 0.1 s, so over 1e-7 s the speed moves by
+        ~1e-6 relative -- far above the 1e-8 orbit tolerance, but the drag
+        does not dominate, and a single realization can gain speed as easily
+        as lose it.  Asserting a decrease here would be wrong: measured, this
+        seed gains 6.6e-07.
+        """
+        v0 = np.sqrt(2 * FUSION_ALPHA_PARTICLE_ENERGY / ALPHA_PARTICLE_MASS)
+        stz = np.array([[0.3, 0.0, 0.0], [0.3, 1.0, 0.5]])
+        vpar0 = 0.5 * v0 * np.ones(2)
+        shared = {
+            "tmax": 1e-7,
+            "mass": ALPHA_PARTICLE_MASS,
+            "charge": ALPHA_PARTICLE_CHARGE,
+            "tol": 1e-8,
+            "dt_save": 1e-7,
+        }
+        res, _ = trace_particles_boozer_with_collisions(
+            self.field,
+            stz,
+            vpar0,
+            Ekin=FUSION_ALPHA_PARTICLE_ENERGY,
+            rng_seed=0,
+            backgrounds=_cold_background(),
+            **shared,
+        )
+        free, _ = trace_particles_boozer(
+            self.field,
+            stz,
+            vpar0,
+            Ekin=FUSION_ALPHA_PARTICLE_ENERGY,
+            **shared,
+        )
+
+        self.assertEqual(len(res), 2)
+        for i in range(2):
+            with self.subTest(particle=i):
+                a = np.asarray(res[i])
+                self.assertTrue(np.all(np.isfinite(a)), "non-finite output")
+                self.assertAlmostEqual(a[-1, 0], 1e-7, places=12)
+                self.assertGreater(a[-1, 5], 0.0)
+
+                collisionless_vpar = np.asarray(free[i])[-1, 4]
+                self.assertNotAlmostEqual(
+                    a[-1, 4] / collisionless_vpar,
+                    1.0,
+                    places=8,
+                    msg=(
+                        "collisional and collisionless traces agree to the "
+                        "orbit tolerance; the kick is not reaching an "
+                        "interpolated field"
+                    ),
+                )
 
 
 class TestCollisionSubstepping(unittest.TestCase):
