@@ -1,8 +1,12 @@
+ELECTRON_MASS = 9.1093837015e-31  # kg
 PROTON_MASS = 1.67262192369e-27  # kg
 NEUTRON_MASS = 1.67492749804e-27  # kg
 ELEMENTARY_CHARGE = 1.602176634e-19  # C
 ONE_EV = 1.602176634e-19  # J
-ALPHA_PARTICLE_MASS = 2 * PROTON_MASS + 2 * NEUTRON_MASS
+# Measured value (CODATA).  Not 2*PROTON_MASS + 2*NEUTRON_MASS: that sums the
+# free constituents and so omits the binding-energy defect, overstating the
+# mass by 0.76% and every derived alpha speed by 0.38%.
+ALPHA_PARTICLE_MASS = 6.6446573450e-27  # kg
 ALPHA_PARTICLE_CHARGE = 2 * ELEMENTARY_CHARGE
 FUSION_ALPHA_PARTICLE_ENERGY = 3.52e6 * ONE_EV
 VACUUM_PERMITTIVITY = 8.8541878188e-12  # F / m
