@@ -19,6 +19,11 @@ extern "C" vector<double> boozer_gpu_tracing(py::array_t<double> quad_pts, py::a
     py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang,
     double tmax, double tol, py::array_t<double> dt_in, double psi0, int nparticles, bool vacuum=false);
 
+extern "C" vector<double> boozer_collision_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
+    py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang,
+    double tmax, double tol, py::array_t<double> dt_in, double psi0, int nparticles,
+    const vector<ThermalBackground>& backgrounds, bool vacuum=false, unsigned long long rng_seed=0);
+
 extern "C" vector<double> boozer_saw_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange, py::array_t<double> trange, py::array_t<double> zrange,
         double saw_omega, py::array_t<double> saw_srange, py::array_t<int> saw_m, py::array_t<int> saw_n, py::array_t<double> saw_phihats, int saw_nharmonics,
         py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang, double tmax, double tol, py::array_t<double> dt_in, double psi0, int nparticles);
@@ -244,6 +249,26 @@ void init_tracing(py::module_ &m){
         py::arg("vacuum") = false
         );
 
+
+    m.def("boozer_collision_gpu_tracing", &boozer_collision_gpu_tracing,
+        py::arg("quad_pts"),
+        py::arg("srange"),
+        py::arg("trange"),
+        py::arg("zrange"),
+        py::arg("stz_init"),
+        py::arg("m"),
+        py::arg("q"),
+        py::arg("vtotal"),
+        py::arg("vtang"),
+        py::arg("tmax"),
+        py::arg("tol"),
+        py::arg("dt_in"),
+        py::arg("psi0"),
+        py::arg("nparticles"),
+        py::arg("backgrounds"),
+        py::arg("vacuum"),
+        py::arg("rng_seed")=(unsigned long long)0
+    );
 
     m.def("boozer_saw_gpu_tracing", &boozer_saw_gpu_tracing,
         py::arg("quad_pts"),
