@@ -1008,6 +1008,45 @@ class TestPerturbedCollisions(unittest.TestCase):
             ),
         )
 
+    def test_negative_mu_is_refused(self):
+        """
+        A negative mu must be refused rather than traced.
+
+        Without the check the trace runs to completion and returns finite,
+        plausible-looking numbers, because the two consumers of mu disagree:
+        the orbit right-hand side integrates the negative value while the
+        kick's speed reconstruction clamps v_perp^2 up to zero.  Measured on
+        the unguarded code, mu = -1e12 returned the same speed as mu = 0
+        (6.514e+06) but a different theta (0.01513 against 0.01542) -- that
+        is, a trajectory belonging to no particle at all, with nothing in the
+        output marking it as such.
+
+        mu = 0 is legal (a strictly passing particle) and must still trace,
+        so the boundary is checked in both directions.
+        """
+        saw, _, vpar0, mu0 = self._setup(1e-5)
+        kw = {
+            "tmax": 1e-8,
+            "mass": ALPHA_PARTICLE_MASS,
+            "charge": ALPHA_PARTICLE_CHARGE,
+            "dt_save": 1e-8,
+            "rng_seed": 1,
+            "backgrounds": _hot_background(),
+        }
+        with self.assertRaises(ValueError) as cm:
+            trace_particles_boozer_perturbed_with_collisions(
+                saw, self._stz, vpar0, np.array([-abs(mu0[0])]), **kw
+            )
+        msg = str(cm.exception)
+        self.assertIn("non-negative", msg)
+        self.assertIn("index 0", msg)
+
+        # The boundary itself is a legal input, not an error.
+        res, _ = trace_particles_boozer_perturbed_with_collisions(
+            saw, self._stz, vpar0, np.array([0.0]), **kw
+        )
+        self.assertTrue(np.all(np.isfinite(np.asarray(res[0]))))
+
     def test_dead_b0_reference_is_refused_with_the_cause(self):
         """
         A ShearAlfvenWave whose BoozerMagneticField reference has been dropped

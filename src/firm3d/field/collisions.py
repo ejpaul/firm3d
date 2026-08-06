@@ -562,6 +562,19 @@ def trace_particles_boozer_perturbed_with_collisions(
     assert len(parallel_speeds) == nparticles
     assert len(mus) == nparticles
 
+    # A negative mu is not merely unphysical, it is handled inconsistently:
+    # the orbit right-hand side uses the value as given while the speed
+    # reconstruction clamps v_perp^2 to zero, so the trace runs to completion
+    # and returns finite numbers that correspond to no particle.  Reject it
+    # here, where the caller can still be told which entry is at fault.
+    mus = np.asarray(mus)
+    if np.any(mus < 0.0):
+        bad = np.flatnonzero(mus < 0.0)
+        raise ValueError(
+            f"mus must be non-negative; {bad.size} of {nparticles} are "
+            f"negative, first at index {bad[0]} with value {mus[bad[0]]!r}"
+        )
+
     res_tys = []
     res_hits = []
     first, last = parallel_loop_bounds(comm, nparticles)
