@@ -284,26 +284,25 @@ class OrbitClassification:
             ds = res_ty[index_end, 1] - res_ty[index_start, 1]
             dss.append(ds)
 
-            # Compute change in helical angle chi = M*theta - N*zeta
-            # This is the primary quantity used for classification.
+            # Net (θ, ζ) change from the globally unwrapped angles (used for α).
             dtheta = thetas[index_end] - thetas[index_start]
             dzeta = zetas[index_end] - zetas[index_start]
-            chis_seg = (
-                self.helicity_M * thetas[index_start : index_end + 1]
-                - self.helicity_N * zetas[index_start : index_end + 1]
+
+            # Helical angle on this segment. 
+            theta_seg = res_ty[index_start : index_end + 1, 2]
+            zeta_seg = res_ty[index_start : index_end + 1, 3]
+            chis_seg = np.unwrap(
+                self.helicity_M * theta_seg - self.helicity_N * zeta_seg
             )
             dchi = np.abs(chis_seg[-1] - chis_seg[0])
             dchis.append(dchi)
 
             s_means.append(mean_s)
 
-            # Compute mean field-line label alpha during this bounce segment
-            theta_seg = res_ty[index_start : index_end + 1, 2]
-            zeta_seg = res_ty[index_start : index_end + 1, 3]
+            # Mean field-line label alpha during this bounce segment
             mean_alpha = np.mean(np.unwrap(theta_seg - iota_s * zeta_seg))
 
-            # Trajectory chi center: used to center the field-line sweep and to
-            # locate the bounding peaks.
+            # Center the field-line sweep on the segment-local χ window.
             chi_traj_center = 0.5 * (np.max(chis_seg) + np.min(chis_seg))
 
             chi_grid_mean = np.linspace(
@@ -409,8 +408,6 @@ class OrbitClassification:
                     "iota_s": iota_s,
                     "chi_traj_center": chi_traj_center,
                     "res_ty_segment": res_ty[index_start : index_end + 1, :].copy(),
-                    # Trajectory chi on the same branch as the quantities above,
-                    # so plot_bounce_segment does not have to re-derive it.
                     "chis_seg": chis_seg.copy(),
                     "chi_grid_mean": chi_grid_mean.copy(),
                     "modB_grid_mean": modB.copy(),
@@ -617,7 +614,7 @@ class OrbitClassification:
         modB_left_mon = data["modB_left_mon"]
         modB_right_mon = data["modB_right_mon"]
 
-        # --- Trajectory arrays (field evaluation on trajectory points only) ---
+        # --- Trajectory |B| ---
         point = np.zeros((len(res_ty_seg), 3))
         point[:, 0] = res_ty_seg[:, 1]  # s
         point[:, 1] = res_ty_seg[:, 2]  # theta
