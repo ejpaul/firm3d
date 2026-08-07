@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 from scipy.optimize import isotonic_regression
 
@@ -265,8 +267,9 @@ class OrbitClassification:
             index_start = np.argmin(np.abs(bounce_times[j] - res_ty[:, 0]))
             index_end = np.argmin(np.abs(bounce_times[j + 1] - res_ty[:, 0]))
 
-            # Mean surface for this segment and its rotational transform, used
-            # to define the field line that modB is swept along below.
+            # Mean surface and iota up front: if the helicity is resonant with
+            # iota on this segment (checked below), we skip before appending to
+            # any per-segment list so the arrays stay aligned.
             mean_s = np.mean(res_ty[index_start : index_end + 1, 1])
             point = np.zeros((1, 3))
             point[0, 0] = mean_s
@@ -279,6 +282,15 @@ class OrbitClassification:
             #   θ = (N*α − ι*χ) / (N − ι*M)
             #   ζ = (M*α − χ)   / (N − ι*M)
             _denom = self.helicity_N - iota_s * self.helicity_M
+            if np.abs(_denom) < 1e-10:
+                warnings.warn(
+                    f"Skipping bounce segment {j}: helicity vector "
+                    f"(M={self.helicity_M}, N={self.helicity_N}) is aligned "
+                    f"with the field-line pitch (iota={iota_s:.6f}) on this "
+                    "segment.",
+                    stacklevel=2,
+                )
+                continue
 
             # Compute radial excursion during this bounce
             ds = res_ty[index_end, 1] - res_ty[index_start, 1]
@@ -288,7 +300,7 @@ class OrbitClassification:
             dtheta = thetas[index_end] - thetas[index_start]
             dzeta = zetas[index_end] - zetas[index_start]
 
-            # Helical angle on this segment. 
+            # Helical angle on this segment.
             theta_seg = res_ty[index_start : index_end + 1, 2]
             zeta_seg = res_ty[index_start : index_end + 1, 3]
             chis_seg = np.unwrap(
