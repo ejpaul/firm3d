@@ -815,13 +815,6 @@ __device__ void check_has_left<CoordSys::Boozer>(bool* has_left, double* state, 
 // and adjust the step size
 template<RHS id>
 __device__ void adjust_time(double* t, double* dt, double* state, double* derivs, double* x_temp, bool* has_left, double* dtmax){
-    // A block keeps looping while *any* of its particles is still running, so
-    // a particle that is already done still enters here on every remaining
-    // iteration.  Without the tmax test below it would keep integrating --
-    // and, since the dt clamp further down is itself guarded on t < tmax, it
-    // would do so at a frozen step size -- until the slowest particle in the
-    // block finished, reporting its state at that later time instead of at
-    // tmax.  The loop condition tests the same two flags; this mirrors it.
     if(has_left[threadIdx.x] || t[threadIdx.x] >= tmax_d){
         return;
     }
