@@ -55,8 +55,6 @@ class GuidingCenterVacuumBoozerRHS : public BaseRHS {
             return Size;
         }
 
-        // Collisions update mu between accepted steps; within a step the
-        // orbit equations conserve it exactly.
         void set_mu(double mu_new) override { mu = mu_new; }
 
         void operator()(const vector<double> &ys, vector<double> &dydt, const double t) override {
@@ -140,10 +138,6 @@ class GuidingCenterVacuumBoozerPerturbedRHS : public BaseRHS {
             return Size;
         }
 
-        // Collisions update mu between accepted steps.  The wave changes
-        // the particle's energy, but mu is still an adiabatic invariant
-        // at SAW frequencies (omega << Omega_c), so it is constant within
-        // a step exactly as in the static-field variants.
         void set_mu(double mu_new) override { mu = mu_new; }
 
         void operator()(const vector<double> &ys, vector<double> &dydt, const double t) override {
@@ -250,10 +244,6 @@ class GuidingCenterNoKBoozerPerturbedRHS : public BaseRHS {
             return Size;
         }
 
-        // Collisions update mu between accepted steps.  The wave changes
-        // the particle's energy, but mu is still an adiabatic invariant
-        // at SAW frequencies (omega << Omega_c), so it is constant within
-        // a step exactly as in the static-field variants.
         void set_mu(double mu_new) override { mu = mu_new; }
 
         void operator()(const vector<double> &ys, vector<double> &dydt, const double t) override {
@@ -348,8 +338,6 @@ class GuidingCenterNoKBoozerRHS : public BaseRHS {
             return Size;
         }
 
-        // Collisions update mu between accepted steps; within a step the
-        // orbit equations conserve it exactly.
         void set_mu(double mu_new) override { mu = mu_new; }
 
         void operator()(const vector<double> &ys, vector<double> &dydt, const double t) override {
@@ -420,8 +408,6 @@ class GuidingCenterBoozerRHS : public BaseRHS {
             return Size;
         }
 
-        // Collisions update mu between accepted steps; within a step the
-        // orbit equations conserve it exactly.
         void set_mu(double mu_new) override { mu = mu_new; }
 
         void operator()(const vector<double> &ys, vector<double> &dydt, const double t) override {
@@ -466,9 +452,7 @@ class GuidingCenterBoozerRHS : public BaseRHS {
         }
 };
 
-// Create the adaptive ODE solver selected by `ode_solver`.  Shared by solve()
-// and solve_sde().  DP_hmin is given in physical seconds while the solver
-// operates in normalized time tau = t / tnorm, hence the division.
+// Create the adaptive ODE solver selected by `ode_solver`. 
 static std::unique_ptr<ODESolver> make_ode_solver(
     const string& ode_solver,
     double abstol,
@@ -503,12 +487,12 @@ solve(
     double dtau,
     double dtau_max,
     double abstol,
-    double reltol,
+    double reltol, 
     vector<double> phases,
     vector<double> n_zetas,
     vector<double> m_thetas,
     vector<double> omegas,
-    vector<shared_ptr<StoppingCriterion>> stopping_criteria,
+    vector<shared_ptr<StoppingCriterion>> stopping_criteria, 
     double dtau_save,
     vector<double> vpars,
     bool phases_stop,
@@ -524,14 +508,14 @@ solve(
     }
 
     int state_size = rhs.get_state_size();
-
+    
     vector<vector<double>> res = {};
     vector<vector<double>> res_hits = {};
     vector<double> y(state_size), temp(state_size);
-
+    
     std::unique_ptr<ODESolver> solver = make_ode_solver(
         ode_solver, abstol, reltol, dtau_max, DP_hmin, tnorm);
-
+    
     double tau = 0;
     int iter = 0;
     bool stop = false;
@@ -596,7 +580,6 @@ solve(
         }
     } while(tau < tau_max && !stop);
 
-    // Save t = tmax or time when StoppingCriterion is hit if we not already saved it
     if (stop) {
         tau_max = tau_last;
     }
@@ -924,13 +907,13 @@ solve_sympl_wrapper(
     vector<double> m_thetas,
     vector<double> omegas,
     vector<shared_ptr<StoppingCriterion>> stopping_criteria,
-    vector<double> vpars,
+    vector<double> vpars, 
     bool phases_stop=false,
     bool vpars_stop=false,
-    bool forget_exact_path=false,
+    bool forget_exact_path=false, 
     bool predictor_step=true,
     double dtau_save=1e-6
-) {
+) {  
     // Call the vector-based symplectic solver directly
     return solve_sympl_vector(
         f,
@@ -945,7 +928,7 @@ solve_sympl_wrapper(
         stopping_criteria,
         vpars,
         phases_stop,
-        vpars_stop,
+        vpars_stop, 
         forget_exact_path,
         predictor_step,
         dtau_save
@@ -959,43 +942,14 @@ solve_sympl_wrapper(
 // ==========================================================================
 
 // --------------------------------------------------------------------------
-// solve_sde: drive any guiding-centre right-hand side with the Monte Carlo
+// solve_sde: drive any guiding-center right-hand side with the Monte Carlo
 // collision operator.  Output rows are [t, s, theta, zeta, v_par, v].
 //
 // The orbit state is the ordinary [s, theta, zeta, v_par], optionally with t
-// as a fifth component for the perturbed right-hand sides; mu is a parameter
-// of the right-hand side, not a state variable.  That works because the whole
-// collision operator -- drag as well as diffusion -- is applied as a kick at
-// accepted-step boundaries (see milstein_collision_step), so within a step the
-// orbit equations hold mu fixed.  The consequence is that every right-hand
-// side works unchanged -- vacuum, noK, full, and both shear-Alfven-wave
-// variants -- without being rewritten in (v, xi).  The kick writes v_par and
-// mu and leaves any t component alone.  The state width is checked below
-// rather than taken on trust.
+// as a fifth component for the perturbed right-hand sides.
 //
 // At each accepted step the kick converts (v_par, mu) -> (v, xi) using |B| at
 // the current position, applies drift and noise, and converts back.
-//
-// Why this is a separate loop rather than a flag on solve():
-//
-// The kick perturbs the state at the end of an accepted step and then
-// re-initializes the stepper, which discards the dense-output interpolant for
-// the step just taken.  That imposes an ordering on the loop body which
-// solve() does not satisfy:
-//
-//   * the path must be saved BEFORE the kick, while the interpolant is still
-//     valid (solve() saves after the stopping check);
-//   * the tau_max endpoint must be captured eagerly into y_at_tmax, since
-//     after re-initialization it can no longer be interpolated back to;
-//   * stopping criteria cannot use dense-output root finding, so they are
-//     evaluated at the post-kick step endpoint only.
-//
-// The last point is why phase-plane and v_par-plane crossings (the `phases`
-// and `vpars` arguments of solve()) are not offered here: a velocity-space
-// crossing is ill-defined when a discontinuous kick lands on the step
-// endpoint.  Spatial phase crossings would still be well-defined within a
-// step, so they could be recovered later by root-finding on the pre-kick
-// interpolant.
 // --------------------------------------------------------------------------
 tuple<vector<vector<double>>, vector<vector<double>>>
 solve_sde(
@@ -1027,7 +981,7 @@ solve_sde(
     const int state_size = rhs.get_state_size();
     if (state_size != 4 && state_size != 5)
         throw std::invalid_argument(
-            "solve_sde requires a 4- or 5-element guiding-centre right-hand side"
+            "solve_sde requires a 4- or 5-element guiding-center right-hand side"
         );
     if ((int)stzv_init.size() != state_size)
         throw std::invalid_argument(
@@ -1092,12 +1046,10 @@ solve_sde(
         iter++;
         double tau_last    = std::get<0>(step);
         double tau_current = std::get<1>(step);
-        double h_taken     = tau_current - tau_last;  // normalised step
+        double h_taken     = tau_current - tau_last;  // normalized step
         tau = tau_current;
 
         // ---- Save path (BEFORE the kick, while dense output is valid) ----
-        // mu is the value in force for this step, which is what the samples
-        // interpolated from it were integrated with.
         {
             double tau_save_last = (std::floor(tau_last / dtau_save) + 1) * dtau_save;
             vector<double> y_save(state_size), sv_save(state_size);
@@ -1128,32 +1080,23 @@ solve_sde(
 
             if (!backgrounds.empty()) {
                 double B = modB_at(stzv[0], stzv[1], stzv[2]);
-                double vperp2 = 2.0 * mu * B;
-                if (vperp2 < 0.0) vperp2 = 0.0;
-                double v_now = std::sqrt(stzv[3] * stzv[3] + vperp2);
+                double v_now = std::sqrt(stzv[3] * stzv[3] + 2.0 * mu * B);
 
                 if (v_now > 0.0 && B > 0.0) {
                     double xi_now = stzv[3] / v_now;
-                    xi_now = std::max(-1.0, std::min(1.0, xi_now));
 
                     auto coef = compute_collision_coefficients(
                         v_now, stzv[0], m_a, q_a, backgrounds);
                     double h_phys = h_taken * tnorm;
 
-                    // Sub-cycle so the collision rates are resolved: the orbit
-                    // stepper sized h from orbit dynamics alone.  Position is
-                    // frozen here, so a sub-step costs a coefficient
-                    // evaluation and no field evaluation.
-                    // The count is re-derived from the remaining time as the
-                    // particle slows, because nu_D and |K| grow like 1/v^3:
-                    // sizing it once at the entry speed would under-resolve
-                    // precisely the thermalising particles the sub-cycling
-                    // exists to serve.
+                    // Sub-cycle the kick over the accepted step: size one
+                    // sub-step from the current coefficients, apply it,
+                    // refresh the coefficients at the new speed, repeat on
+                    // the remaining time.
                     double t_left = h_phys;
                     auto c = coef;
                     while (t_left > 0.0) {
-                        int nsub = collision_substeps(v_now, c, t_left);
-                        double h_sub  = t_left / nsub;
+                        double h_sub  = t_left / collision_substeps(v_now, c, t_left);
                         double sqrt_h = std::sqrt(h_sub);
                         double dW_v  = normal_dist(rng) * sqrt_h;
                         double dW_xi = normal_dist(rng) * sqrt_h;
@@ -1164,16 +1107,14 @@ solve_sde(
                                 v_now, stzv[0], m_a, q_a, backgrounds);
                     }
 
-                    // Back to the orbit variables.  v is non-negative by
-                    // construction and xi is confined to [-1, 1] by the
-                    // boundary conditions, so mu >= 0 here.
                     stzv[3] = v_now * xi_now;
                     mu = v_now * v_now * (1.0 - xi_now * xi_now) / (2.0 * B);
                     rhs.set_mu(mu);
 
                     stzvt_to_y(stzv, y_now, axis, vnorm, tnorm);
-                    // Re-initialize so the next step's FSAL k1 uses the
-                    // post-kick state and the updated mu.
+                    // The kick invalidated the derivative the solver caches
+                    // between steps; re-initialize recomputes it, and
+                    // get_hnext() keeps the adaptive step size.
                     solver->initialize(y_now, tau_current, solver->get_hnext(), rhs);
                 }
             }
@@ -1228,13 +1169,6 @@ solve_sde(
 
 // --------------------------------------------------------------------------
 // Public entry point: collision tracing in a shear-Alfven-wave field
-//
-// The wave does work on the particle, so the speed is not conserved between
-// kicks -- but mu still is, at SAW frequencies (omega << Omega_c), which is
-// all the operator splitting requires.  The orbit state carries t as a fifth
-// component; the kick writes only v_par and mu, so t passes through it
-// untouched.  |B| for the (v_par, mu) <-> (v, xi) conversion comes from the
-// equilibrium field B0, matching what the perturbed right-hand sides use.
 // --------------------------------------------------------------------------
 tuple<vector<vector<double>>, vector<vector<double>>>
 particle_guiding_center_boozer_perturbed_collision_tracing(
@@ -1258,21 +1192,12 @@ particle_guiding_center_boozer_perturbed_collision_tracing(
     double DP_hmin,
     uint64_t rng_seed)
 {
-    if (ode_solver != "boost" && ode_solver != "dormand_prince")
-        throw std::invalid_argument(
-            "collision tracing requires ode_solver \"boost\" or \"dormand_prince\"");
-
     Array2 stzt({{stz_init[0], stz_init[1], stz_init[2], 0.0}});
     perturbed_field->set_points(stzt);
     auto field = perturbed_field->get_B0();
     double modB = field->modB()(0);
 
-    // vtotal at the launch point sets the velocity normalisation, as in the
-    // collisionless perturbed tracer.  It is not conserved thereafter.
     double vtotal = std::sqrt(vtang * vtang + 2.0 * mu_init * modB);
-    if (!(vtotal > 0.0))
-        throw std::invalid_argument(
-            "perturbed collision tracing: vtang and mu give zero initial speed");
 
     double G0    = std::abs(field->G()(0));
     double r0    = G0 / modB;
@@ -1353,9 +1278,6 @@ particle_guiding_center_boozer_collision_tracing(
     double DP_hmin,
     uint64_t rng_seed)
 {
-    if (ode_solver != "boost" && ode_solver != "dormand_prince")
-        throw std::invalid_argument("collision tracing requires ode_solver \"boost\" or \"dormand_prince\"");
-
     Array2 stz({{stz_init[0], stz_init[1], stz_init[2]}});
     field->set_points(stz);
     double modB = field->modB()(0);
@@ -1371,21 +1293,13 @@ particle_guiding_center_boozer_collision_tracing(
     double tau_max  = tmax / tnorm;
     double dtau_save = dt_save / tnorm;
 
-    // mu is set from the initial pitch and held across each orbit step; the
-    // collision kick updates it.  Clamp v_par so vperp2 cannot go negative
-    // from a caller passing |vtang| marginally above vtotal.
-    double vtang_c = std::max(-vtotal, std::min(vtotal, vtang));
-    double vperp2  = vtotal * vtotal - vtang_c * vtang_c;
-    if (vperp2 < 0.0) vperp2 = 0.0;
+    double vperp2  = vtotal * vtotal - vtang * vtang;
     double mu_init = vperp2 / (2.0 * modB);
 
     vector<double> stzv_init = {
-        stz_init[0], stz_init[1], stz_init[2], vtang_c
+        stz_init[0], stz_init[1], stz_init[2], vtang
     };
 
-    // Any static-field guiding-centre right-hand side can be driven by the
-    // collision operator, since mu is a settable parameter rather than a
-    // state variable.  Selection mirrors particle_guiding_center_boozer_tracing.
     std::unique_ptr<BaseRHS> rhs;
     if (vacuum) {
         rhs = std::make_unique<GuidingCenterVacuumBoozerRHS>(
@@ -1474,7 +1388,7 @@ void particle_guiding_center_saw_derivs(
     double t = stz_init[1];
 
     vector<double> y = {s*cos(t), s*sin(t), stz_init[2], vtang, time};
-
+    
     if(rhs == "vacuum_saw"){
         auto rhs_class = GuidingCenterVacuumBoozerPerturbedRHS(perturbed_field, m, q, mu, 2);
         rhs_class(y, out, time);

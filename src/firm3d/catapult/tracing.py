@@ -12,6 +12,7 @@ from firm3d.catapult.utils import (
     cartesian_interpolant,
 )
 from firm3d.field.boozermagneticfield import ShearAlfvenWavesSuperposition
+from firm3d.field.tracing_helpers import _validate_parallel_speeds
 
 
 def trace_particles_boozer_gpu(
@@ -41,6 +42,7 @@ def trace_particles_boozer_gpu(
     dt: the initial time step size for the solver (optional)
     """
     nparticles = stz_inits.shape[0]
+    _validate_parallel_speeds(parallel_speeds, vtotal)
 
     if isinstance(field, ShearAlfvenWavesSuperposition):
         B0 = field.B0
@@ -169,6 +171,7 @@ def trace_particles_cartesian_gpu(
     dt: the initial time step size for the solver (optional)
     """
     nparticles = xyz_inits.shape[0]
+    _validate_parallel_speeds(parallel_speeds, vtotal)
     r_range, phi_range, z_range, quad_info = cartesian_interpolant(
         field, surface_classifier
     )
@@ -206,7 +209,6 @@ def trace_particles_boozer_with_collisions_gpu(
     nzeta,
     dt=None,
     rng_seed=0,
-    validate_profiles=True,
 ):
     """
     Trace particles in Boozer coordinates on the GPU, including Monte Carlo
@@ -214,24 +216,23 @@ def trace_particles_boozer_with_collisions_gpu(
 
     The collision operator is the one
     :func:`~firm3d.field.collisions.trace_particles_boozer_with_collisions`
-    uses, compiled for device from the same source, so the coefficients are
-    not a separate implementation.  It is applied as a kick after each
+    uses.  It is applied as a kick after each
     accepted orbit step, sub-cycled when the collision rates are fast relative
     to that step.
 
-    The sixth column is the total speed ``v``, not ``dt`` as in
-    :func:`trace_particles_boozer_gpu`.  Collisions change ``v``, so it is
-    what the run is about: it carries the kinetic energy
-    :math:`E = \\tfrac{1}{2} m v^2`, and with :math:`|B|` at the returned
-    position it gives back :math:`\\mu = (v^2 - v_\\parallel^2)/(2|B|)`.
-    Without it, slowing-down and the final energy distribution could not be
-    recovered from the output at all.  This matches the layout of the CPU
-    entry point, which appends ``v`` for the same reason.
+    The output has seven columns: ``[t, s, theta, zeta, v_par, v, dt]``.
+    Collisions change the total speed ``v``, so it is reported: it carries
+    the kinetic energy :math:`E = \\tfrac{1}{2} m v^2`, and with :math:`|B|`
+    at the returned position it gives back
+    :math:`\\mu = (v^2 - v_\\parallel^2)/(2|B|)`.  The first six columns
+    match the CPU entry point, which appends ``v`` for the same reason; the
+    final step size ``dt`` sits in the last column, as in
+    :func:`trace_particles_boozer_gpu`.
 
     Differences from the CPU entry point:
 
     * ``vtotal`` is the initial speed of every particle, not merely a
-      normalisation: ``mu`` is derived from it as
+      normalization: ``mu`` is derived from it as
       ``(vtotal**2 - v_par**2) / (2 |B|)``.  Passing ``|v_par| > vtotal``
       would therefore give a negative ``mu``, so it is rejected.
     * only the final state is returned, not the trajectory;
@@ -259,18 +260,10 @@ def trace_particles_boozer_with_collisions_gpu(
         dt: Initial step size; ``None`` lets the tracer choose.
         rng_seed: Base seed.  Each particle uses a Philox stream keyed on its
             global index, so results do not depend on the block layout.
-        validate_profiles: If ``True`` (default), check up front that the
-            profiles give a usable Coulomb logarithm.  The device cannot
-            raise, so this is the only place an unphysical profile is
-            reported: with it disabled, a profile giving ``ln Lambda <= 0``
-            makes the kick silently skip the affected particles, returning a
-            trace that is collisionless there and marked in no way.  The CPU
-            entry point raises from inside the trace instead.
 
     Returns:
-        ``(nparticles, 6)`` array of final states,
-        ``[t, s, theta, zeta, v_par, v]``.  The sixth column differs from
-        :func:`trace_particles_boozer_gpu`, which returns ``dt`` there.
+        ``(nparticles, 7)`` array of final states,
+        ``[t, s, theta, zeta, v_par, v, dt]``.
 
     Raises:
         ValueError: If ``field.field_type`` is not ``"vac"`` or ``""``; if
@@ -278,7 +271,7 @@ def trace_particles_boozer_with_collisions_gpu(
             ``firm3dpp.COLL_MAX_SPECIES`` species; if ``parallel_speeds``
             does not match ``stz_inits`` in length or exceeds ``vtotal`` in
             magnitude; or if the profiles give an unphysical Coulomb
-            logarithm and ``validate_profiles`` is set.
+            logarithm.
     """
     from firm3d.field.collisions import (
         ThermalBackground,
@@ -301,46 +294,21 @@ def trace_particles_boozer_with_collisions_gpu(
             f"and would read past the shorter one"
         )
 
-    # mu is derived on the device as (vtotal**2 - v_par**2)/(2|B|), so
-    # |v_par| > vtotal makes it negative -- and the two consumers then
-    # disagree, the orbit equations integrating the negative value while the
-    # kick clamps v_perp^2 to zero.  That is the same silent inconsistency
-    # trace_particles_boozer_perturbed_with_collisions rejects; reject it here
-    # too, where the offending index can still be named.  Tested as "not <="
-    # so NaN is caught as well.
+    _validate_parallel_speeds(parallel_speeds, vtotal)
     parallel_speeds = np.asarray(parallel_speeds)
-    if not np.all(np.abs(parallel_speeds) <= abs(float(vtotal))):
-        bad = np.flatnonzero(~(np.abs(parallel_speeds) <= abs(float(vtotal))))
-        raise ValueError(
-            f"|parallel_speeds| must not exceed vtotal={vtotal!r}, else mu is "
-            f"negative; {bad.size} of {nparticles} violate this, first at "
-            f"index {bad[0]} with value {parallel_speeds[bad[0]]!r}"
-        )
 
-    # The kernel rewrites its stz_init buffer in place, turning (s, theta)
-    # into (s cos theta, s sin theta), and pybind hands it the caller's array
-    # unchanged for a C-contiguous float64 input.  Copy so that this entry
-    # point does not destroy its argument: callers reasonably keep the
-    # initial conditions to re-run at another tmax or to compare against the
-    # CPU tracer, and a silently corrupted array is very hard to attribute.
     stz_inits = np.ascontiguousarray(stz_inits, dtype=float).copy()
 
     if isinstance(backgrounds, ThermalBackground):
         backgrounds = [backgrounds]
     if len(backgrounds) == 0:
-        # The kernel selects column 5 on the species count: with none uploaded
-        # it writes dt, as the collisionless tracer does, and the documented
-        # [t, s, theta, zeta, v_par, v] layout would silently not hold.  A call
-        # to a function named ..._with_collisions asking for no collisions is
-        # a mistake worth naming rather than serving.
         raise ValueError(
             "backgrounds is empty; use trace_particles_boozer_gpu for a "
             "collisionless trace"
         )
     _validate_species_count(backgrounds)
     cpp_backgrounds = [b._to_cpp() for b in backgrounds]
-    if validate_profiles:
-        _validate_coulomb_log(cpp_backgrounds, float(mass), float(charge))
+    _validate_coulomb_log(cpp_backgrounds, float(mass), float(charge))
 
     srange, trange, zrange, quad_info, maxJ = boozer_interpolant(
         field, field.nfp, ns, ntheta, nzeta, vacuum=vacuum
@@ -364,4 +332,4 @@ def trace_particles_boozer_with_collisions_gpu(
         vacuum=vacuum,
         rng_seed=int(rng_seed),
     )
-    return np.reshape(last_time, (nparticles, 6))
+    return np.reshape(last_time, (nparticles, 7))

@@ -89,8 +89,8 @@ __constant__ double psi0_d; // used for Boozer RHS only
 __constant__ double saw_srange_d[4]; // used for SAW RHS only
 
 
-__constant__ ThermalBackgroundView coll_bgs_d[COLL_MAX_SPECIES];
-__constant__ int    coll_n_bgs_d = 0;          // 0 disables the kick entirely
+__constant__ ThermalBackgroundView coll_backgrounds_d[COLL_MAX_SPECIES];
+__constant__ int    coll_n_backgrounds_d = 0;          // 0 disables the kick entirely
 __constant__ unsigned long long coll_seed_d = 0;
 
 __constant__ bool rescale_abstol_var_d = true;
@@ -818,66 +818,41 @@ __device__ void check_has_left<CoordSys::Boozer>(bool* has_left, double* state, 
     has_left[threadIdx.x] = s >= 1; 
 }
 
-// this function estimates error, accepts/rejects the proposed step
-// and adjust the step size
 
 // ---------------------------------------------------------------------------
 // Collision kick, applied to (v, xi) after an accepted orbit step.
-//
-// The same operator solve_sde applies on the CPU, and the same code: drift and
-// Milstein noise from collisions.h, sub-cycled when the collision rates are
-// fast relative to the orbit step.  mu is a parameter of the orbit equations
-// held fixed across a step, so the kick is the only thing that moves it.
-//
-// |B| comes free from the derivative buffer: Dormand-Prince is FSAL, so stage
-// 6 was evaluated at the accepted endpoint, and slot 4 of each stage already
-// carries AbsB.  Position does not change during a kick, so sub-steps cost a
-// coefficient evaluation and no interpolation.
 // ---------------------------------------------------------------------------
 __device__ void collision_kick(double* state, double* mu, double* derivs,
                                double dt_taken,
                                curandStatePhilox4_32_10_t* rng,
                                double* v_out)
 {
-    if (coll_n_bgs_d <= 0) return;
+    if (coll_n_backgrounds_d <= 0) return;
 
     const int tid = threadIdx.x;
-    // Boozer state is (s cos th, s sin th, zeta, v_par); the coefficients want
-    // the flux label.
     double x1 = state[0*PARTICLES_PER_BLOCK + tid];
     double x2 = state[1*PARTICLES_PER_BLOCK + tid];
     double s_flux = sqrt(x1*x1 + x2*x2);
     double v_par  = state[3*PARTICLES_PER_BLOCK + tid];
     double B      = derivs[(6*6 + 4)*PARTICLES_PER_BLOCK + tid];   // stage 6 AbsB
 
-    if (!(B > 0.0)) return;
-    double vperp2 = 2.0 * mu[tid] * B;
-    if (vperp2 < 0.0) vperp2 = 0.0;
-    double v = sqrt(v_par*v_par + vperp2);
-    if (!(v > 0.0)) return;
-
+    double v = sqrt(v_par*v_par + 2.0 * mu[tid] * B);
     double xi = v_par / v;
-    xi = xi < -1.0 ? -1.0 : (xi > 1.0 ? 1.0 : xi);
 
     CollisionCoefficients c;
     if (compute_collision_coefficients_core(v, s_flux, mass_d, charge_d,
-                                            coll_bgs_d, coll_n_bgs_d, &c)
+                                            coll_backgrounds_d, coll_n_backgrounds_d, &c)
         != COLL_OK) {
-        // ln_Lambda <= 0: the model is undefined here.  A kernel cannot
-        // throw, so skip rather than integrate garbage.  This is normally
-        // caught on the host before launch, but validate_profiles=False is a
-        // supported argument that turns that check off -- in which case the
-        // particle silently continues collisionlessly, and nothing in the
-        // returned array marks it.  The CPU path raises instead.
+        // ln_Lambda <= 0: the model is undefined here.  
         return;
     }
 
-    // Re-derive the sub-step count from the remaining time as the particle
-    // slows, exactly as solve_sde does: nu_D and |K| grow like 1/v^3.
+    // Sub-cycle exactly as solve_sde does: one sub-step at a time, re-sized
+    // from the refreshed coefficients, so sub-steps shrink as the particle
+    // slows into faster collision rates.
     double t_left = dt_taken;
     while (t_left > 0.0) {
-        int nsub = collision_substeps(v, c, t_left);
-        double h_sub  = t_left / nsub;
+        double h_sub  = t_left / collision_substeps(v, c, t_left);
         double sqrt_h = sqrt(h_sub);
         double dW_v  = curand_normal_double(rng) * sqrt_h;
         double dW_xi = curand_normal_double(rng) * sqrt_h;
@@ -885,35 +860,23 @@ __device__ void collision_kick(double* state, double* mu, double* derivs,
         t_left -= h_sub;
         if (t_left <= 0.0) break;
         if (compute_collision_coefficients_core(v, s_flux, mass_d, charge_d,
-                                                coll_bgs_d, coll_n_bgs_d, &c)
+                                                coll_backgrounds_d, coll_n_backgrounds_d, &c)
             != COLL_OK) break;
     }
 
     state[3*PARTICLES_PER_BLOCK + tid] = v * xi;
     mu[tid] = v * v * (1.0 - xi*xi) / (2.0 * B);
-    // Publish the speed here, where it is exact.  It cannot be rebuilt from
-    // the output later: |B| would have to come from the derivative buffer,
-    // and stage 6 is evaluated at state + dt*(...), which coincides with the
-    // state only in the instant after a step is accepted -- which is now.
     v_out[tid] = v;
 }
 
+// this function estimates error, accepts/rejects the proposed step
+// and adjust the step size
 template<RHS id>
 // mu and rng default to null so callers that do not trace physics -- the
 // timestep probe kernel -- opt out of the collision kick explicitly.
 __device__ void adjust_time(double* t, double* dt, double* state, double* derivs, double* x_temp, bool* has_left, double* dtmax,
                             double* mu = nullptr, curandStatePhilox4_32_10_t* rng = nullptr,
                             double* v_out = nullptr){
-    // A block keeps looping while *any* of its particles is still running, so
-    // a particle that is already done still enters here on every remaining
-    // iteration.  Without the tmax test below it would keep integrating --
-    // and, since the dt clamp further down is itself guarded on t < tmax, it
-    // would do so at a frozen step size -- until the slowest particle in the
-    // block finished, reporting its state at that later time instead of at
-    // tmax.  The loop condition tests the same two flags; this mirrors it.
-    //
-    // With collisions this also stops the kick: it fires on each accepted
-    // step, so a particle running past tmax would keep being scattered.
     if(has_left[threadIdx.x] || t[threadIdx.x] >= tmax_d){
         return;
     }
@@ -968,17 +931,13 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
         for(int i = 0; i < 4; i++) {
             state[i*PARTICLES_PER_BLOCK + threadIdx.x] = x_temp[(i+1)*PARTICLES_PER_BLOCK + threadIdx.x];
         }
-        // Collision kick on the accepted step.  Boozer only: the coefficients
-        // are functions of the flux label, which a Cartesian state does not
-        // carry.  A zero species count makes this a no-op, so the
-        // collisionless kernels are unaffected.
+        // Collision kick on the accepted step.  
         constexpr CoordSys coord = map_rhs_to_coord<id>();
         if constexpr (coord == CoordSys::Boozer) {
             if (mu != nullptr && rng != nullptr && v_out != nullptr) {
                 collision_kick(state, mu, derivs, dt_accepted, rng, v_out);
             }
         }
-        // check if particle has left the device
         check_has_left<coord>(has_left, state, derivs);
     } else {
         // Reject the step and try again with smaller dt
@@ -991,7 +950,7 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
  * The inner loop computes the 7 Dormand Prince derivative estimates.
  * Everything lives in shared memory except the data for the interpolant
  */
-template<RHS id, typename... Args>
+template<RHS id, int NCOLS, typename... Args>
 __global__ void particle_trace_kernel(double* out, double* init_pos, double* quadpts_arr, double* dt_in, Args... args){
     int idx = threadIdx.x + blockIdx.x*PARTICLES_PER_BLOCK;
 
@@ -1026,26 +985,9 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
             state[i*PARTICLES_PER_BLOCK + threadIdx.x] = init_pos[4*idx + i];
         }
         dt[threadIdx.x] = dt_in[threadIdx.x]; // copy input dt
-        // Philox is counter-based, so keying the subsequence on the global
-        // particle index makes the stream independent of how the particles
-        // are distributed over blocks -- the GPU analogue of the CPU's
-        // rng_seed + particle_index.
-        //
-        // Gated on the species count: every collisionless kernel --
-        // Cartesian, Boozer, both SAW variants -- instantiates this same
-        // template, and none of them ever draws from the generator, since
-        // collision_kick returns at coll_n_bgs_d <= 0 before touching it.
-        // The shared allocation itself is still made for every instantiation;
-        // only the seeding is skipped.
-        if (coll_n_bgs_d > 0) {
+        if (coll_n_backgrounds_d > 0) {
             curand_init(coll_seed_d, (unsigned long long)idx, 0ULL, &rng_state[threadIdx.x]);
         }
-        // Correct before any kick has run.  collision_kick overwrites this
-        // on every step it completes, so a particle whose kick is skipped
-        // later (B <= 0, v <= 0, or a coefficient failure) reports the speed
-        // from its last completed kick, not this one.  Note the kick runs
-        // before check_has_left, so a departing particle is kicked on its
-        // final step and does report that.
         v_tot[threadIdx.x] = v_total_d;
     }
     __syncthreads();
@@ -1080,31 +1022,16 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
     }
     __syncthreads();
     if(is_valid){
-        out[6*idx] = t[threadIdx.x];
+        out[NCOLS*idx] = t[threadIdx.x];
         for(int i=0; i<4; ++i){
-            out[6*idx + i + 1] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
+            out[NCOLS*idx + i + 1] = state[i*PARTICLES_PER_BLOCK + threadIdx.x];
         }
-        // Last column: the final step size, except under collisions, where it
-        // is the total speed instead.
-        //
-        // For the collisionless Boozer kernels v == v_total_d throughout, so
-        // the caller already knows it and dt is the more useful diagnostic.
-        // (The SAW kernels are the exception -- the wave does work on the
-        // particle -- but they have no collisional entry point, so they take
-        // the dt branch here regardless.)
-        // With collisions v is the quantity that changed -- it carries the
-        // energy, and with |B| it gives back mu -- and nothing else in the
-        // output can recover it, which would leave slowing-down, the final
-        // energy distribution and the trapped fraction unobtainable.  This
-        // matches the layout of the CPU collisional tracer,
-        // trace_particles_boozer_with_collisions, which appends v for the
-        // same reason.
-        constexpr CoordSys out_coord = map_rhs_to_coord<id>();
-        double last = dt[threadIdx.x];
-        if constexpr (out_coord == CoordSys::Boozer) {
-            if (coll_n_bgs_d > 0) last = v_tot[threadIdx.x];
+        // dt is always the last column.  Collisional instantiations
+        // (NCOLS == 7) insert the total speed v before it.
+        if constexpr (NCOLS == 7) {
+            out[NCOLS*idx + 5] = v_tot[threadIdx.x];
         }
-        out[6*idx + 5] = last;
+        out[NCOLS*idx + NCOLS - 1] = dt[threadIdx.x];
     }
     return;
 }
@@ -1112,56 +1039,26 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
 
 
 // ---------------------------------------------------------------------------
-// Upload background profiles for the collision kick.
-//
-// The profile samples live in ordinary device memory and the views -- which
-// are small PODs holding those pointers -- go to constant memory, where every
-// thread reads them through the broadcast path.  Returns the device
-// allocations so the caller can free them after the kernel.
-//
-// Passing an empty species list leaves coll_n_bgs_d at zero, which makes
-// collision_kick a no-op; that is how the collisionless entry points keep
-// their existing behaviour.
+// Copy the background profiles to the GPU so the collision kick can read
+// them, and record the RNG seed.  This is the GPU counterpart of
+// make_thermal_views (collisions.h), which does the same job for the CPU.
 // ---------------------------------------------------------------------------
 static vector<double*> upload_collision_backgrounds(
     const vector<ThermalBackground>& backgrounds, unsigned long long rng_seed)
 {
     vector<double*> owned;
     int n = (int)backgrounds.size();
-    if (n > COLL_MAX_SPECIES) {
-        // Format the limit and the count.  The message used to name
-        // COLL_MAX_SPECIES literally, which told the caller neither.
-        char msg[160];
-        std::snprintf(msg, sizeof(msg),
-            "GPU collision tracing supports at most %d background species, "
-            "but %d were given", COLL_MAX_SPECIES, n);
-        throw std::invalid_argument(msg);
-    }
-    gpuErrchk(cudaMemcpyToSymbol(coll_seed_d, &rng_seed, sizeof(rng_seed)));
+    gpuErrchk(cudaMemcpyToSymbol(coll_seed_d, &rng_seed, sizeof(unsigned long long)));
 
     if (n == 0) {
         int zero = 0;
-        gpuErrchk(cudaMemcpyToSymbol(coll_n_bgs_d, &zero, sizeof(zero)));
+        gpuErrchk(cudaMemcpyToSymbol(coll_n_backgrounds_d, &zero, sizeof(int)));
         return owned;
     }
 
     ThermalBackgroundView views[COLL_MAX_SPECIES];
     for (int i = 0; i < n; ++i) {
         const ThermalBackground& bg = backgrounds[i];
-        // Same check the host wrapper makes, for the same reason: the sizes
-        // below are taken from s_grid, so a shorter n_grid or T_grid is a host
-        // over-read copied straight into device memory.
-        if (bg.s_grid.size() < 2 ||
-            bg.n_grid.size() < bg.s_grid.size() ||
-            bg.T_grid.size() < bg.s_grid.size()) {
-            char gmsg[200];
-            std::snprintf(gmsg, sizeof(gmsg),
-                "collisions: species %d has s_grid of %zu points with n_grid "
-                "%zu and T_grid %zu; at least 2 points are required and the "
-                "sample arrays must be no shorter than s_grid",
-                i, bg.s_grid.size(), bg.n_grid.size(), bg.T_grid.size());
-            throw std::invalid_argument(gmsg);
-        }
         int np = (int)bg.s_grid.size();
         double *n_d = nullptr, *T_d = nullptr;
         gpuErrchk(cudaMalloc(&n_d, np * sizeof(double)));
@@ -1179,12 +1076,12 @@ static vector<double*> upload_collision_backgrounds(
         views[i].mass     = bg.mass;
         views[i].charge   = bg.charge;
     }
-    gpuErrchk(cudaMemcpyToSymbol(coll_bgs_d, views, n * sizeof(ThermalBackgroundView)));
-    gpuErrchk(cudaMemcpyToSymbol(coll_n_bgs_d, &n, sizeof(n)));
+    gpuErrchk(cudaMemcpyToSymbol(coll_backgrounds_d, views, n * sizeof(ThermalBackgroundView)));
+    gpuErrchk(cudaMemcpyToSymbol(coll_n_backgrounds_d, &n, sizeof(int)));
     return owned;
 }
 
-template<RHS id, typename... Args>
+template<RHS id, int NCOLS = 6, typename... Args>
 vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_range, py::array_t<double> x2_range, py::array_t<double> x3_range, 
     py::array_t<double> loc_init, double m, double q, double vtotal, py::array_t<double> vtang, double tmax, double tol, py::array_t<double> dt_in, int nparticles, Args... args){
 
@@ -1257,7 +1154,7 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     gpuErrchk(cudaMalloc((void**)&dt_in_d, dt_in.size() * sizeof(double)) ); 
     gpuErrchk(cudaMemcpy(dt_in_d, dt_in_arr, dt_in.size() * sizeof(double), cudaMemcpyHostToDevice) );
     double* out_d;
-    gpuErrchk(cudaMalloc((void**)&out_d, 6 * nparticles * sizeof(double)) ); 
+    gpuErrchk(cudaMalloc((void**)&out_d, NCOLS * nparticles * sizeof(double)) ); 
 
 
     int nthreads = THREADS_PER_BLOCK;
@@ -1270,16 +1167,16 @@ vector<double> gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> x1_
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    particle_trace_kernel<id><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, dt_in_d, args...);
+    particle_trace_kernel<id, NCOLS><<<nblks, nthreads>>>(out_d, init_pos_d, quadpts_d, dt_in_d, args...);
 
-    double out[6*nparticles];
-    gpuErrchk(cudaMemcpy(out, out_d, 6 * nparticles * sizeof(double), cudaMemcpyDeviceToHost) );
+    double out[NCOLS*nparticles];
+    gpuErrchk(cudaMemcpy(out, out_d, NCOLS * nparticles * sizeof(double), cudaMemcpyDeviceToHost) );
 
     gpuErrchk( cudaFree(quadpts_d) );
     gpuErrchk( cudaFree(init_pos_d) );
     gpuErrchk( cudaFree(out_d) );
-    vector<double> particle_output(6*nparticles);
-    for(int i=0; i<6*nparticles; ++i){
+    vector<double> particle_output(NCOLS*nparticles);
+    for(int i=0; i<NCOLS*nparticles; ++i){
         particle_output[i] = out[i];
     }
 
@@ -1296,11 +1193,8 @@ extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py
 // Collisional Boozer tracing.  Identical to boozer_gpu_tracing apart from
 // uploading the background profiles and a seed; the kick itself lives in the
 // shared step logic, so the collisionless and collisional paths differ only in
-// whether coll_n_bgs_d is zero.
+// whether coll_n_backgrounds_d is zero.
 //
-// Unlike the CPU entry point this takes a single vtotal for the normalisation
-// rather than per-particle (v_par, mu): that is how every existing GPU kernel
-// is normalised, and changing it is a separate concern.
 extern "C" vector<double> boozer_collision_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> srange,
         py::array_t<double> trange, py::array_t<double> zrange, py::array_t<double> stz_init, double m, double q, double vtotal, py::array_t<double> vtang,
         double tmax, double tol, py::array_t<double> dt_in, double psi0, int nparticles,
@@ -1316,43 +1210,25 @@ extern "C" vector<double> boozer_collision_gpu_tracing(py::array_t<double> quad_
     }
     gpuErrchk(cudaMemcpyToSymbol(psi0_d, &psi0, sizeof(double)));
 
-    // RAII: the species count and the profile buffers are process-global
-    // device state, and every Boozer kernel -- including the collisionless and
-    // SAW ones -- reads coll_n_bgs_d as its only gate.  Releasing them only on
-    // the normal return would let a throw anywhere below leave collisions
-    // switched on for the next call in this process, with freed-but-live
-    // pointers behind it.
-    //
-    // The calls stay gpuErrchk-wrapped even though this is a destructor: the
-    // usual objection does not apply, because gpuAssert exits rather than
-    // throwing.  Dropping the check would silence exactly the failure that
-    // matters -- a reset that did not take leaves coll_n_bgs_d non-zero over
-    // freed pointers, which is the state this guard exists to prevent.
-    struct CollisionStateGuard {
-        vector<double*> owned;
-        CollisionStateGuard(const CollisionStateGuard&) = delete;
-        CollisionStateGuard& operator=(const CollisionStateGuard&) = delete;
-        explicit CollisionStateGuard(vector<double*> p) : owned(std::move(p)) {}
-        ~CollisionStateGuard() {
-            int zero = 0;
-            gpuErrchk(cudaMemcpyToSymbol(coll_n_bgs_d, &zero, sizeof(zero)));
-            for (double* p : owned) gpuErrchk(cudaFree(p));
-        }
-    } coll_state{upload_collision_backgrounds(backgrounds, rng_seed)};
-
+    vector<double*> owned = upload_collision_backgrounds(backgrounds, rng_seed);
 
     std::vector<double> results;
     if (vacuum) {
-        results = gpu_tracing<RHS::GC_BoozerVacuum>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, dt_in, nparticles);
+        results = gpu_tracing<RHS::GC_BoozerVacuum, 7>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, dt_in, nparticles);
     } else {
-        results = gpu_tracing<RHS::GC_Boozer>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, dt_in, nparticles);
+        results = gpu_tracing<RHS::GC_Boozer, 7>(quad_pts, srange, trange, zrange, stz_init, m, q, vtotal, vtang, tmax, tol, dt_in, nparticles);
     }
 
+    // Switch collisions back off and release the profile buffers. 
+    int zero = 0;
+    gpuErrchk(cudaMemcpyToSymbol(coll_n_backgrounds_d, &zero, sizeof(int)));
+    for (double* p : owned) gpuErrchk(cudaFree(p));
+
     for(int i=0; i<nparticles; ++i){
-        double x1 = results[6*i+1];
-        double x2 = results[6*i+2];
-        results[6*i+1] = sqrt(x1*x1 + x2*x2);
-        results[6*i+2] = atan2(x2, x1);
+        double x1 = results[7*i+1];
+        double x2 = results[7*i+2];
+        results[7*i+1] = sqrt(x1*x1 + x2*x2);
+        results[7*i+2] = atan2(x2, x1);
     }
     return results;
 }

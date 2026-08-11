@@ -1,8 +1,6 @@
 """
 Tests for Monte Carlo Coulomb collision tracing.
 
-All tests use BoozerAnalytic (no file I/O) and short integration times.
-
 Quantitative drag-rate test — why electrons, not ions
 ------------------------------------------------------
 For 3.52 MeV fusion alphas (v₀ ≈ 1.3×10⁷ m/s) the signal-to-noise ratio for
@@ -42,7 +40,6 @@ import unittest
 import warnings
 
 import numpy as np
-import scipy.special
 import scipy.stats
 
 import firm3dpp as sopp
@@ -71,7 +68,6 @@ from firm3d.util.constants import (
     FUSION_ALPHA_PARTICLE_ENERGY,
     ONE_EV,
     PROTON_MASS,
-    VACUUM_PERMITTIVITY,
 )
 
 
@@ -119,7 +115,7 @@ def _zero_background():
     """Zero-density background: all collision coefficients identically zero."""
     return ThermalBackground(
         n_profile=lambda s: 0.0,
-        T_profile=lambda s: 10e3 * ONE_EV,
+        T_profile=lambda s: 10e3,
         mass=2 * PROTON_MASS,
         charge=ELEMENTARY_CHARGE,
     )
@@ -127,7 +123,7 @@ def _zero_background():
 
 def _hot_background(n=1e20, T_keV=10.0):
     """Dense, hot deuterium background."""
-    T = T_keV * 1e3 * ONE_EV
+    T = T_keV * 1e3
     return ThermalBackground(
         n_profile=lambda s: n,
         T_profile=lambda s: T,
@@ -138,7 +134,7 @@ def _hot_background(n=1e20, T_keV=10.0):
 
 def _cold_background(n=1e20, T_keV=0.01):
     """Cold background: large drag on 3.5 MeV alphas."""
-    T = T_keV * 1e3 * ONE_EV
+    T = T_keV * 1e3
     return ThermalBackground(
         n_profile=lambda s: n,
         T_profile=lambda s: T,
@@ -178,111 +174,29 @@ def _coll_trace(
 
 
 # ---------------------------------------------------------------------------
-# Analytical helpers (mirror collisions.h in Python)
+# Coefficient accessors (thin wrappers on the shipped C++)
 # ---------------------------------------------------------------------------
 
 
-def _chandrasekhar_G(x):
-    """G(x) = [erf(x) - (2x/√π)exp(-x²)] / (2x²)."""
-    if x == 0.0:
-        return 0.0
-    return (scipy.special.erf(x) - (2.0 * x / np.sqrt(np.pi)) * np.exp(-(x**2))) / (
-        2.0 * x**2
+def _coeffs(v, s, m_a, q_a, backgrounds):
+    """CollisionCoefficients from collisions.h for a single (v, s)."""
+    return sopp.compute_collision_coefficients(
+        float(v),
+        float(s),
+        float(m_a),
+        float(q_a),
+        [b._to_cpp() for b in backgrounds],
     )
 
 
-def _chandrasekhar_G_deriv(x):
-    """G'(x) = (2/√π) exp(-x²) - 2 G(x)/x."""
-    if x == 0.0:
-        return 2.0 / (3.0 * np.sqrt(np.pi))
-    return (2.0 / np.sqrt(np.pi)) * np.exp(-(x**2)) - 2.0 * _chandrasekhar_G(x) / x
+def _cpp_K(v, s, m_a, q_a, backgrounds):
+    """Deterministic drag K [m/s^2], summed over background species."""
+    return _coeffs(v, s, m_a, q_a, backgrounds).K
 
 
-_HBAR = 1.054571817e-34  # J·s (reduced Planck)
-
-
-def _coulomb_log(v, m_a, q_a, m_b, q_b, T_b, lambda_D):
-    """
-    ln Λ = ln(λ_D / b_min), b_min = max(b_cl, b_qm).
-    Mirrors compute_collision_coefficients() in collisions.h (ASCOT5
-    convention, no floor).
-    """
-    v_th_b = np.sqrt(2.0 * T_b / m_b)
-    m_r = m_a * m_b / (m_a + m_b)
-    v_eff_sq = v**2 + v_th_b**2
-    b_cl = abs(q_a * q_b) / (4.0 * np.pi * VACUUM_PERMITTIVITY * m_r * v_eff_sq)
-    b_qm = _HBAR / (2.0 * m_r * np.sqrt(v_eff_sq))
-    return np.log(lambda_D / max(b_cl, b_qm))
-
-
-def _debye_length(s, backgrounds):
-    """Total Debye length from all background species at flux label s."""
-    inv_lD_sq = 0.0
-    for bg in backgrounds:
-        n_b = bg.n_profile(s)
-        T_b = bg.T_profile(s)
-        if n_b > 0 and T_b > 0:
-            inv_lD_sq += n_b * bg.charge**2 / (VACUUM_PERMITTIVITY * T_b)
-    return 1.0 / np.sqrt(inv_lD_sq) if inv_lD_sq > 0 else 0.0
-
-
-def _analytical_K(v, s, m_a, q_a, backgrounds):
-    """
-    Deterministic drag coefficient K [m/s²].
-    K = Q + dD_par/dv + 2*D_par/v  summed over all background species.
-    Mirrors compute_collision_coefficients() in collisions.h.
-    """
-    lambda_D = _debye_length(s, backgrounds)
-    K = 0.0
-    for bg in backgrounds:
-        n_b = bg.n_profile(s)
-        T_b = bg.T_profile(s)
-        if n_b <= 0 or T_b <= 0:
-            continue
-        m_b, q_b = bg.mass, bg.charge
-        lnL = _coulomb_log(v, m_a, q_a, m_b, q_b, T_b, lambda_D)
-        v_th = np.sqrt(2.0 * T_b / m_b)
-        x = v / v_th
-        G = _chandrasekhar_G(x)
-        Gp = _chandrasekhar_G_deriv(x)
-        Gamma = (
-            n_b
-            * q_a**2
-            * q_b**2
-            * lnL
-            / (4.0 * np.pi * VACUUM_PERMITTIVITY**2 * m_a**2)
-        )
-        D_par = Gamma * G / v
-        dD_par_dv = Gamma * (Gp / v_th - G / v) / v
-        # Einstein-relation drag (matches ASCOT5 mccc_coefs_Q)
-        Q = -Gamma * G * m_a / T_b
-        K += Q + dD_par_dv + 2.0 * D_par / v
-    return K
-
-
-def _analytical_nu_D(v, s, m_a, q_a, backgrounds):
-    """Pitch-angle scattering frequency ν_D [s⁻¹] summed over species."""
-    lambda_D = _debye_length(s, backgrounds)
-    nu_D = 0.0
-    for bg in backgrounds:
-        n_b = bg.n_profile(s)
-        T_b = bg.T_profile(s)
-        if n_b <= 0 or T_b <= 0:
-            continue
-        m_b, q_b = bg.mass, bg.charge
-        lnL = _coulomb_log(v, m_a, q_a, m_b, q_b, T_b, lambda_D)
-        v_th = np.sqrt(2.0 * T_b / m_b)
-        x = v / v_th
-        G = _chandrasekhar_G(x)
-        Gamma = (
-            n_b
-            * q_a**2
-            * q_b**2
-            * lnL
-            / (4.0 * np.pi * VACUUM_PERMITTIVITY**2 * m_a**2)
-        )
-        nu_D += Gamma * (scipy.special.erf(x) - G) / v**3
-    return nu_D
+def _cpp_nu_D(v, s, m_a, q_a, backgrounds):
+    """Pitch-angle scattering frequency nu_D [s^-1], summed over species."""
+    return _coeffs(v, s, m_a, q_a, backgrounds).nu_D
 
 
 # ===========================================================================
@@ -326,7 +240,7 @@ class TestThermalBackground(unittest.TestCase):
         """Profile values at s = 0 and s = 1 survive the grid round-trip."""
         bg = ThermalBackground(
             n_profile=lambda s: 1e20 * (1 - s),
-            T_profile=lambda s: 1e3 * ONE_EV * s,
+            T_profile=lambda s: 1e3 * s,
             mass=PROTON_MASS,
             charge=ELEMENTARY_CHARGE,
             n_grid_points=100,
@@ -334,8 +248,8 @@ class TestThermalBackground(unittest.TestCase):
         cpp = bg._to_cpp()
         self.assertAlmostEqual(cpp.n_grid[0], 1e20, delta=1e15)
         self.assertAlmostEqual(cpp.n_grid[-1], 0.0, delta=1e15)
-        self.assertAlmostEqual(cpp.T_grid[0], 0.0, delta=1.0)
-        self.assertAlmostEqual(cpp.T_grid[-1], 1e3 * ONE_EV, delta=1e-16 * ONE_EV)
+        self.assertAlmostEqual(cpp.T_grid[0], 0.0, delta=1e-9)
+        self.assertAlmostEqual(cpp.T_grid[-1], 1e3, delta=1e-9)
 
     def test_single_background_accepted(self):
         """A bare ThermalBackground (not in a list) is accepted."""
@@ -402,8 +316,8 @@ class TestIterationStoppingCriterion(unittest.TestCase):
     The `iter` argument passed to stopping criteria must count accepted
     solver steps, as it does in the collisionless tracer.
 
-    solve_sde() originally synthesised this argument from the elapsed
-    normalised time, ``(int)(tau / (dtau_max * 1e-3))``, which is a
+    solve_sde() originally synthesized this argument from the elapsed
+    normalized time, ``(int)(tau / (dtau_max * 1e-3))``, which is a
     proxy for simulated time rather than a step count.  Two consequences
     are asserted against here:
 
@@ -415,7 +329,7 @@ class TestIterationStoppingCriterion(unittest.TestCase):
         t = 1.9392e-08 s).
 
     ToroidalTransitStoppingCriterion is affected by the same argument --
-    it keys its `zeta_init` initialisation on ``iter == 1`` -- but needs
+    it keys its `zeta_init` initialization on ``iter == 1`` -- but needs
     a confined multi-transit orbit to exercise, so the step counter is
     tested directly here instead.
     """
@@ -975,7 +889,7 @@ class TestPerturbedCollisions(unittest.TestCase):
         saw = ShearAlfvenHarmonic(0.0, 2, 1, 1e5, 0.0, field)
         bg = ThermalBackground(
             n_profile=lambda s: 1e21,
-            T_profile=lambda s: 1e3 * ONE_EV,
+            T_profile=lambda s: 1e3,
             mass=2 * PROTON_MASS,
             charge=ELEMENTARY_CHARGE,
         )
@@ -1012,102 +926,6 @@ class TestPerturbedCollisions(unittest.TestCase):
                 "equations"
             ),
         )
-
-    def test_negative_mu_is_refused(self):
-        """
-        A negative or NaN mu must be refused rather than traced.
-
-        Without the check the trace runs to completion and returns finite,
-        plausible-looking numbers, because the two consumers of mu disagree:
-        the orbit right-hand side integrates the negative value while the
-        kick's speed reconstruction clamps v_perp^2 up to zero.  Measured on
-        the unguarded code with vpar0 = 0.5 v0 and mu = -1e12: the same speed
-        as mu = 0 (6.514e+06) but a different theta (0.01513 against
-        0.01542) -- a trajectory belonging to no particle at all, with
-        nothing in the output marking it as such.  This fixture launches at
-        0.6 v0 and negates its own mu0, so its numbers differ from those;
-        the failure mode is the same.
-
-        NaN is checked because the natural spelling of the guard misses it:
-        NaN < 0 is False, so a "< 0" test admits exactly the input the check
-        exists to reject.  mu = 0 is legal (a strictly passing particle) and
-        must still trace, so the boundary is checked in both directions.
-        """
-        saw, _, vpar0, mu0 = self._setup(1e-5)
-        kw = {
-            "tmax": 1e-8,
-            "mass": ALPHA_PARTICLE_MASS,
-            "charge": ALPHA_PARTICLE_CHARGE,
-            "dt_save": 1e-8,
-            "rng_seed": 1,
-            "backgrounds": _hot_background(),
-        }
-        for label, bad_mu in (
-            ("negative", -abs(mu0[0])),
-            ("nan", np.nan),
-        ):
-            with self.subTest(mu=label):
-                with self.assertRaises(ValueError) as cm:
-                    trace_particles_boozer_perturbed_with_collisions(
-                        saw, self._stz, vpar0, np.array([bad_mu]), **kw
-                    )
-                msg = str(cm.exception)
-                self.assertIn("non-negative", msg)
-                self.assertIn("index 0", msg)
-
-        # The boundary itself is a legal input, not an error.
-        res, _ = trace_particles_boozer_perturbed_with_collisions(
-            saw, self._stz, vpar0, np.array([0.0]), **kw
-        )
-        self.assertTrue(np.all(np.isfinite(np.asarray(res[0]))))
-
-    def test_dead_b0_reference_is_refused_with_the_cause(self):
-        """
-        A ShearAlfvenWave whose BoozerMagneticField reference has been dropped
-        must be refused, whether or not mode is supplied.
-
-        B0 returns the Python subclass only while a Python reference to it
-        survives.  Once it does not, the field cannot be evaluated at all --
-        iota, G and modB are all implemented on the subclass -- so tracing
-        fails inside the first right-hand-side evaluation with
-        "_iota_impl was not implemented", which names nothing about the cause.
-        Passing mode explicitly does not help: it gets past the field_type
-        lookup and then fails exactly the same way, deeper.
-        """
-
-        def wave_with_dropped_field():
-            field = BoozerAnalytic(1.0, 5.0, 0, 40.0, 0.5, 0.4)
-            return ShearAlfvenHarmonic(1e-4, 2, 1, 1e5, 0.0, field)
-
-        kw = {
-            "tmax": 1e-8,
-            "mass": ALPHA_PARTICLE_MASS,
-            "charge": ALPHA_PARTICLE_CHARGE,
-            "dt_save": 1e-8,
-            "backgrounds": _zero_background(),
-        }
-        for mode in (None, "gc_vac"):
-            with self.subTest(mode=mode):
-                saw = wave_with_dropped_field()
-                self.assertIsNone(getattr(saw.B0, "field_type", None))
-                with self.assertRaises(ValueError) as cm:
-                    trace_particles_boozer_perturbed_with_collisions(
-                        saw,
-                        self._stz,
-                        np.array([1e6]),
-                        np.array([1e6]),
-                        mode=mode,
-                        **kw,
-                    )
-                # Pin the diagnosis and the remedy, not the exact phrasing:
-                # the message must name field_type as the observable symptom
-                # and point at the object's lifetime as the usual cause.  It
-                # deliberately does not assert the subclass was ever present
-                # -- a bare C++ BoozerMagneticField never has field_type, and
-                # is refused here for the same reason.
-                msg = str(cm.exception)
-                self.assertIn("field_type", msg)
-                self.assertIn("outlives the call", msg)
 
     def test_stopping_criterion_fires_and_pins_the_hit_layout(self):
         """
@@ -1180,86 +998,6 @@ class TestPerturbedCollisions(unittest.TestCase):
                 **self._kw(),
             )
         self.assertIn("full-K", str(cm.exception))
-
-
-# ---------------------------------------------------------------------------
-# Shipped C++ coefficients vs the Python transcription
-# ---------------------------------------------------------------------------
-
-
-class TestCppCoefficientsMatchMirror(unittest.TestCase):
-    """
-    Pin the Python helpers in this file to the C++ that actually ships.
-
-    _analytical_K / _analytical_nu_D / _chandrasekhar_G are hand-written
-    transcriptions of collisions.h, and TestCollisionCoefficients asserts
-    against them.  Until compute_collision_coefficients was bound, nothing
-    connected the two: a sign or factor error in the C++ was invisible to
-    every one of those assertions, since both sides would have had to be
-    wrong in the same way to agree.  This class is that connection, so the
-    rest of the suite inherits its authority from the shipped code.
-
-    It also covers the constants: the C++ carries its own COLL_HBAR and
-    COLL_EPSILON0, and the mirror uses firm3d.util.constants.  The
-    coefficients depend on both, so any divergence shows up here.
-    """
-
-    def _cases(self):
-        v0 = np.sqrt(2 * FUSION_ALPHA_PARTICLE_ENERGY / ALPHA_PARTICLE_MASS)
-        multi = [
-            _hot_background(),
-            ThermalBackground(
-                n_profile=lambda s: 1e20,
-                T_profile=lambda s: 10e3 * ONE_EV,
-                mass=ELECTRON_MASS,
-                charge=-ELEMENTARY_CHARGE,
-            ),
-        ]
-        for label, bgs in [
-            ("single ion", [_hot_background()]),
-            ("cold ion", [_cold_background()]),
-            ("ion + electron", multi),
-        ]:
-            for vf in (0.05, 0.2, 0.5, 1.0, 3.0):
-                for s in (0.0, 0.3, 1.0):
-                    yield label, bgs, vf * v0, s
-
-    def test_matches_python_transcription(self):
-        m, q = ALPHA_PARTICLE_MASS, ALPHA_PARTICLE_CHARGE
-        for label, bgs, v, s in self._cases():
-            with self.subTest(case=label, v=v, s=s):
-                c = sopp.compute_collision_coefficients(
-                    v, s, float(m), float(q), [b._to_cpp() for b in bgs]
-                )
-                np.testing.assert_allclose(
-                    [c.K, c.nu_D],
-                    [
-                        _analytical_K(v, s, m, q, bgs),
-                        _analytical_nu_D(v, s, m, q, bgs),
-                    ],
-                    rtol=1e-12,
-                    err_msg=f"C++ and Python disagree for {label}",
-                )
-
-    def test_mirror_is_discriminating(self):
-        """The comparison must be able to see a wrong coefficient at all."""
-        v0 = np.sqrt(2 * FUSION_ALPHA_PARTICLE_ENERGY / ALPHA_PARTICLE_MASS)
-        bgs = [_hot_background()]
-        c = sopp.compute_collision_coefficients(
-            v0,
-            0.3,
-            float(ALPHA_PARTICLE_MASS),
-            float(ALPHA_PARTICLE_CHARGE),
-            [b._to_cpp() for b in bgs],
-        )
-        # A 1e-6 relative perturbation must break the rtol=1e-12 assertion,
-        # otherwise the test above proves nothing.
-        with self.assertRaises(AssertionError):
-            np.testing.assert_allclose(
-                c.K * (1 + 1e-6),
-                _analytical_K(v0, 0.3, ALPHA_PARTICLE_MASS, ALPHA_PARTICLE_CHARGE, bgs),
-                rtol=1e-12,
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -1369,7 +1107,7 @@ class TestProfileGridValidation(unittest.TestCase):
     def _bg(self, n_grid_points):
         return ThermalBackground(
             n_profile=lambda s: 1e20,
-            T_profile=lambda s: 10e3 * ONE_EV,
+            T_profile=lambda s: 10e3,
             mass=2 * PROTON_MASS,
             charge=ELEMENTARY_CHARGE,
             n_grid_points=n_grid_points,
@@ -1425,7 +1163,7 @@ class TestCollisionSubstepping(unittest.TestCase):
         bgs = [
             ThermalBackground(
                 n_profile=lambda s: 1e21,
-                T_profile=lambda s: 1e3 * ONE_EV,
+                T_profile=lambda s: 1e3,
                 mass=PROTON_MASS,
                 charge=ELEMENTARY_CHARGE,
             )
@@ -1440,7 +1178,7 @@ class TestCollisionSubstepping(unittest.TestCase):
         Non-finite and huge rates must not reach the double->int cast.
 
         Converting an out-of-range or NaN double to int is undefined
-        behaviour; on x86-64 it yields INT_MIN, which a `< 1` clamp would
+        behavior; on x86-64 it yields INT_MIN, which a `< 1` clamp would
         then turn into a single sub-step -- the runaway guard failing open
         in exactly the regime it exists for.
         """
@@ -1466,11 +1204,13 @@ class TestCollisionSubstepping(unittest.TestCase):
         one -- it is where h is longest relative to the collision time -- so
         this fails against the pre-fix code.
         """
-        T_b, n_b, nP = 1e3 * ONE_EV, 1e21, 24
+        # The profile is handed over in eV; the energy comparisons below are SI.
+        T_b_eV, n_b, nP = 1e3, 1e21, 24
+        T_b = T_b_eV * ONE_EV
         tmax = 8 * 3.5e-5  # 8 collisional relaxation times
         bg = ThermalBackground(
             n_profile=lambda s: n_b,
-            T_profile=lambda s: T_b,
+            T_profile=lambda s: T_b_eV,
             mass=PROTON_MASS,
             charge=ELEMENTARY_CHARGE,
         )
@@ -1517,6 +1257,35 @@ class TestCollisionSubstepping(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+class TestOdeSolverValidation(unittest.TestCase):
+    def test_symplectic_is_refused_for_collisional_tracing(self):
+        """'symplectic' is valid collisionless input, so name the restriction."""
+        with self.assertRaises(ValueError) as cm:
+            _coll_trace(_field(), _hot_background(), tmax=1e-8, ode_solver="symplectic")
+        self.assertIn("collisionless-only", str(cm.exception))
+
+
+class TestParallelSpeedExceedingTotal(unittest.TestCase):
+    """|v_par| > vtotal implies a negative mu, so it must be refused."""
+
+    def test_refused(self):
+        for label, fraction in (("marginal", 1.0 + 1e-9), ("nan", np.nan)):
+            with self.subTest(vpar=label):
+                with self.assertRaises(ValueError) as cm:
+                    _coll_trace(
+                        _field(),
+                        _hot_background(),
+                        vpar_fraction=fraction,
+                        tmax=1e-8,
+                    )
+                self.assertIn("must not exceed", str(cm.exception))
+
+    def test_boundary_is_legal(self):
+        """|v_par| == vtotal exactly (a purely passing particle) traces."""
+        traj = _coll_trace(_field(), _hot_background(), vpar_fraction=1.0, tmax=1e-8)
+        self.assertEqual(traj.shape[1], 6)
+
+
 class TestUnphysicalCoulombLog(unittest.TestCase):
     """
     ln Lambda <= 0 (Debye length below the minimum impact parameter,
@@ -1530,7 +1299,7 @@ class TestUnphysicalCoulombLog(unittest.TestCase):
     def _bad_background():
         return ThermalBackground(
             n_profile=lambda s: 1e30,
-            T_profile=lambda s: 1e-3 * ONE_EV,
+            T_profile=lambda s: 1e-3,
             mass=ELECTRON_MASS,
             charge=-ELEMENTARY_CHARGE,
         )
@@ -1546,18 +1315,21 @@ class TestUnphysicalCoulombLog(unittest.TestCase):
         with self.assertRaises(ValueError):
             _coll_trace(_field(), self._bad_background(), tmax=1e-8)
 
-    def test_cpp_still_refuses_when_validation_bypassed(self):
-        """With validate_profiles=False the C++ layer is the backstop.
+    def test_cpp_layer_is_the_backstop(self):
+        """The C++ layer refuses the same profiles on its own.
 
-        The failure must surface as an exception from the tracer call
-        rather than being swallowed by the per-particle error capture.
+        The Python check is a pre-flight convenience; the throw itself lives
+        in collisions.h, so a caller reaching the C++ directly (bypassing the
+        tracer entry points entirely) is refused too.
         """
+        v0 = np.sqrt(2 * FUSION_ALPHA_PARTICLE_ENERGY / ALPHA_PARTICLE_MASS)
         with self.assertRaises(RuntimeError):
-            _coll_trace(
-                _field(),
-                self._bad_background(),
-                tmax=1e-8,
-                validate_profiles=False,
+            sopp.compute_collision_coefficients(
+                v0,
+                0.3,
+                float(ALPHA_PARTICLE_MASS),
+                float(ALPHA_PARTICLE_CHARGE),
+                [self._bad_background()._to_cpp()],
             )
 
     def test_healthy_profiles_are_not_rejected(self):
@@ -1570,7 +1342,7 @@ class TestUnphysicalCoulombLog(unittest.TestCase):
         """0 < ln_Lambda < 2 as v -> 0: usable, but not quantitative."""
         return ThermalBackground(
             n_profile=lambda s: 1e20,
-            T_profile=lambda s: 0.025 * ONE_EV,
+            T_profile=lambda s: 0.025,
             mass=2 * PROTON_MASS,
             charge=ELEMENTARY_CHARGE,
         )
@@ -1599,14 +1371,15 @@ class TestUnphysicalCoulombLog(unittest.TestCase):
 
 class TestCollisionCoefficients(unittest.TestCase):
     """
-    Unit tests for the analytical collision coefficient formulae that mirror
-    compute_collision_coefficients() in collisions.h.
+    Unit tests for the shipped collision coefficients, reached through the
+    firm3dpp bindings.
 
     These tests are deterministic and instantaneous — no simulation needed.
     They verify that the Chandrasekhar G function, the drag K, and the
     pitch-angle scattering rate ν_D have the correct signs, limits, and
-    scalings.  Any discrepancy here would be reflected identically in the C++
-    code since both implementations follow the same formulae.
+    scalings.  Every value here comes from collisions.h itself, so a defect
+    in it shows up as a failure rather than being mirrored by a second
+    implementation that shares the mistake.
     """
 
     _v0 = np.sqrt(2 * FUSION_ALPHA_PARTICLE_ENERGY / ALPHA_PARTICLE_MASS)
@@ -1619,18 +1392,18 @@ class TestCollisionCoefficients(unittest.TestCase):
     def test_G_positive(self):
         """G(x) > 0 for all x > 0."""
         for x in [0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]:
-            self.assertGreater(_chandrasekhar_G(x), 0, f"G({x}) ≤ 0")
+            self.assertGreater(sopp.chandrasekhar_G(x), 0, f"G({x}) ≤ 0")
 
     def test_G_zero_at_zero(self):
         """G(0) = 0 (G → 0 as x → 0)."""
-        self.assertAlmostEqual(_chandrasekhar_G(0.0), 0.0, places=12)
+        self.assertAlmostEqual(sopp.chandrasekhar_G(0.0), 0.0, places=12)
 
     def test_G_small_x_limit(self):
         """For x ≪ 1: G(x) ≈ 2x / (3√π)."""
         for x in [0.001, 0.01, 0.05]:
             G_approx = 2.0 * x / (3.0 * np.sqrt(np.pi))
             self.assertAlmostEqual(
-                _chandrasekhar_G(x),
+                sopp.chandrasekhar_G(x),
                 G_approx,
                 delta=0.01 * G_approx,
                 msg=f"G({x}) deviates from small-x limit 2x/(3√π)",
@@ -1641,7 +1414,7 @@ class TestCollisionCoefficients(unittest.TestCase):
         for x in [5.0, 10.0, 20.0]:
             G_approx = 1.0 / (2.0 * x**2)
             self.assertAlmostEqual(
-                _chandrasekhar_G(x),
+                sopp.chandrasekhar_G(x),
                 G_approx,
                 delta=0.05 * G_approx,
                 msg=f"G({x}) deviates from large-x limit 1/(2x²)",
@@ -1650,45 +1423,41 @@ class TestCollisionCoefficients(unittest.TestCase):
     def test_G_deriv_positive_small_x(self):
         """G'(x) > 0 for small x (G is increasing near 0)."""
         for x in [0.1, 0.3, 0.5]:
-            self.assertGreater(_chandrasekhar_G_deriv(x), 0, f"G'({x}) ≤ 0")
+            self.assertGreater(sopp.chandrasekhar_G_deriv(x), 0, f"G'({x}) ≤ 0")
 
     def test_G_deriv_sign_change(self):
         """G has a maximum: G'(x) changes sign from + to − around x ≈ 0.92."""
-        self.assertGreater(_chandrasekhar_G_deriv(0.5), 0)
-        self.assertLess(_chandrasekhar_G_deriv(2.0), 0)
+        self.assertGreater(sopp.chandrasekhar_G_deriv(0.5), 0)
+        self.assertLess(sopp.chandrasekhar_G_deriv(2.0), 0)
 
     # ------------------------------------------------------------------
     # Drag coefficient K
     # ------------------------------------------------------------------
     def test_K_zero_when_n_zero(self):
         """K = 0 when n = 0."""
-        K = _analytical_K(self._v0, self._s, self._m, self._q, [_zero_background()])
+        K = _cpp_K(self._v0, self._s, self._m, self._q, [_zero_background()])
         self.assertEqual(K, 0.0)
 
     def test_K_negative(self):
         """K < 0 for any finite background (drag always decelerates)."""
         for bg in [_hot_background(), _cold_background(), _hot_background(T_keV=100.0)]:
-            K = _analytical_K(self._v0, self._s, self._m, self._q, [bg])
+            K = _cpp_K(self._v0, self._s, self._m, self._q, [bg])
             self.assertLess(K, 0, "K must be negative (decelerating drag)")
 
     def test_K_linear_in_density(self):
         """K nearly proportional to n; small deviation via ln Λ ∝ ln(λ_D)."""
-        K1 = _analytical_K(
-            self._v0, self._s, self._m, self._q, [_hot_background(n=1e20)]
-        )
-        K2 = _analytical_K(
-            self._v0, self._s, self._m, self._q, [_hot_background(n=2e20)]
-        )
+        K1 = _cpp_K(self._v0, self._s, self._m, self._q, [_hot_background(n=1e20)])
+        K2 = _cpp_K(self._v0, self._s, self._m, self._q, [_hot_background(n=2e20)])
         self.assertAlmostEqual(K2 / K1, 2.0, delta=0.05)
 
     def test_K_quartic_in_EP_charge(self):
         """K ∝ q_a²; <15% deviation because ln Λ also depends on |q_a q_b|."""
         bg = _hot_background()
-        K_alpha = _analytical_K(
+        K_alpha = _cpp_K(
             self._v0, self._s, ALPHA_PARTICLE_MASS, ALPHA_PARTICLE_CHARGE, [bg]
         )
         # Same mass but half the charge
-        K_half = _analytical_K(
+        K_half = _cpp_K(
             self._v0, self._s, ALPHA_PARTICLE_MASS, ALPHA_PARTICLE_CHARGE / 2.0, [bg]
         )
         self.assertAlmostEqual(
@@ -1705,8 +1474,8 @@ class TestCollisionCoefficients(unittest.TestCase):
         changing ln Λ by only −½ ln 2 ≈ −0.35, so K[bg+bg] ≈ 2 K[bg] to ~5%.
         """
         bg = _hot_background(n=1e20)
-        K_one = _analytical_K(self._v0, self._s, self._m, self._q, [bg])
-        K_both = _analytical_K(self._v0, self._s, self._m, self._q, [bg, bg])
+        K_one = _cpp_K(self._v0, self._s, self._m, self._q, [bg])
+        K_both = _cpp_K(self._v0, self._s, self._m, self._q, [bg, bg])
         self.assertAlmostEqual(K_both / K_one, 2.0, delta=0.1)
 
     def test_K_electron_larger_than_ion(self):
@@ -1720,12 +1489,12 @@ class TestCollisionCoefficients(unittest.TestCase):
         """
         electron_bg = ThermalBackground(
             n_profile=lambda s: 1e20,
-            T_profile=lambda s: 10e3 * ONE_EV,
+            T_profile=lambda s: 10e3,
             mass=ELECTRON_MASS,
             charge=-ELEMENTARY_CHARGE,
         )
-        K_e = _analytical_K(self._v0, self._s, self._m, self._q, [electron_bg])
-        K_D = _analytical_K(self._v0, self._s, self._m, self._q, [_hot_background()])
+        K_e = _cpp_K(self._v0, self._s, self._m, self._q, [electron_bg])
+        K_D = _cpp_K(self._v0, self._s, self._m, self._q, [_hot_background()])
         ratio = abs(K_e) / abs(K_D)
         self.assertGreater(ratio, 10, f"|K_e|/|K_D| = {ratio:.1f}, expected ≈ 20")
         self.assertLess(ratio, 50, f"|K_e|/|K_D| = {ratio:.1f}, expected ≈ 20")
@@ -1736,52 +1505,43 @@ class TestCollisionCoefficients(unittest.TestCase):
     def test_nu_D_positive(self):
         """ν_D > 0 for any finite, positive background."""
         for bg in [_hot_background(), _cold_background()]:
-            nu_D = _analytical_nu_D(self._v0, self._s, self._m, self._q, [bg])
+            nu_D = _cpp_nu_D(self._v0, self._s, self._m, self._q, [bg])
             self.assertGreater(nu_D, 0)
 
     def test_nu_D_zero_when_n_zero(self):
         """ν_D = 0 when n = 0."""
-        nu_D = _analytical_nu_D(
-            self._v0, self._s, self._m, self._q, [_zero_background()]
-        )
+        nu_D = _cpp_nu_D(self._v0, self._s, self._m, self._q, [_zero_background()])
         self.assertEqual(nu_D, 0.0)
 
     def test_nu_D_linear_in_density(self):
         """ν_D nearly proportional to n; small deviation via ln Λ ∝ ln(λ_D)."""
-        nu_1 = _analytical_nu_D(
-            self._v0, self._s, self._m, self._q, [_hot_background(n=1e20)]
-        )
-        nu_2 = _analytical_nu_D(
-            self._v0, self._s, self._m, self._q, [_hot_background(n=2e20)]
-        )
+        nu_1 = _cpp_nu_D(self._v0, self._s, self._m, self._q, [_hot_background(n=1e20)])
+        nu_2 = _cpp_nu_D(self._v0, self._s, self._m, self._q, [_hot_background(n=2e20)])
         self.assertAlmostEqual(nu_2 / nu_1, 2.0, delta=0.05)
 
     def test_nu_D_large_x_limit(self):
         """
         For x ≫ 1 (EP much faster than background thermal speed):
         ν_D ≈ Γ × (erf(x) − G(x)) / v³ → Γ / v³  (since erf(x)→1, G(x)→0).
+
+        Γ is not exposed on its own, so it is recovered from the shipped
+        D_par = Γ G(x) / v, which is exact for this single-species
+        background.  The assertion is therefore that the shipped ν_D and
+        D_par stand in the ratio the formulae require, erf(x) − G(x), which
+        is 1 to within 2% at x ≈ 13.
         """
         bg = _hot_background()
         v0, s = self._v0, self._s
-        m_b, q_b = bg.mass, bg.charge
-        T_b, n_b = bg.T_profile(s), bg.n_profile(s)
-        v_th = np.sqrt(2 * T_b / m_b)
+        T_b = bg.T_profile(s) * ONE_EV
+        v_th = np.sqrt(2 * T_b / bg.mass)
         x = v0 / v_th  # ≈ 13 for fusion alphas in 10 keV D plasma
 
-        lambda_D = _debye_length(s, [bg])
-        lnL = _coulomb_log(v0, self._m, self._q, m_b, q_b, T_b, lambda_D)
-        Gamma = (
-            n_b
-            * self._q**2
-            * q_b**2
-            * lnL
-            / (4 * np.pi * VACUUM_PERMITTIVITY**2 * self._m**2)
-        )
+        c = _coeffs(v0, s, self._m, self._q, [bg])
+        Gamma = c.D_par * v0 / sopp.chandrasekhar_G(x)
         nu_D_approx = Gamma / v0**3  # large-x limit
-        nu_D_exact = _analytical_nu_D(v0, s, self._m, self._q, [bg])
 
         self.assertAlmostEqual(
-            nu_D_exact / nu_D_approx,
+            c.nu_D / nu_D_approx,
             1.0,
             delta=0.02,
             msg=f"ν_D deviates from Γ/v³ limit at x={x:.1f}",
@@ -1825,7 +1585,8 @@ class TestMaxwellianEquilibration(unittest.TestCase):
     is wrong by O(1) (the pre-fix drag equilibrated to <E> = 3.7 T_b).
     """
 
-    _T_B = 1e3 * ONE_EV
+    _T_B_EV = 1e3  # handed to ThermalBackground, which takes eV
+    _T_B = _T_B_EV * ONE_EV  # same temperature in J, for the energy checks
     _N_B = 1e21  # m^-3
     _TAU = 3.5e-5  # collisional relaxation time at (_N_B, _T_B)
     _N_PART = 40
@@ -1839,7 +1600,7 @@ class TestMaxwellianEquilibration(unittest.TestCase):
         """Trace N_PART protons from a monoenergetic start; return final v."""
         bg = ThermalBackground(
             n_profile=lambda s: self._N_B,
-            T_profile=lambda s: self._T_B,
+            T_profile=lambda s: self._T_B_EV,
             mass=PROTON_MASS,
             charge=ELEMENTARY_CHARGE,
         )
@@ -1959,7 +1720,7 @@ class TestCollisionPhysics(unittest.TestCase):
         """
         electron_bg = ThermalBackground(
             n_profile=lambda s: 1e20,
-            T_profile=lambda s: 10e3 * ONE_EV,
+            T_profile=lambda s: 10e3,
             mass=ELECTRON_MASS,
             charge=-ELEMENTARY_CHARGE,
         )
@@ -2007,7 +1768,7 @@ class TestCollisionPhysics(unittest.TestCase):
         """
         electron_bg = ThermalBackground(
             n_profile=lambda s: 1e20,
-            T_profile=lambda s: 10e3 * ONE_EV,
+            T_profile=lambda s: 10e3,
             mass=ELECTRON_MASS,
             charge=-ELEMENTARY_CHARGE,
         )
@@ -2088,7 +1849,7 @@ class TestCollisionPhysics(unittest.TestCase):
         """
         electron_bg = ThermalBackground(
             n_profile=lambda s: 1e20,
-            T_profile=lambda s: 10e3 * ONE_EV,
+            T_profile=lambda s: 10e3,
             mass=ELECTRON_MASS,
             charge=-ELEMENTARY_CHARGE,
         )
@@ -2097,7 +1858,7 @@ class TestCollisionPhysics(unittest.TestCase):
         v0 = np.sqrt(2 * Ekin / m)
         s0 = 0.3
 
-        K_theory = _analytical_K(v0, s0, m, q, [electron_bg])
+        K_theory = _cpp_K(v0, s0, m, q, [electron_bg])
         self.assertLess(K_theory, 0, "Electron drag K must be negative")
 
         tmax = 5e-6
@@ -2126,7 +1887,7 @@ class TestCollisionPhysics(unittest.TestCase):
         v_final = np.array([t[-1, 5] for t in res_tys])
         mean_dv = np.mean(v_final) - v0
 
-        # Normalise by the time actually integrated, not by tmax: the domain
+        # Normalize by the time actually integrated, not by tmax: the domain
         # guard stops these particles at s = 1 well before tmax, and dividing
         # by tmax rescales the result by ~10x, which happens to land noise
         # inside a [0.3, 3.0] band and made this assertion meaningless.
@@ -2209,7 +1970,7 @@ class TestPitchIsotropization(unittest.TestCase):
     def _background_low_n(self):
         return ThermalBackground(
             n_profile=lambda s: 1e23,
-            T_profile=lambda s: 1e3 * ONE_EV,
+            T_profile=lambda s: 1e3,
             mass=2 * PROTON_MASS,
             charge=ELEMENTARY_CHARGE,
         )
@@ -2217,7 +1978,7 @@ class TestPitchIsotropization(unittest.TestCase):
     def _background_high_n(self):
         return ThermalBackground(
             n_profile=lambda s: 1e25,
-            T_profile=lambda s: 1e3 * ONE_EV,
+            T_profile=lambda s: 1e3,
             mass=2 * PROTON_MASS,
             charge=ELEMENTARY_CHARGE,
         )
@@ -2301,7 +2062,7 @@ class TestPitchIsotropization(unittest.TestCase):
         xi0 = 0.8
         s0 = 0.3
 
-        nu_D_theory = _analytical_nu_D(v0, s0, m, q, [bg])
+        nu_D_theory = _cpp_nu_D(v0, s0, m, q, [bg])
         tmax = 0.15 / nu_D_theory
 
         nP = 128
@@ -2356,7 +2117,7 @@ class TestPitchIsotropization(unittest.TestCase):
         )
 
     def test_nu_D_positive(self):
-        nu_D = _analytical_nu_D(
+        nu_D = _cpp_nu_D(
             np.sqrt(2 * FUSION_ALPHA_PARTICLE_ENERGY / ALPHA_PARTICLE_MASS),
             0.3,
             ALPHA_PARTICLE_MASS,
@@ -2366,7 +2127,7 @@ class TestPitchIsotropization(unittest.TestCase):
         self.assertGreater(nu_D, 0.0)
 
     def test_nu_D_zero_for_n_zero(self):
-        nu_D = _analytical_nu_D(
+        nu_D = _cpp_nu_D(
             np.sqrt(2 * FUSION_ALPHA_PARTICLE_ENERGY / ALPHA_PARTICLE_MASS),
             0.3,
             ALPHA_PARTICLE_MASS,

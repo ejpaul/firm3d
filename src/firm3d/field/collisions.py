@@ -7,12 +7,11 @@ import firm3dpp as sopp
 from .._core.types import RealArray
 from .._core.util import parallel_loop_bounds
 from ..field.boozermagneticfield import BoozerMagneticField
+from ..field.tracing_helpers import _validate_parallel_speeds
 from ..util.constants import (
     ALPHA_PARTICLE_CHARGE,
     ALPHA_PARTICLE_MASS,
     FUSION_ALPHA_PARTICLE_ENERGY,
-    REDUCED_PLANCK_CONSTANT,
-    VACUUM_PERMITTIVITY,
 )
 
 __all__ = [
@@ -27,7 +26,7 @@ class ThermalBackground:
     Maxwellian background species for Monte Carlo Coulomb collision calculations.
 
     Density and temperature profiles are specified as callables of the
-    normalised toroidal flux ``s``, following the same convention used by
+    normalized toroidal flux ``s``, following the same convention used by
     :func:`~firm3d.field.tracing_helpers.initialize_position_profile`.
 
     The Coulomb logarithm is computed locally from the profiles as the ratio
@@ -52,22 +51,11 @@ class ThermalBackground:
     species and :math:`m_r = m_a m_b/(m_a+m_b)` is the reduced mass.
     :math:`b_\mathrm{cl}` is the classical 90-degree deflection radius and
     :math:`b_\mathrm{qm}` the de Broglie wavelength; taking the larger covers
-    the quantum regime, which fast EPs reach against electrons.  The
-    :math:`v_\mathrm{eff}^2` form handles both velocity limits: fast EP
-    (:math:`v \gg v_{\mathrm{th},b}`, relevant for ions) and slow EP against
-    electrons (:math:`v \ll v_{\mathrm{th},e}`).  This matches ASCOT5's
-    ``mccc_coefs_clog`` term for term.
-
-    No floor is applied to :math:`\ln\Lambda`.  Instead
-    :func:`trace_particles_boozer_with_collisions` checks the profiles up
-    front: :math:`\ln\Lambda \le 0` raises, since the binary-collision model
-    is undefined there, and :math:`0 < \ln\Lambda < 2` warns that the
-    coefficients are not quantitatively trustworthy.
+    the quantum regime, which fast EPs reach against electrons.
 
     Args:
         n_profile: Callable ``n(s)`` returning number density in m\ :sup:`-3`.
-        T_profile: Callable ``T(s)`` returning temperature in J.
-            To convert from keV use ``T_profile = lambda s: T_keV(s) * 1e3 * ONE_EV``.
+        T_profile: Callable ``T(s)`` returning temperature in eV.
         mass: Species mass in kg.
         charge: Species charge in C (signed).
         n_grid_points: Number of uniformly-spaced points in ``s`` on which
@@ -77,9 +65,9 @@ class ThermalBackground:
 
     Example::
 
-        from firm3d.util.constants import PROTON_MASS, ELEMENTARY_CHARGE, ONE_EV
-        n_ref = 1e20          # m^-3
-        T_ref = 10e3 * ONE_EV # 10 keV in J
+        from firm3d.util.constants import PROTON_MASS, ELEMENTARY_CHARGE
+        n_ref = 1e20  # m^-3
+        T_ref = 10e3  # 10 keV, in eV
 
         background = ThermalBackground(
             n_profile=lambda s: n_ref * (1 - s**5),
@@ -101,10 +89,6 @@ class ThermalBackground:
             raise ValueError("n_profile must be callable.")
         if not callable(T_profile):
             raise ValueError("T_profile must be callable.")
-        # Linear interpolation needs two nodes and a non-zero spacing.  With
-        # one point the grid spacing is 0/0 and the lookup indexes off the end
-        # of the sample array -- on the GPU that is an unchecked read of device
-        # memory, and on the CPU it silently produced NaN coefficients.
         n_grid_points = int(n_grid_points)
         if n_grid_points < 2:
             raise ValueError(f"n_grid_points must be at least 2, got {n_grid_points}")
@@ -133,16 +117,6 @@ class ThermalBackground:
 def _validate_species_count(backgrounds):
     """
     Refuse more background species than the C++ layer can hold.
-
-    ``compute_collision_coefficients`` builds a fixed-size buffer bounded by
-    ``COLL_MAX_SPECIES`` and throws above it, but it is called once per
-    collision sub-step per particle, so left to itself that limit fires from
-    part-way through a trace on whichever rank owns the first particle to
-    reach it -- and under MPI the ranks that never reach it block forever in
-    the ``allgather``.  This is the same argument
-    :func:`_validate_coulomb_log` makes for checking the profiles up front,
-    and it is why this runs unconditionally rather than under
-    ``validate_profiles``: the limit is structural, not a physics diagnostic.
     """
     if len(backgrounds) > sopp.COLL_MAX_SPECIES:
         raise ValueError(
@@ -157,111 +131,44 @@ def _validate_coulomb_log(cpp_backgrounds, mass, charge):
 
     Raises :class:`ValueError` if :math:`\ln\Lambda \le 0` anywhere, and warns
     once if :math:`0 < \ln\Lambda < 2`, where the binary-collision
-    approximation is marginal.  Both diagnostics are reported once per call
-    for the worst point in the domain; the C++ layer cannot do this, since it
-    sees one (v, s) at a time inside the collision kick and would have to emit
-    the warning on every sub-step.
-
-    ``compute_collision_coefficients`` in ``collisions.h`` throws when
-    :math:`\ln\Lambda \le 0`, which happens when the temperature falls to
-    zero at finite density.  Left to the C++ layer that throw fires from
-    part-way through a trace, on whichever rank happens to own the offending
-    particle -- and under MPI the healthy
-    ranks then block forever in the ``allgather`` below.  Checking here
-    turns it into a collective failure: every rank holds identical profiles,
-    so every rank raises before any tracing starts.
-
-    :math:`\ln\Lambda = \ln(\lambda_D / \max(b_\mathrm{cl}, b_\mathrm{qm}))`
-    and both impact parameters decrease monotonically with
-    :math:`v_\mathrm{eff}^2 = v^2 + v_{\mathrm{th},b}^2`, so
-    :math:`\ln\Lambda` is smallest at :math:`v = 0`.  Evaluating there gives
-    a rigorous lower bound over all particle speeds, and the check operates
-    on the grids actually handed to C++ rather than on the profile
-    callables, so it sees exactly what the solver will see.
+    approximation is marginal.
     """
-    grids = [
-        (
-            np.asarray(bg.s_grid, dtype=float),
-            np.asarray(bg.n_grid, dtype=float),
-            np.asarray(bg.T_grid, dtype=float),
-            bg.mass,
-            bg.charge,
-        )
-        for bg in cpp_backgrounds
-    ]
-    if not grids:
+    if not cpp_backgrounds:
         return
 
-    # Common grid: the finest of the per-species grids.  C++ interpolates
-    # each species linearly, which np.interp reproduces exactly.
-    s = max((g[0] for g in grids), key=len)
-    species = [
-        (np.interp(s, g[0], g[1]), np.interp(s, g[0], g[2]), g[3], g[4]) for g in grids
-    ]
+    # Scan the finest of the per-species s-grids for the smallest ln Lambda.
+    s_grids = [np.asarray(bg.s_grid, dtype=float) for bg in cpp_backgrounds]
+    s_scan = max(s_grids, key=len)
 
-    # Debye length from every active species, matching the C++ pre-pass.
-    inv_lD_sq = np.zeros_like(s)
-    for n_b, T_b, _, q_b in species:
-        active = (n_b > 0.0) & (T_b > 0.0)
-        # np.where evaluates both branches, so keep the divisor finite.
-        T_safe = np.where(active, T_b, 1.0)
-        inv_lD_sq += np.where(
-            active, n_b * q_b**2 / (VACUUM_PERMITTIVITY * T_safe), 0.0
+    ln_min = np.inf
+    s_min = 0.0
+    worst_species = -1
+    for s in s_scan:
+        lnL, i_species = sopp.min_coulomb_log(
+            0.0, float(s), mass, charge, cpp_backgrounds
         )
+        if i_species >= 0 and lnL < ln_min:
+            ln_min = lnL
+            s_min = float(s)
+            worst_species = i_species
 
-    shielded = inv_lD_sq > 0.0
-    if not np.any(shielded):
+    if worst_species < 0:
         return  # no active species anywhere; C++ skips them all
-    lambda_D = np.where(
-        shielded, 1.0 / np.sqrt(np.where(shielded, inv_lD_sq, 1.0)), 0.0
-    )
 
-    worst = None  # (ln_Lambda, s, m_b, q_b, n_b, T_b) at the global minimum
-    for n_b, T_b, m_b, q_b in species:
-        active = shielded & (n_b > 0.0) & (T_b > 0.0)
-        if not np.any(active):
-            continue
-        # v_eff^2 at v = 0 is the species thermal speed squared.
-        v_eff_sq = np.where(active, 2.0 * T_b / m_b, 1.0)
-        m_r = mass * m_b / (mass + m_b)
-        b_cl = abs(charge * q_b) / (4.0 * np.pi * VACUUM_PERMITTIVITY * m_r * v_eff_sq)
-        b_qm = REDUCED_PLANCK_CONSTANT / (2.0 * m_r * np.sqrt(v_eff_sq))
-        b_min = np.maximum(b_cl, b_qm)
-        lD_safe = np.where(active, lambda_D, 1.0)
-        ln_lambda = np.where(active, np.log(lD_safe / b_min), np.inf)
-
-        k = int(np.argmin(ln_lambda))
-        if worst is None or ln_lambda[k] < worst[0]:
-            worst = (ln_lambda[k], s[k], m_b, q_b, n_b[k], T_b[k])
-
-    if worst is None:
-        return
-
-    ln_min, s_min, m_b, q_b, n_min, T_min = worst
-    where = (
-        f"as v -> 0 at s = {s_min:.4f}, for the species with mass {m_b:.3e} kg, "
-        f"charge {q_b:.3e} C (n = {n_min:.3e} m^-3, T = {T_min:.3e} J)"
-    )
-    bound = (
-        "This bound is taken at v -> 0, where ln_Lambda is smallest: a fast "
-        "particle that never slows into the thermal range would not reach it, "
-        "but a slowing-down one will."
-    )
+    where = f"as v -> 0 at s = {s_min:.4f}, for background species {worst_species}"
 
     if ln_min <= 0.0:
         raise ValueError(
             f"background profiles give ln_Lambda = {ln_min:.3f} <= 0 {where}.  "
-            f"The binary-collision model is undefined there and the C++ layer "
-            f"would abort mid-trace.  {bound}  Raise T wherever n > 0, or "
-            f"restrict the profiles to the region you actually trace."
+            f"The binary-collision model is undefined there.  Raise T wherever "
+            f"n > 0, or restrict the profiles to the region you actually trace."
         )
 
     if ln_min < 2.0:
         warnings.warn(
             f"background profiles give ln_Lambda = {ln_min:.3f} < 2 {where}.  "
             f"The binary-collision approximation is marginal there, so the "
-            f"collision coefficients should not be trusted quantitatively.  "
-            f"{bound}",
+            f"collision coefficients should not be trusted quantitatively.",
             RuntimeWarning,
             stacklevel=3,
         )
@@ -287,11 +194,10 @@ def trace_particles_boozer_with_collisions(
     ode_solver="dormand_prince",
     DP_hmin=0.0,
     rng_seed=0,
-    validate_profiles=True,
     mode=None,
 ):
     r"""
-    Trace guiding-centre particles including Monte Carlo Coulomb collisions
+    Trace guiding-center particles including Monte Carlo Coulomb collisions
     with one or more Maxwellian background species.
 
     The orbit is advanced by adaptive Dormand-Prince in
@@ -299,19 +205,12 @@ def trace_particles_boozer_with_collisions(
     collision operator is applied as a kick to :math:`(v, \xi)` at each
     accepted step -- drift by explicit Euler plus the Milstein noise term,
     following ASCOT5's ``mccc_gc_milstein.c``.  The kick is sub-cycled when
-    the collision rates are fast compared with the orbit step, which the
-    scheme depends on for accuracy in the thermal regime rather than being an
-    implementation detail.  Because :math:`\mu` is
+    the collision rates are fast compared with the orbit step. Because :math:`\mu` is
     constant within a step it is a parameter of the orbit equations rather
-    than a state variable, so the vacuum, ``noK`` and full guiding-centre
+    than a state variable, so the vacuum, ``noK`` and full guiding-center
     equations are all supported; which one is used follows
     ``field.field_type``, as in
     :func:`~firm3d.field.tracing.trace_particles_boozer`.
-
-    For a shear-Alfven-wave field use
-    :func:`trace_particles_boozer_perturbed_with_collisions`, which takes the
-    wave and the same ``(v_par, mu)`` velocity description as
-    :func:`~firm3d.field.tracing.trace_particles_boozer_perturbed`.
 
     See Hirvijoki et al., *Phys. Plasmas* **20**, 092505 (2013) and Boozer &
     Kuo-Petravic, *Phys. Fluids* **24**, 851 (1981) for the theoretical basis.
@@ -350,15 +249,7 @@ def trace_particles_boozer_with_collisions(
         rng_seed: Seed for the per-particle Wiener process.  Each particle
             uses ``rng_seed + particle_index`` so that MPI runs are
             reproducible.
-        validate_profiles: If ``True`` (default), check up front that the
-            background profiles give :math:`\ln\Lambda > 0` everywhere and
-            raise :class:`ValueError` if not, rather than letting the C++
-            layer abort part-way through a trace.  The check is evaluated at
-            :math:`v \to 0`, where :math:`\ln\Lambda` is smallest, so it is
-            conservative: it rejects profiles that a fast particle which
-            never slows into the thermal range would survive.  Set to
-            ``False`` to trace such a case anyway.
-        mode: Which guiding-centre equations to use: ``"gc"``, ``"gc_vac"``
+        mode: Which guiding-center equations to use: ``"gc"``, ``"gc_vac"``
             or ``"gc_nok"``.  Defaults to ``"gc_" + field.field_type``;
             passing a value inconsistent with the field warns and proceeds
             with the value given.
@@ -380,18 +271,20 @@ def trace_particles_boozer_with_collisions(
     if dt_save <= 0:
         raise ValueError("dt_save must be positive.")
 
+    if ode_solver not in ("boost", "dormand_prince"):
+        raise ValueError(
+            f"collision tracing supports ode_solver 'boost' or "
+            f"'dormand_prince', got {ode_solver!r}; 'symplectic' is "
+            f"collisionless-only"
+        )
+
     # Accept a single background or a list
     if isinstance(backgrounds, ThermalBackground):
         backgrounds = [backgrounds]
     _validate_species_count(backgrounds)
     cpp_backgrounds = [b._to_cpp() for b in backgrounds]
-    if validate_profiles:
-        _validate_coulomb_log(cpp_backgrounds, float(mass), float(charge))
+    _validate_coulomb_log(cpp_backgrounds, float(mass), float(charge))
 
-    # Select the orbit equations from the field, exactly as
-    # trace_particles_boozer does.  Before this existed the collisional tracer
-    # always used the vacuum equations, so a finite-beta field was silently
-    # traced with the wrong orbits.
     if mode is not None:
         mode = mode.lower()
         assert mode in ["gc", "gc_vac", "gc_nok"]
@@ -413,14 +306,11 @@ def trace_particles_boozer_with_collisions(
     assert len(Ekin) == nparticles
 
     vtotal = np.sqrt(2.0 * np.asarray(Ekin) / mass)
+    _validate_parallel_speeds(parallel_speeds, vtotal)
 
     res_tys = []
     res_hits = []
     first, last = parallel_loop_bounds(comm, nparticles)
-    # Any exception escaping this loop must not skip the collectives below:
-    # on the ranks that did not fail, allgather would block forever waiting
-    # for a rank that has already unwound.  Capture instead, agree on the
-    # outcome collectively, then raise everywhere.
     failure = None
     failure_exc = None
     for i in range(first, last):
@@ -496,11 +386,10 @@ def trace_particles_boozer_perturbed_with_collisions(
     ode_solver="dormand_prince",
     DP_hmin=0.0,
     rng_seed=0,
-    validate_profiles=True,
     mode=None,
 ):
     r"""
-    Trace guiding-centre particles through a shear Alfven wave including
+    Trace guiding-center particles through a shear Alfven wave including
     Monte Carlo Coulomb collisions.
 
     The collisional counterpart of
@@ -514,11 +403,8 @@ def trace_particles_boozer_perturbed_with_collisions(
     fixed :math:`\mu` and the collision operator is applied as a sub-cycled
     kick between steps.  That splitting still holds here because
     :math:`\mu` remains an adiabatic invariant at shear-Alfven frequencies
-    (:math:`\omega \ll \Omega_c`) even though the energy is not conserved --
-    it is the invariance of :math:`\mu` across a step that the splitting
-    needs, not conservation of :math:`v`.  The kick reconstructs the speed
-    from :math:`v^2 = v_\parallel^2 + 2\mu|B_0|` at each step, so a wave that
-    changes the energy between kicks is handled correctly.
+    (:math:`\omega \ll \Omega_c`) even though the energy is not conserved.
+    The kick reconstructs the speed from :math:`v^2 = v_\parallel^2 + 2\mu|B_0|`.
 
     Args:
         perturbed_field: The
@@ -546,31 +432,19 @@ def trace_particles_boozer_perturbed_with_collisions(
     if dt_save <= 0:
         raise ValueError("dt_save must be positive.")
 
+    if ode_solver not in ("boost", "dormand_prince"):
+        raise ValueError(
+            f"collision tracing supports ode_solver 'boost' or "
+            f"'dormand_prince', got {ode_solver!r}; 'symplectic' is "
+            f"collisionless-only"
+        )
+
     if isinstance(backgrounds, ThermalBackground):
         backgrounds = [backgrounds]
     _validate_species_count(backgrounds)
     cpp_backgrounds = [b._to_cpp() for b in backgrounds]
-    if validate_profiles:
-        _validate_coulomb_log(cpp_backgrounds, float(mass), float(charge))
+    _validate_coulomb_log(cpp_backgrounds, float(mass), float(charge))
 
-    # B0 only surfaces the Python subclass while a Python reference to it is
-    # alive; once the caller's goes out of scope pybind hands back the C++
-    # base.  A missing field_type is the readable symptom, but the field is
-    # unusable outright at that point -- its _iota_impl and friends live on the
-    # subclass too, so tracing raises "_iota_impl was not implemented" from
-    # inside the first right-hand-side evaluation.  Refuse here regardless of
-    # mode: supplying one gets past this check and then fails deeper, with an
-    # error naming none of the cause.
-    if getattr(perturbed_field.B0, "field_type", None) is None:
-        raise ValueError(
-            "perturbed_field.B0 exposes no field_type, so pybind is handing "
-            "back the bare C++ base rather than the Python subclass.  The "
-            "field cannot be evaluated in that state: field_type is defined "
-            "on the subclass, as are the _iota_impl and _G_impl that the "
-            "base-class methods dispatch to.  Usually this means the subclass "
-            "was constructed inline in the ShearAlfvenWave argument and "
-            "collected; bind it to a local that outlives the call."
-        )
     field_type = perturbed_field.B0.field_type
     if mode is not None:
         mode = mode.lower()
@@ -595,28 +469,9 @@ def trace_particles_boozer_perturbed_with_collisions(
     assert len(parallel_speeds) == nparticles
     assert len(mus) == nparticles
 
-    # A negative mu is not merely unphysical, it is handled inconsistently:
-    # the orbit right-hand side uses the value as given while the speed
-    # reconstruction clamps v_perp^2 to zero, so the trace runs to completion
-    # and returns finite numbers that correspond to no particle.  Reject it
-    # here, where the caller can still be told which entry is at fault.
-    # Tested as "not >= 0" rather than "< 0" so that NaN is rejected too:
-    # NaN < 0 is False, so the obvious form lets it through to produce exactly
-    # the unmarked garbage this check exists to prevent.
-    mus = np.asarray(mus)
-    if not np.all(mus >= 0.0):
-        bad = np.flatnonzero(~(mus >= 0.0))
-        raise ValueError(
-            f"mus must be non-negative; {bad.size} of {nparticles} are "
-            f"negative or NaN, first at index {bad[0]} with value "
-            f"{mus[bad[0]]!r}"
-        )
-
     res_tys = []
     res_hits = []
     first, last = parallel_loop_bounds(comm, nparticles)
-    # See trace_particles_boozer_with_collisions: an exception must not skip
-    # the collectives below, or the healthy ranks block forever.
     failure = None
     failure_exc = None
     for i in range(first, last):

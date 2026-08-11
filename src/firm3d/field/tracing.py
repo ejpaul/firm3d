@@ -7,6 +7,7 @@ import firm3dpp as sopp
 from .._core.types import RealArray
 from .._core.util import parallel_loop_bounds
 from ..field.boozermagneticfield import BoozerMagneticField, ShearAlfvenWave
+from ..field.tracing_helpers import _validate_parallel_speeds
 from ..util.constants import (
     ALPHA_PARTICLE_CHARGE,
     ALPHA_PARTICLE_MASS,
@@ -217,6 +218,7 @@ def trace_particles_boozer_perturbed(
     nparticles = stz_inits.shape[0]
     assert stz_inits.shape[0] == len(parallel_speeds)
     assert len(mus) == len(parallel_speeds)
+
     speed_par = parallel_speeds
     m = mass
     if Ekin is None:
@@ -505,6 +507,7 @@ def trace_particles_boozer(
         Ekin = Ekin * np.ones((len(parallel_speeds),))
     # Ekin = 0.5 * m * v^2 <=> v = sqrt(2*Ekin/m)
     speed_total = np.sqrt(2 * Ekin / m)
+    _validate_parallel_speeds(speed_par, speed_total)
 
     if mode is not None:
         mode = mode.lower()

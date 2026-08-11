@@ -1,6 +1,8 @@
 """
-Fast, local velocity-space collision tests (no compiled firm3d module, no
-magnetic field, seconds of wall time).
+Local velocity-space collision tests (no magnetic field, no tracing).
+
+These drive the shipped kick through the firm3dpp bindings, so the compiled
+module is required.
 
 Strategy: all collision frequencies scale linearly with background density
 n_b (through Gamma), while the dimensionless physics in x = v/v_th is
@@ -161,7 +163,7 @@ class TestUnphysicalCoulombLog(unittest.TestCase):
 
         cold_dense = [(ELECTRON_MASS, -E_CHARGE, 1e30, 1e-3 * ONE_EV)]
         v = np.array([np.sqrt(2.0 * 3.52e6 * ONE_EV / ALPHA_MASS)])
-        with self.assertRaises(ValueError):
+        with self.assertRaises(RuntimeError):
             collision_coefficients(v, ALPHA_MASS, 2 * E_CHARGE, cold_dense)
 
 

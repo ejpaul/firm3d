@@ -750,7 +750,7 @@ class TestGPUTracing(unittest.TestCase):
         """
         from firm3d.catapult.tracing import trace_particles_boozer_with_collisions_gpu
         from firm3d.field.collisions import ThermalBackground
-        from firm3d.util.constants import ELEMENTARY_CHARGE, ONE_EV, PROTON_MASS
+        from firm3d.util.constants import ELEMENTARY_CHARGE, PROTON_MASS
 
         n_metagrid_pts = 15
         boozmn_filename = "examples/inputs/boozmn_aten_rescaled_low_res.nc"
@@ -772,7 +772,7 @@ class TestGPUTracing(unittest.TestCase):
         # ensemble measurably within a short trace.
         bg = ThermalBackground(
             n_profile=lambda s: 1e21,
-            T_profile=lambda s: 1e3 * ONE_EV,
+            T_profile=lambda s: 1e3,
             mass=2 * PROTON_MASS,
             charge=ELEMENTARY_CHARGE,
         )
@@ -795,7 +795,7 @@ class TestGPUTracing(unittest.TestCase):
         # cause.
         zero_bg = ThermalBackground(
             n_profile=lambda s: 0.0,
-            T_profile=lambda s: 1e3 * ONE_EV,
+            T_profile=lambda s: 1e3,
             mass=2 * PROTON_MASS,
             charge=ELEMENTARY_CHARGE,
         )
@@ -808,7 +808,7 @@ class TestGPUTracing(unittest.TestCase):
             field, stz.copy(), vpar, backgrounds=zero_bg, rng_seed=0, **kw
         )
 
-        self.assertEqual(with_coll.shape, (n, 6))
+        self.assertEqual(with_coll.shape, (n, 7))
         self.assertTrue(np.all(np.isfinite(with_coll)), "non-finite GPU results")
 
         # The guard in adjust_time must hold with the kick active too: it

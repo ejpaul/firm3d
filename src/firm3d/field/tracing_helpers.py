@@ -310,3 +310,15 @@ def initialize_velocity_uniform(vpar0, nParticles, comm=None, seed=None):
         vpar_init = comm.bcast(vpar_init, root=0)
 
     return vpar_init
+
+
+def _validate_parallel_speeds(parallel_speeds, vtotal):
+    r"""
+    Raise if any :math:`|v_\parallel|` exceeds the total speed, which would
+    make :math:`\mu = (v^2 - v_\parallel^2)/(2|B|)` negative.  ``vtotal`` may
+    be a scalar or a per-particle array; the "not <=" form also rejects NaN.
+    """
+    if not np.all(np.abs(parallel_speeds) <= np.abs(vtotal)):
+        raise ValueError(
+            "|parallel_speeds| must not exceed vtotal, else mu is negative"
+        )

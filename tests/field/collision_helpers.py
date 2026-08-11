@@ -1,144 +1,97 @@
 """
-Pure-Python mirror of the velocity-space collision physics in
+Thin Python access to the velocity-space collision physics that ships in
 ``src/firm3dpp/collisions.h`` (which in turn follows ASCOT5's
-``mccc_coefs.h``).  No compiled firm3d module is required, so tests built
-on these helpers run anywhere numpy/scipy are available.
+``mccc_coefs.h``).
 
-The source of truth for all formulas is ``collisions.h``; if that file
-changes these helpers must be updated to match.
+Every number here comes from the compiled module through the ``firm3dpp``
+bindings; there is no second implementation of the formulae to drift out of
+step with the C++, or to agree with it by sharing the same mistake.  Building
+firm3dpp is therefore a prerequisite for the tests that use these helpers.
 
 Species are plain tuples ``(m_b, q_b, n_b, T_b)`` in SI units
-(kg, C signed, m^-3, J).
+(kg, C signed, m^-3, J).  ``ThermalBackground`` carries temperature in eV, so
+``_backgrounds`` converts on the way in.
 """
 
 import numpy as np
-from scipy.special import erf
 
-EPS0 = 8.8541878188e-12  # F/m
-HBAR = 1.054571817e-34  # J*s (reduced Planck)
-
-
-def chandrasekhar_G(x):
-    """G(x) = [erf(x) - (2x/sqrt(pi)) exp(-x^2)] / (2x^2); G(0) = 0."""
-    x = np.asarray(x, dtype=float)
-    out = np.zeros_like(x)
-    nz = x != 0
-    xs = x[nz]
-    out[nz] = (erf(xs) - (2.0 * xs / np.sqrt(np.pi)) * np.exp(-(xs**2))) / (2.0 * xs**2)
-    return out
+import firm3dpp as sopp
+from firm3d.util.constants import ONE_EV
 
 
-def chandrasekhar_G_deriv(x):
-    """G'(x) = (2/sqrt(pi)) exp(-x^2) - 2 G(x)/x; G'(0) = 2/(3 sqrt(pi))."""
-    x = np.asarray(x, dtype=float)
-    out = np.full_like(x, 2.0 / (3.0 * np.sqrt(np.pi)))
-    nz = x != 0
-    xs = x[nz]
-    out[nz] = (2.0 / np.sqrt(np.pi)) * np.exp(-(xs**2)) - 2.0 * chandrasekhar_G(xs) / xs
-    return out
-
-
-def debye_length(species):
-    """Total Debye length: 1/lambda_D^2 = sum_b n_b q_b^2 / (eps0 T_b)."""
-    inv_lD_sq = sum(n * q * q / (EPS0 * T) for (_, q, n, T) in species)
-    return 1.0 / np.sqrt(inv_lD_sq)
-
-
-def coulomb_log(v, m_a, q_a, m_b, q_b, T_b, lambda_D):
+def _backgrounds(species):
     """
-    ln Lambda = ln(lambda_D / max(b_cl, b_qm)), ASCOT5 convention, no floor.
-    Vectorized over v.  Raises if ln Lambda <= 0 (mirrors the exception
-    in collisions.h): the binary-collision model is undefined there.
+    Wrap ``(m_b, q_b, n_b, T_b)`` tuples as ``firm3dpp.ThermalBackground``.
+
+    These profiles are uniform in s, so two grid points suffice and every
+    lookup is exact wherever the interpolation lands.
     """
-    v_th = np.sqrt(2.0 * T_b / m_b)
-    m_r = m_a * m_b / (m_a + m_b)
-    v_eff_sq = v * v + v_th * v_th
-    b_cl = np.abs(q_a * q_b) / (4.0 * np.pi * EPS0 * m_r * v_eff_sq)
-    b_qm = HBAR / (2.0 * m_r * np.sqrt(v_eff_sq))
-    lnL = np.log(lambda_D / np.maximum(b_cl, b_qm))
-    if np.any(lnL <= 0.0):
-        raise ValueError(
-            f"ln_Lambda <= 0 (min {np.min(lnL):.3f}): unphysical Coulomb "
-            "logarithm; keep the background temperature finite where n > 0"
-        )
-    return lnL
+    out = []
+    for m_b, q_b, n_b, T_b in species:
+        bg = sopp.ThermalBackground()
+        bg.s_grid = [0.0, 1.0]
+        bg.n_grid = [float(n_b), float(n_b)]
+        bg.T_grid = [float(T_b) / ONE_EV, float(T_b) / ONE_EV]
+        bg.mass = float(m_b)
+        bg.charge = float(q_b)
+        out.append(bg)
+    return out
 
 
 def collision_coefficients(v, m_a, q_a, species):
     """
-    Summed GC collision coefficients for test-particle speeds v (array).
+    Summed GC collision coefficients for test-particle speeds ``v`` (array).
 
-    Returns (K, D_par, dD_par_dv, nu_D), mirroring
-    compute_collision_coefficients() in collisions.h:
+    Returns ``(K, D_par, dD_par_dv, nu_D)`` from
+    ``compute_collision_coefficients()`` in collisions.h.  The profiles are
+    uniform, so everything is evaluated at s = 0.
 
-        D_par  = Gamma G(x) / v
-        nu_D   = Gamma [erf(x) - G(x)] / v^3
-        Q      = -(m_a v / T_b) D_par          (Einstein-relation drag)
-        K      = Q + dD_par/dv + 2 D_par / v
+    Raises ``RuntimeError`` when the profiles give ln Lambda <= 0 -- the C++
+    throws ``std::runtime_error`` there, which pybind surfaces as
+    ``RuntimeError``.
     """
     v = np.asarray(v, dtype=float)
-    lambda_D = debye_length(species)
-    K = np.zeros_like(v)
-    D_par = np.zeros_like(v)
-    dD_par = np.zeros_like(v)
-    nu_D = np.zeros_like(v)
-    for m_b, q_b, n_b, T_b in species:
-        v_th = np.sqrt(2.0 * T_b / m_b)
-        lnL = coulomb_log(v, m_a, q_a, m_b, q_b, T_b, lambda_D)
-        Gamma = n_b * q_a**2 * q_b**2 * lnL / (4.0 * np.pi * EPS0**2 * m_a**2)
-        x = v / v_th
-        G = chandrasekhar_G(x)
-        Gp = chandrasekhar_G_deriv(x)
-        D_par_b = Gamma * G / v
-        dD_par_b = Gamma * (Gp / v_th - G / v) / v
-        Q_b = -Gamma * G * m_a / T_b
-        D_par += D_par_b
-        dD_par += dD_par_b
-        nu_D += Gamma * (erf(x) - G) / v**3
-        K += Q_b + dD_par_b + 2.0 * D_par_b / v
-    return K, D_par, dD_par, nu_D
-
-
-def speed_cutoff(m_a, species):
-    """
-    Reflecting speed boundary, ASCOT5 style (MCCC_CUTOFF = 0.1 in mccc.h):
-    0.1 * sqrt(T_min / m_a) with T_min the coldest active species.
-    Mirrors compute_collision_coefficients() in collisions.h.
-    """
-    active = [T for (_, _, n, T) in species if n > 0 and T > 0]
-    return 0.1 * np.sqrt(min(active) / m_a) if active else 0.0
+    bgs = _backgrounds(species)
+    flat = v.ravel()
+    K = np.empty(flat.size)
+    D_par = np.empty(flat.size)
+    dD_par = np.empty(flat.size)
+    nu_D = np.empty(flat.size)
+    for i, vi in enumerate(flat):
+        c = sopp.compute_collision_coefficients(
+            float(vi), 0.0, float(m_a), float(q_a), bgs
+        )
+        K[i], D_par[i], dD_par[i], nu_D[i] = c.K, c.D_par, c.dD_par_dv, c.nu_D
+    shape = v.shape
+    return (
+        K.reshape(shape),
+        D_par.reshape(shape),
+        dD_par.reshape(shape),
+        nu_D.reshape(shape),
+    )
 
 
 def evolve_velocity_ensemble(v, xi, m_a, q_a, species, dt, nsteps, rng):
     """
-    Velocity-space-only integration of the collisional SDE for an ensemble:
-    Euler drift + Milstein noise per step for (v, xi), mirroring the
-    operator splitting in trace_particles_boozer_with_collisions (with the
-    orbital drifts switched off).
+    Velocity-space-only integration of the collisional SDE for an ensemble.
 
-    Boundary conditions follow ASCOT5 (mccc_gc_milstein.c): the speed
-    reflects off the thermal cutoff speed_cutoff(), which keeps the
-    fixed-step scheme away from v -> 0 where the collision coefficients
-    diverge; the pitch mirrors at |xi| = 1.
+    Each step draws the noise for the whole ensemble at once, then applies the
+    kick one particle at a time, since the binding takes a single (v, xi).
 
-    Returns the final (v, xi) arrays.
+    Returns the final ``(v, xi)`` arrays.
     """
     v = np.array(v, dtype=float, copy=True)
     xi = np.array(xi, dtype=float, copy=True)
-    v_cut = speed_cutoff(m_a, species)
+    bgs = _backgrounds(species)
     sqdt = np.sqrt(dt)
     for _ in range(nsteps):
-        K, D_par, dD_par, nu_D = collision_coefficients(v, m_a, q_a, species)
         dW_v = rng.normal(0.0, sqdt, v.shape)
         dW_xi = rng.normal(0.0, sqdt, v.shape)
-        v = v + K * dt + np.sqrt(2.0 * D_par) * dW_v + 0.5 * dD_par * (dW_v**2 - dt)
-        xi = (
-            xi
-            - xi * nu_D * dt
-            + np.sqrt(np.maximum(nu_D * (1.0 - xi**2), 0.0)) * dW_xi
-            - 0.5 * xi * nu_D * (dW_xi**2 - dt)
-        )
-        v = np.where(v < v_cut, 2.0 * v_cut - v, v)
-        xi = np.where(np.abs(xi) > 1.0, np.sign(xi) * (2.0 - np.abs(xi)), xi)
-        xi = np.clip(xi, -1.0, 1.0)
+        for i in range(v.size):
+            c = sopp.compute_collision_coefficients(
+                float(v[i]), 0.0, float(m_a), float(q_a), bgs
+            )
+            v[i], xi[i] = sopp.milstein_collision_step(
+                float(v[i]), float(xi[i]), c, dt, float(dW_v[i]), float(dW_xi[i])
+            )
     return v, xi
