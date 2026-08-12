@@ -597,9 +597,13 @@ rather than from the collision model:
 \end{itemize}
 
 The device cannot raise, so the $\lnL \leq 0$ check described above runs on
-the host before launch.  With \texttt{validate\_profiles=False} that check is
-skipped and the kick is instead silently omitted wherever the model is
-undefined, which the returned array does not mark.
+the host before launch, unconditionally.  It scans the profile grid at $v=0$,
+which is the worst case: $\bar{v}^2 = v^2 + \vth[b]^2$ shrinks
+$b_{\mathrm{cl}}$ as $v$ grows (Eq.~\eqref{eq:bcl}), so $\lnL$ only increases
+with speed.  Should the model nonetheless come out undefined on device --- the
+host samples the grid points, the kernel interpolates between them --- the
+kernel has no way to report it, and omits the kick at that step; the returned
+array does not mark this.
 
 %-----------------------------------------------------------------------
 \section{Python Interface}
@@ -609,28 +613,30 @@ undefined, which the returned array does not mark.
 from firm3d.field.collisions import ThermalBackground, \
     trace_particles_boozer_with_collisions
 from firm3d.util.constants import (
-    PROTON_MASS, ELECTRON_MASS, ELEMENTARY_CHARGE, ONE_EV,
+    PROTON_MASS, ELECTRON_MASS, ELEMENTARY_CHARGE,
     ALPHA_PARTICLE_MASS, ALPHA_PARTICLE_CHARGE,
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
 
-# Typical DT-fusion plasma backgrounds
+# Typical DT-fusion plasma backgrounds.  T_profile is in eV, not joules:
+# do not scale it by ONE_EV.
 n0 = 1e20          # m^-3
+T0 = 10e3          # eV (10 keV)
 deuterium = ThermalBackground(
     n_profile=lambda s: n0 * (1 - s),
-    T_profile=lambda s: 10e3 * ONE_EV * (1 - s),
+    T_profile=lambda s: T0 * (1 - s),
     mass=2 * PROTON_MASS,
     charge=ELEMENTARY_CHARGE,
 )
 tritium = ThermalBackground(
     n_profile=lambda s: n0 * (1 - s),
-    T_profile=lambda s: 10e3 * ONE_EV * (1 - s),
+    T_profile=lambda s: T0 * (1 - s),
     mass=3 * PROTON_MASS,
     charge=ELEMENTARY_CHARGE,
 )
 electrons = ThermalBackground(
     n_profile=lambda s: 2 * n0 * (1 - s),   # quasi-neutral
-    T_profile=lambda s: 10e3 * ONE_EV * (1 - s),
+    T_profile=lambda s: T0 * (1 - s),
     mass=ELECTRON_MASS,
     charge=-ELEMENTARY_CHARGE,
 )
