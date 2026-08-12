@@ -729,33 +729,18 @@ class TestGPUTracing(unittest.TestCase):
         is_small = test_timestep(field, nfp, stz, vpar_init, VELOCITY, field.psi0, tol)
         self.assertTrue(is_small)
 
-    def test_boozer_collisions(self):
+    def test_zero_density_reproduces_the_collisionless_path(self):
         """
-        Collisional GPU tracing against the collisionless path.
-
-        The discriminating assertion is that the two differ: if the kick were
-        a no-op -- the species count never reaching the device, the constant
-        memory not populated, the RNG dead -- the collisional trace would
-        reproduce the collisionless one exactly, and every other check here
-        would still pass.
-
-        Every call gets its own copy of the initial conditions.  The tracer
-        rewrites stz_init in place, turning (s, theta) into
-        (s cos theta, s sin theta) in the caller's buffer, so handing the same
-        array to both calls would launch them from different particles and
-        satisfy the comparison for a reason that has nothing to do with
-        collisions.  Measured on an A100: sharing the array gives
-        frac_moved = 1.00 whether or not the kick runs, while with copies a
-        zero-density background gives 0.02 against 1.00 for a live one.
+        A zero-density background makes every collision coefficient zero, so
+        the collisional entry point must return the collisionless answer.
         """
         from firm3d.catapult.tracing import trace_particles_boozer_with_collisions_gpu
         from firm3d.field.collisions import ThermalBackground
         from firm3d.util.constants import ELEMENTARY_CHARGE, PROTON_MASS
 
-        n_metagrid_pts = 15
-        boozmn_filename = "examples/inputs/boozmn_aten_rescaled_low_res.nc"
-        bri, field, nfp = get_field(boozmn_filename, n_metagrid_pts, True)
-
+        bri, field, nfp = get_field(
+            "examples/inputs/boozmn_aten_rescaled_low_res.nc", 15, True
+        )
         VELOCITY = np.sqrt(2 * ENERGY / MASS)
         n = 256
         rng = np.random.default_rng(0)
@@ -767,15 +752,6 @@ class TestGPUTracing(unittest.TestCase):
             ]
         )
         vpar = 0.5 * VELOCITY * np.ones(n)
-
-        # Dense and cold, so the collision rates are fast enough to move the
-        # ensemble measurably within a short trace.
-        bg = ThermalBackground(
-            n_profile=lambda s: 1e21,
-            T_profile=lambda s: 1e3,
-            mass=2 * PROTON_MASS,
-            charge=ELEMENTARY_CHARGE,
-        )
         kw = {
             "tmax": 2e-6,
             "mass": MASS,
@@ -786,74 +762,25 @@ class TestGPUTracing(unittest.TestCase):
             "ntheta": 15,
             "nzeta": 15,
         }
-
-        # A zero-density background makes every coefficient identically zero,
-        # so it is the control: it goes through the whole collisional entry
-        # point -- upload, constant memory, RNG, kick -- and must still land
-        # on the collisionless answer.  Without it, "the two runs differ" is
-        # satisfied by any difference at all, including one the kick did not
-        # cause.
         zero_bg = ThermalBackground(
             n_profile=lambda s: 0.0,
             T_profile=lambda s: 1e3,
             mass=2 * PROTON_MASS,
             charge=ELEMENTARY_CHARGE,
         )
-
         without = trace_particles_boozer_gpu(field, stz.copy(), vpar, **kw)
-        with_coll = trace_particles_boozer_with_collisions_gpu(
-            field, stz.copy(), vpar, backgrounds=bg, rng_seed=0, **kw
-        )
         no_kick = trace_particles_boozer_with_collisions_gpu(
             field, stz.copy(), vpar, backgrounds=zero_bg, rng_seed=0, **kw
         )
 
-        self.assertEqual(with_coll.shape, (n, 7))
-        self.assertTrue(np.all(np.isfinite(with_coll)), "non-finite GPU results")
-
-        # The guard in adjust_time must hold with the kick active too: it
-        # fires on every accepted step, so a particle running past tmax would
-        # keep being scattered.
-        np.testing.assert_allclose(with_coll[:, 0], kw["tmax"], rtol=1e-12)
-
-        def frac_moved(a, b):
-            return np.mean(np.abs(a[:, 4] - b[:, 4]) > 1e-6 * VELOCITY)
-
-        moved = frac_moved(with_coll, without)
-        self.assertGreater(
-            moved,
-            0.9,
-            f"only {moved:.2f} of particles differ from the collisionless "
-            f"run; the collision kick is not reaching the device",
-        )
-
-        unmoved = frac_moved(no_kick, without)
+        self.assertEqual(no_kick.shape, (n, 7))
+        differing = np.mean(np.abs(no_kick[:, 4] - without[:, 4]) > 1e-6 * VELOCITY)
         self.assertLess(
-            unmoved,
+            differing,
             0.1,
-            f"{unmoved:.2f} of particles differ from the collisionless run "
-            f"with a zero-density background, where every coefficient is "
-            f"zero; the comparison above is not measuring the kick",
+            f"{differing:.2f} of particles differ from the collisionless run "
+            f"with every coefficient zero; the kick is not a no-op there",
         )
-
-        # Column 5 is the speed, which is what makes the energy and mu
-        # recoverable.  Checked against two references, because a column that
-        # merely looked plausible would satisfy either alone: the launch speed
-        # (which the zero-density run must return) and the zero-density run
-        # itself (which the collisional one must not match).
-        # With every coefficient zero the kick changes nothing, so the speed
-        # must come back as the launch speed, up to the energy drift of a
-        # non-symplectic adaptive integrator.  Measured 3.4e-05 here; the
-        # bound below is loose against that but still tight by orders of
-        # magnitude against the ways this column could be wrong -- dt would
-        # read 6e-08 and v_par half the launch speed.
-        #
-        # This assertion is what caught the first version of the column, which
-        # rebuilt v at output time from stage 6 of the derivative buffer.
-        # That stage is evaluated at state + dt*(...), which coincides with
-        # the state only in the instant after a step is accepted, so for any
-        # particle that finished before its block did the |B| was taken at the
-        # wrong point: the drift was 1.0e-02, 300x worse than this.
         np.testing.assert_allclose(
             no_kick[:, 5],
             VELOCITY,
@@ -863,27 +790,99 @@ class TestGPUTracing(unittest.TestCase):
                 "5; the speed column is not what is being written"
             ),
         )
-        # The collisional speeds must differ from the zero-density ones, not
-        # merely from the launch speed.  Comparing against VELOCITY instead
-        # would be satisfied by the 3.4e-05 integrator drift measured above --
-        # 68x any threshold worth setting -- so it would pass with the
-        # coefficients zeroed.  The zero-density run carries that same drift,
-        # so differencing against it cancels the drift and leaves the kick.
-        moved_v = np.mean(np.abs(with_coll[:, 5] - no_kick[:, 5]) > 1e-6 * VELOCITY)
-        self.assertGreater(
-            moved_v,
-            0.9,
-            f"only {moved_v:.2f} of speeds differ from the zero-density run; "
-            f"the kick is not changing the speed it reports",
+
+    def _collisional_ensemble(self, background, vtotal, xi0, tmax, n=256, seed=0):
+        """
+        Trace n particles with collisions on the GPU; return their final
+        (xi, v).  Shared by the two physics tests below, which differ only in
+        the background and the launch pitch.
+        """
+        from firm3d.catapult.tracing import trace_particles_boozer_with_collisions_gpu
+
+        bri, field, nfp = get_field(
+            "examples/inputs/boozmn_aten_rescaled_low_res.nc", 15, True
         )
-        # Not asserted: that the ensemble slows on average.  An alpha's
-        # slowing-down time in this background is of order 0.1 s, so over
-        # 2e-6 s drag moves the mean by ~1e-5 relative -- below the spread the
-        # pitch-angle noise puts on it, and it can go either way on one seed.
-        # v >= |v_par| is required for mu = (v^2 - v_par^2)/(2|B|) >= 0.
+        rng = np.random.default_rng(seed)
+        stz = np.column_stack(
+            [
+                np.full(n, 0.3),
+                rng.uniform(0, 2 * np.pi, n),
+                rng.uniform(0, 2 * np.pi, n),
+            ]
+        )
+        out = trace_particles_boozer_with_collisions_gpu(
+            field,
+            stz,
+            xi0 * vtotal * np.ones(n),
+            backgrounds=background,
+            tmax=tmax,
+            mass=MASS,
+            charge=CHARGE,
+            vtotal=vtotal,
+            tol=1e-8,
+            ns=15,
+            ntheta=15,
+            nzeta=15,
+            rng_seed=seed,
+        )
+        self.assertTrue(np.all(np.isfinite(out)), "non-finite GPU results")
+        np.testing.assert_allclose(out[:, 0], tmax, rtol=1e-12)
+        v, vpar = out[:, 5], out[:, 4]
         self.assertTrue(
-            np.all(with_coll[:, 5] >= np.abs(with_coll[:, 4]) - 1e-6 * VELOCITY),
+            np.all(v >= np.abs(vpar) - 1e-6 * vtotal),
             "speed is below |v_par|, so the recovered mu would be negative",
+        )
+        return vpar / v, v
+
+    def test_collisions_isotropize_the_pitch(self):
+        """
+        An ion background scatters pitch: an ensemble launched at xi = 0.9
+        must relax toward isotropy, <xi> -> 0 and <xi^2> -> 1/3.
+        """
+        from firm3d.field.collisions import ThermalBackground
+        from firm3d.util.constants import ELEMENTARY_CHARGE, PROTON_MASS
+
+        deuterium = ThermalBackground(
+            n_profile=lambda s: 1e25,
+            T_profile=lambda s: 1e3,
+            mass=2 * PROTON_MASS,
+            charge=ELEMENTARY_CHARGE,
+        )
+        xi, _ = self._collisional_ensemble(
+            deuterium, 0.1 * np.sqrt(2 * ENERGY / MASS), xi0=0.9, tmax=2e-6
+        )
+        mean_xi, mean_xi2 = np.mean(xi), np.mean(xi**2)
+        # Targets are the stationary values of the pitch SDE, whose
+        # distribution is xi ~ U(-1, 1): <xi> = 0 and <xi^2> = 1/3
+        self.assertLess(abs(mean_xi), 0.15, f"<xi> = {mean_xi:.3f}, launched at 0.9")
+        self.assertGreater(mean_xi2, 0.24, f"<xi^2> = {mean_xi2:.3f}, isotropic is 1/3")
+        self.assertLess(mean_xi2, 0.43, f"<xi^2> = {mean_xi2:.3f}, isotropic is 1/3")
+
+    def test_electron_drag_slows_without_scattering_pitch(self):
+        """
+        An electron background drags but barely scatters: <v> must fall while
+        <xi> stays where it was launched.
+        """
+        from firm3d.field.collisions import ThermalBackground
+        from firm3d.util.constants import ELECTRON_MASS, ELEMENTARY_CHARGE
+
+        electrons = ThermalBackground(
+            n_profile=lambda s: 1e25,
+            T_profile=lambda s: 10e3,
+            mass=ELECTRON_MASS,
+            charge=-ELEMENTARY_CHARGE,
+        )
+        v0 = np.sqrt(2 * ENERGY / MASS)
+        xi, v = self._collisional_ensemble(electrons, v0, xi0=0.5, tmax=1e-6)
+        ratio = np.mean(v) / v0
+        # Integrating dv/dt = K(v) over tmax gives v/v0 = 0.825
+        self.assertGreater(ratio, 0.80, f"<v>/v0 = {ratio:.3f}; too little drag")
+        self.assertLess(ratio, 0.87, f"<v>/v0 = {ratio:.3f}; too much drag")
+        self.assertAlmostEqual(
+            np.mean(xi),
+            0.5,
+            delta=0.05,
+            msg=f"<xi> = {np.mean(xi):.3f}; electrons should barely scatter pitch",
         )
 
     def test_boozer_finite_beta(self):
