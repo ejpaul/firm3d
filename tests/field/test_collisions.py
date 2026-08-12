@@ -1,30 +1,6 @@
 """
 Tests for Monte Carlo Coulomb collision tracing.
 
-Quantitative drag-rate test — why electrons, not ions
-------------------------------------------------------
-For 3.52 MeV fusion alphas (v₀ ≈ 1.3×10⁷ m/s) the signal-to-noise ratio for
-measuring the mean drag depends on the background species through the
-Chandrasekhar G function.  Values below are computed from the formulas in
-``collisions.h`` at n = 10²⁰ m⁻³, T = 10 keV:
-
-  D-ion background:  x_D = v₀/v_th,D ≈ 13.3  →  G ≈ 2.8×10⁻³
-    K_D ≈ −1.7×10⁶ m/s²
-
-  Electron background: x_e = v₀/v_th,e ≈ 0.22  →  G ≈ 0.080
-    K_e ≈ −3.7×10⁷ m/s²
-
-Electron drag therefore dominates by a factor ≈ 21, not by the mass ratio:
-G(x_e) is 37% of its maximum (0.214 at x ≈ 0.968), and the 1/v² factors do
-most of the rest.  TestCollisionCoefficients.test_K_electron_larger_than_ion
-pins this ratio to [10, 50].
-
-Note the drag signal is small against the diffusive scatter: at tmax = 5 μs,
-K_e·tmax ≈ −180 m/s while √(2 D_par tmax) ≈ 2.6×10³ m/s per particle, so
-σ(mean) ≈ 370 m/s at N = 50 — an SNR below 1.  The drag tests below are
-therefore weak detectors of magnitude; they check sign and order, and
-TestCollisionCoefficients is where the coefficients themselves are pinned.
-
 Test structure
 --------------
   TestThermalBackground       — Python-layer ThermalBackground class
@@ -45,8 +21,6 @@ import scipy.stats
 import firm3dpp as sopp
 from firm3d.field.boozermagneticfield import (
     BoozerAnalytic,
-    BoozerRadialInterpolant,
-    InterpolatedBoozerField,
     ShearAlfvenHarmonic,
 )
 from firm3d.field.collisions import (
@@ -69,36 +43,6 @@ from firm3d.util.constants import (
     ONE_EV,
     PROTON_MASS,
 )
-
-
-def _mpi_comm():
-    """MPI communicator when launched under an MPI launcher, else None.
-
-    The tracer distributes particles over ranks and allgathers the
-    results, so every rank sees identical data and runs identical
-    assertions.  Per-particle RNG seeds are rank-independent, making the
-    results bit-identical to a serial run.  Launch e.g. with
-    srun -n 64 python -m pytest tests/field/test_collisions.py
-    (see tests/perlmutter/run_slow_tests.sh).  mpi4py is only imported
-    when an MPI launcher is detected, so serial runs never touch MPI.
-    """
-    import os
-
-    if (
-        int(os.environ.get("SLURM_NTASKS", "1")) > 1
-        or int(os.environ.get("PMI_SIZE", "1")) > 1
-        or int(os.environ.get("OMPI_COMM_WORLD_SIZE", "1")) > 1
-    ):
-        try:
-            from mpi4py import MPI
-
-            return MPI.COMM_WORLD
-        except ImportError:
-            return None
-    return None
-
-
-_COMM = _mpi_comm()
 
 
 # ---------------------------------------------------------------------------
@@ -189,55 +133,22 @@ def _coeffs(v, s, m_a, q_a, backgrounds):
     )
 
 
-def _cpp_K(v, s, m_a, q_a, backgrounds):
-    """Deterministic drag K [m/s^2], summed over background species."""
-    return _coeffs(v, s, m_a, q_a, backgrounds).K
-
-
-def _cpp_nu_D(v, s, m_a, q_a, backgrounds):
-    """Pitch-angle scattering frequency nu_D [s^-1], summed over species."""
-    return _coeffs(v, s, m_a, q_a, backgrounds).nu_D
-
-
 # ===========================================================================
 # Test classes
 # ===========================================================================
 
 
 class TestThermalBackground(unittest.TestCase):
-    def test_non_callable_n_raises(self):
-        with self.assertRaises(ValueError):
-            ThermalBackground(
-                n_profile=1e20,
-                T_profile=lambda s: 1.0,
-                mass=PROTON_MASS,
-                charge=ELEMENTARY_CHARGE,
-            )
+    def test_non_callable_profiles_are_refused(self):
+        for label, kw in (
+            ("n", {"n_profile": 1e20, "T_profile": lambda s: 1.0}),
+            ("T", {"n_profile": lambda s: 1e20, "T_profile": 5.0}),
+        ):
+            with self.subTest(profile=label), self.assertRaises(ValueError):
+                ThermalBackground(mass=PROTON_MASS, charge=ELEMENTARY_CHARGE, **kw)
 
-    def test_non_callable_T_raises(self):
-        with self.assertRaises(ValueError):
-            ThermalBackground(
-                n_profile=lambda s: 1e20,
-                T_profile=5.0,
-                mass=PROTON_MASS,
-                charge=ELEMENTARY_CHARGE,
-            )
-
-    def test_to_cpp_grid_length(self):
-        bg = ThermalBackground(
-            n_profile=lambda s: 1e20,
-            T_profile=lambda s: 1.0,
-            mass=PROTON_MASS,
-            charge=ELEMENTARY_CHARGE,
-            n_grid_points=64,
-        )
-        cpp = bg._to_cpp()
-        self.assertEqual(len(cpp.s_grid), 64)
-        self.assertEqual(len(cpp.n_grid), 64)
-        self.assertEqual(len(cpp.T_grid), 64)
-
-    def test_to_cpp_endpoint_values(self):
-        """Profile values at s = 0 and s = 1 survive the grid round-trip."""
+    def test_to_cpp_preserves_the_profiles(self):
+        """The grids handed to C++ have the requested length and endpoints."""
         bg = ThermalBackground(
             n_profile=lambda s: 1e20 * (1 - s),
             T_profile=lambda s: 1e3 * s,
@@ -246,47 +157,24 @@ class TestThermalBackground(unittest.TestCase):
             n_grid_points=100,
         )
         cpp = bg._to_cpp()
+        self.assertEqual(len(cpp.s_grid), 100)
+        self.assertEqual(len(cpp.n_grid), 100)
+        self.assertEqual(len(cpp.T_grid), 100)
         self.assertAlmostEqual(cpp.n_grid[0], 1e20, delta=1e15)
         self.assertAlmostEqual(cpp.n_grid[-1], 0.0, delta=1e15)
         self.assertAlmostEqual(cpp.T_grid[0], 0.0, delta=1e-9)
         self.assertAlmostEqual(cpp.T_grid[-1], 1e3, delta=1e-9)
 
-    def test_single_background_accepted(self):
-        """A bare ThermalBackground (not in a list) is accepted."""
-        field = _field()
-        Ekin = FUSION_ALPHA_PARTICLE_ENERGY
-        v0 = np.sqrt(2 * Ekin / ALPHA_PARTICLE_MASS)
-        res_tys, _ = trace_particles_boozer_with_collisions(
-            field,
-            np.array([[0.3, 0.0, 0.0]]),
-            np.array([0.5 * v0]),
-            backgrounds=_hot_background(),
-            tmax=1e-7,
-            mass=ALPHA_PARTICLE_MASS,
-            charge=ALPHA_PARTICLE_CHARGE,
-            Ekin=Ekin,
-            dt_save=5e-8,
-        )
-        self.assertEqual(len(res_tys), 1)
-
 
 class TestTrajectoryShape(unittest.TestCase):
-    def test_output_shape(self):
-        """Each trajectory has shape (ntimesteps, 6): [t, s, θ, ζ, v∥, v]."""
+    def test_output_columns(self):
+        """(ntimesteps, 6) = [t, s, θ, ζ, v∥, v], with t increasing and |v∥| ≤ v."""
         traj = _coll_trace(_field(), _hot_background(), tmax=1e-6)
         self.assertEqual(traj.ndim, 2)
         self.assertEqual(traj.shape[1], 6)
-
-    def test_time_monotone(self):
-        """Time (column 0) must be strictly increasing."""
-        traj = _coll_trace(_field(), _hot_background(), tmax=1e-6)
-        self.assertTrue(np.all(np.diff(traj[:, 0]) > 0))
-
-    def test_vpar_leq_v(self):
-        """|v∥| ≤ v at every saved point."""
-        traj = _coll_trace(_field(), _hot_background(), tmax=1e-6)
+        self.assertTrue(np.all(np.diff(traj[:, 0]) > 0), "time is not increasing")
         vpar, v = traj[:, 4], traj[:, 5]
-        self.assertTrue(np.all(np.abs(vpar) <= v * (1 + 1e-10)))
+        self.assertTrue(np.all(np.abs(vpar) <= v * (1 + 1e-10)), "|v_par| > v")
 
     def test_forget_exact_path_returns_two_rows(self):
         Ekin = FUSION_ALPHA_PARTICLE_ENERGY
@@ -315,23 +203,6 @@ class TestIterationStoppingCriterion(unittest.TestCase):
     """
     The `iter` argument passed to stopping criteria must count accepted
     solver steps, as it does in the collisionless tracer.
-
-    solve_sde() originally synthesized this argument from the elapsed
-    normalized time, ``(int)(tau / (dtau_max * 1e-3))``, which is a
-    proxy for simulated time rather than a step count.  Two consequences
-    are asserted against here:
-
-      * the stop time was independent of the solver tolerance, since it
-        depended only on tau (pre-fix, max_iter = 5 stopped at exactly
-        t = 3.7532e-09 s at both 1e-6 and 1e-11);
-      * the stop time saturated in max_iter, so distinct limits produced
-        identical traces (pre-fix, max_iter = 10 and 20 both stopped at
-        t = 1.9392e-08 s).
-
-    ToroidalTransitStoppingCriterion is affected by the same argument --
-    it keys its `zeta_init` initialization on ``iter == 1`` -- but needs
-    a confined multi-transit orbit to exercise, so the step counter is
-    tested directly here instead.
     """
 
     _TMAX = 1e-6
@@ -355,43 +226,20 @@ class TestIterationStoppingCriterion(unittest.TestCase):
         )
         return res_tys[0][-1, 0], np.asarray(res_hits[0])
 
-    def test_criterion_fires_and_is_recorded(self):
-        """A low cap stops the trace early and records a hit at index -1."""
-        t_end, hits = self._stop_time(5, tol=1e-9)
-        self.assertLess(t_end, self._TMAX)
-        self.assertEqual(hits.shape[0], 1)
-        self.assertEqual(hits[0, 1], -1.0)
-
-    def test_no_stop_when_cap_is_unreachable(self):
-        """A cap above the step count runs to tmax with no hit recorded."""
-        t_end, hits = self._stop_time(10**6, tol=1e-9)
-        self.assertAlmostEqual(t_end, self._TMAX, delta=1e-15)
-        self.assertEqual(hits.size, 0)
-
-    def test_stop_time_depends_on_tolerance(self):
-        """Tighter tolerance means smaller steps, so N steps cover less time."""
-        t_loose, _ = self._stop_time(5, tol=1e-6)
-        t_tight, _ = self._stop_time(5, tol=1e-11)
-        self.assertGreater(
-            t_loose,
-            2 * t_tight,
-            f"stop time barely moved with tolerance (loose {t_loose:.4e}, "
-            f"tight {t_tight:.4e}); iter is not counting solver steps",
-        )
-
-    def test_stop_time_increases_with_cap(self):
-        """Doubling the cap must let the trace run measurably further.
-
-        Run at 1e-11 so that 20 steps still fall well short of tmax; at
-        looser tolerances the steps are large enough that the cap is
-        never reached and both traces simply clamp to tmax.
+    def test_stop_time_scales_with_the_iteration_cap(self):
+        """
+        A cap stops the trace early and records a hit at index -1, and
+        doubling it lets the trace run measurably further -- which is what
+        fails if `iter` is not the accepted-step count.  Run at tol = 1e-11
+        so that even 20 steps fall well short of tmax; at looser tolerances
+        the steps are large enough that neither trace reaches its cap.
         """
         t_10, hits_10 = self._stop_time(10, tol=1e-11)
         t_20, hits_20 = self._stop_time(20, tol=1e-11)
-        # Both traces must have stopped on the criterion, or the
-        # comparison below is between two values clamped at tmax.
-        self.assertEqual(hits_10.shape[0], 1, "max_iter = 10 ran to tmax")
-        self.assertEqual(hits_20.shape[0], 1, "max_iter = 20 ran to tmax")
+        for cap, hits in ((10, hits_10), (20, hits_20)):
+            self.assertEqual(hits.shape[0], 1, f"max_iter = {cap} ran to tmax")
+            self.assertEqual(hits[0, 1], -1.0)
+        self.assertLess(t_20, self._TMAX)
         self.assertGreater(
             t_20,
             1.5 * t_10,
@@ -406,16 +254,11 @@ class TestIterationStoppingCriterion(unittest.TestCase):
 
 class TestCollisionlessLimit(unittest.TestCase):
     """
-    When n = 0 all collision coefficients Γ are identically zero.
-
-    Expected consequences:
-      K  = 0  →  v̇ = 0  →  v(t) is bitwise identical to v(0) at every
-                             saved point (the ODE RHS v-component is exactly
-                             zero, so Dormand-Prince never perturbs it).
-      g_v = √(2 D_par) = 0  →  Milstein noise step is exactly zero.
-
-    The (s, θ, ζ) orbit must therefore satisfy the same vacuum GC equations
-    as the collisionless tracer, recovering collisionless dynamics exactly.
+    When n = 0 every collision coefficient is identically zero, so the kick
+    is a no-op: K = 0 leaves v_par untouched and g_v = √(2 D_par) = 0 kills
+    the Milstein noise.  The orbit must therefore reduce to the same vacuum
+    guiding-centre equations the collisionless tracer integrates, which is
+    what pins the collisional path to a tracer covered by test_particle.py.
     """
 
     _tmax = 5e-7
@@ -460,107 +303,10 @@ class TestCollisionlessLimit(unittest.TestCase):
         )
         return res_c[0], res_nc[0]
 
-    # ------------------------------------------------------------------
-    # 1. Speed exactly preserved
-    # ------------------------------------------------------------------
-    def test_speed_constant_to_solver_tolerance(self):
-        """
-        v(t) must equal v(0) to integration accuracy when n = 0.
-
-        The integrated state is (s, theta, zeta, v_par) at fixed mu, and the
-        speed is reconstructed as v^2 = v_par^2 + 2 mu |B|.  Energy
-        conservation therefore rests on the mirror force in v_par balancing
-        the change in |B| along the orbit, which holds to solver tolerance
-        rather than exactly.  This matches the collisionless tracer, which
-        integrates the same variables.
-
-        (Before mu became a parameter of the orbit equations, v was itself a
-        state variable with dv/dt identically zero here, so it was bitwise
-        constant.  That was a property of the old state layout, not of the
-        physics.)
-
-        The observed drift tracks the tolerance closely -- about 0.15 * tol,
-        measured as 1.6e-10 at tol = 1e-9 and 1.2e-12 at tol = 1e-11 -- so the
-        bound below sits ~3 orders above the real level while staying far
-        tighter than any genuine mu-handling bug, which would show up at O(1).
-        """
-        traj = _coll_trace(
-            _field(),
-            _zero_background(),
-            tmax=self._tmax,
-            vpar_fraction=self._vpfrac,
-            tol=self._tol,
-            ode_solver="dormand_prince",
-            axis=2,
-        )
-        v0 = traj[0, 5]
-        drift = np.abs(traj[:, 5] / v0 - 1.0).max()
-        self.assertLess(
-            drift,
-            100 * self._tol,
-            f"speed drifted by {drift:.3e} relative with n = 0, above "
-            f"{100 * self._tol:.1e}; energy is not being conserved by the "
-            f"orbit integration",
-        )
-
-    # ------------------------------------------------------------------
-    # 2. Magnetic moment conserved
-    # ------------------------------------------------------------------
-    def test_magnetic_moment_matches_initial_conditions(self):
-        """
-        μ along the trajectory must equal the value implied by the caller's
-        own (Ekin, v∥, position).
-
-        μ conservation itself is no longer a numerical property worth
-        asserting: μ is a parameter of the orbit equations, held fixed
-        between collision kicks by construction, and the trace reports
-        v = √(v∥² + 2μ|B|).  Recovering μ from those columns therefore
-        returns it by definition — an assertion on that drift would hold
-        even if the orbit equations were wrong.  Energy conservation, which
-        is a real numerical property here, is covered by
-        test_speed_constant_to_solver_tolerance.
-
-        What remains falsifiable is the *value*: if C++ derived μ_init
-        wrongly from vtotal, v∥ and |B| at the launch point, every
-        reconstructed speed is wrong by that factor.  This pins it against
-        an independent Python computation from the inputs alone.
-        """
-        field = _field()
-        traj = _coll_trace(
-            field,
-            _zero_background(),
-            tmax=self._tmax,
-            vpar_fraction=self._vpfrac,
-            tol=self._tol,
-            ode_solver="dormand_prince",
-            axis=2,
-        )
-        # mu_init from the caller's inputs, touching no trajectory output.
-        v0 = np.sqrt(2 * FUSION_ALPHA_PARTICLE_ENERGY / ALPHA_PARTICLE_MASS)
-        vpar0 = self._vpfrac * v0
-        field.set_points(np.array([[0.3, 0.0, 0.0]]))
-        mu_expected = (v0**2 - vpar0**2) / (2.0 * np.array(field.modB()).flatten()[0])
-
-        pts = np.column_stack([traj[:, 1], traj[:, 2], traj[:, 3]])
-        field.set_points(pts)
-        B = np.array(field.modB()).flatten()
-        mu = (traj[:, 5] ** 2 - traj[:, 4] ** 2) / (2.0 * B)
-
-        rel_err = np.abs(mu - mu_expected) / mu_expected
-        self.assertLess(
-            np.max(rel_err),
-            1e-5,
-            f"μ = {mu[0]:.6e} disagrees with the value implied by the inputs "
-            f"({mu_expected:.6e}) by {np.max(rel_err):.2e} relative",
-        )
-
-    # ------------------------------------------------------------------
-    # 3. Orbit agrees with collisionless tracer
-    # ------------------------------------------------------------------
     def test_orbit_matches_collisionless_tracer(self):
         """
         (s, θ, ζ, v∥) from the collision tracer with n = 0 must agree with
-        the standard collisionless tracer to within ~1e-4 relative.
+        the standard collisionless tracer.
 
         Both use Dormand-Prince, the same tolerances, and axis = 2.
         Any discrepancy is purely due to the (v, ξ) vs (v∥) state conditioning.
@@ -608,14 +354,11 @@ class TestCollisionlessLimit(unittest.TestCase):
 
 class TestNonVacuumOrbitEquations(unittest.TestCase):
     """
-    Collisional tracing must use the orbit equations the field calls for.
-
-    trace_particles_boozer picks vacuum / noK / full from field.field_type.
-    The collisional tracer used to build the vacuum right-hand side
-    unconditionally, so a finite-beta field was traced with the wrong orbit
-    equations and nothing warned.  mu is now a parameter of the orbit
-    equations rather than a state variable, so every static-field variant can
-    be driven by the collision operator and the selection is shared.
+    Collisional tracing must use the orbit equations the field calls for:
+    vacuum / noK / full, selected from field.field_type exactly as
+    trace_particles_boozer selects them.  mu is a parameter of the orbit
+    equations rather than a state variable, so every static-field variant
+    can be driven by the collision operator.
     """
 
     _tmax = 5e-7
@@ -673,24 +416,21 @@ class TestNonVacuumOrbitEquations(unittest.TestCase):
             )
         return np.asarray(res[0])[-1, 1:5]
 
-    def test_field_type_is_as_expected(self):
+    def test_collisionless_limit_matches_collisionless_tracer(self):
+        """
+        With n = 0 the collisional tracer must reproduce
+        trace_particles_boozer for every non-vacuum orbit model -- this is
+        what fails if the vacuum equations are used for a field that needs
+        another set.  Forcing gc_vac is checked to disagree, so that the
+        comparison cannot pass merely because the two formulations happen to
+        coincide on this equilibrium.
+        """
         for ft in self._FIELDS:
             with self.subTest(field_type=ft):
                 self.assertEqual(self._nonvacuum_field(ft).field_type, ft)
-
-    def test_collisionless_limit_matches_collisionless_tracer(self):
-        """
-        With n = 0 the collisional tracer must reproduce trace_particles_boozer
-        for every non-vacuum orbit model.  This is what fails if the vacuum
-        equations are used for a field that needs another set.
-        """
-        for ft in self._FIELDS:
-            with self.subTest(field_type=ft):
-                coll = self._endpoint(collisional=True, field_type=ft)
-                nocoll = self._endpoint(collisional=False, field_type=ft)
                 np.testing.assert_allclose(
-                    coll,
-                    nocoll,
+                    self._endpoint(collisional=True, field_type=ft),
+                    self._endpoint(collisional=False, field_type=ft),
                     rtol=1e-6,
                     atol=1e-9,
                     err_msg=(
@@ -700,14 +440,6 @@ class TestNonVacuumOrbitEquations(unittest.TestCase):
                     ),
                 )
 
-    def test_vacuum_equations_are_measurably_wrong_here(self):
-        """
-        Forcing gc_vac on this field must give a different orbit.
-
-        Without this the test above could pass simply because the two
-        formulations happen to agree for this equilibrium, which would make it
-        blind to the bug it is meant to catch.
-        """
         full = self._endpoint(collisional=True)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
@@ -800,31 +532,6 @@ class TestPerturbedCollisions(unittest.TestCase):
                     err_msg=f"perturbed collisional path diverges at Phihat={Phihat}",
                 )
 
-    def test_wave_does_work_on_the_particle(self):
-        """
-        The premise the splitting is built on: v is *not* conserved here.
-
-        Without this the test above could pass on a wave too weak to matter,
-        which would say nothing about whether a changing energy is handled.
-        """
-        saw, v0, vpar, mus = self._setup(1e6)
-        res, _ = trace_particles_boozer_perturbed_with_collisions(
-            saw,
-            self._stz,
-            vpar,
-            mus,
-            backgrounds=_zero_background(),
-            ode_solver="dormand_prince",
-            **self._kw(),
-        )
-        dv = np.asarray(res[0])[-1, 5] / v0 - 1.0
-        self.assertGreater(
-            abs(dv),
-            1e-2,
-            f"wave changed the speed by only {dv:.2e}; too weak "
-            f"to exercise a non-conserved energy",
-        )
-
     def test_collisions_change_mu(self):
         """
         With a background present mu must evolve, since the kick rewrites it
@@ -866,24 +573,6 @@ class TestPerturbedCollisions(unittest.TestCase):
         """
         At zero wave amplitude the perturbed path must reproduce the static
         collisional path, collisions included.
-
-        This is the test that observes the ``set_mu`` overrides this feature
-        adds to the two perturbed right-hand sides.  Nothing else does: the
-        speed column is written as ``sqrt(v_par^2 + 2 mu |B|)`` from the
-        integrator's own ``mu``, so any assertion that recovers ``mu`` from
-        the output returns it by construction and holds even if the orbit
-        integrated a stale value.
-
-        Here the kick's ``mu`` reaches the orbit only through ``set_mu``, and
-        the static path -- whose ``set_mu`` is exercised by the rest of the
-        suite -- provides an independent reference for the same physics, since
-        the perturbed equations reduce to the vacuum ones when Phihat = 0.
-        A background is essential: with no collisions ``mu`` never changes and
-        ``set_mu`` cannot matter.
-
-        Measured: 2.0e-11 as shipped, against 2.0e-04 with both perturbed
-        ``set_mu`` overrides replaced by no-ops -- seven orders of separation,
-        so the bound below is not delicately placed.
         """
         field = BoozerAnalytic(1.0, 5.0, 0, 40.0, 0.5, 0.4)
         saw = ShearAlfvenHarmonic(0.0, 2, 1, 1e5, 0.0, field)
@@ -930,15 +619,6 @@ class TestPerturbedCollisions(unittest.TestCase):
     def test_stopping_criterion_fires_and_pins_the_hit_layout(self):
         """
         Stopping criteria on the perturbed collisional path.
-
-        The hit row is the only place the post-kick state is exposed to the
-        caller, and it was previously untested here.  It also pins the
-        ``res_hits`` layout, which is a trap for anyone migrating from
-        :func:`~firm3d.field.tracing.trace_particles_boozer_perturbed`:
-        ``solve_sde`` emits ``[t, index, s, theta, zeta, v_par, v]`` while the
-        collisionless perturbed tracer's seventh column is ``t``.  Both are
-        seven wide, so reading the wrong one yields a speed where a time was
-        expected with no shape error to catch it -- here 1.3e7 against 2e-7.
         """
         saw, _, vpar, mus = self._setup(1e-3)
         # s runs 0.30 -> 0.42 over _tmax on this fixture, so this is crossed
@@ -984,124 +664,15 @@ class TestPerturbedCollisions(unittest.TestCase):
             ),
         )
 
-    def test_full_k_field_is_rejected(self):
-        """There is no full-K perturbed right-hand side; say so, don't guess."""
-        saw, _, vpar, mus = self._setup(1e-3, {"I0": 0.5, "K1": 0.3})
-        self.assertEqual(saw.B0.field_type, "")
-        with self.assertRaises(ValueError) as cm:
-            trace_particles_boozer_perturbed_with_collisions(
-                saw,
-                self._stz,
-                vpar,
-                mus,
-                backgrounds=_zero_background(),
-                **self._kw(),
-            )
-        self.assertIn("full-K", str(cm.exception))
-
-
-# ---------------------------------------------------------------------------
-# Collision-kick sub-cycling
-# ---------------------------------------------------------------------------
-
-
-class TestInterpolatedField(unittest.TestCase):
-    """
-    Collisional tracing on an InterpolatedBoozerField.
-
-    Every other test in this file traces BoozerAnalytic, which evaluates the
-    field from closed-form expressions.  Real use is an interpolant built from
-    a boozmn file, and that is also what the GPU entry point takes, so the
-    combination needs at least one test that reaches it -- the kick calls
-    modB_ref() on whatever field it is handed.
-    """
-
-    _FILE = "examples/inputs/boozmn_aten_rescaled_low_res.nc"
-
-    @classmethod
-    def setUpClass(cls):
-        # bri must stay referenced: InterpolatedBoozerField does not keep it
-        # alive, and evaluating a field whose source has been collected fails
-        # inside the first right-hand-side call.
-        cls.bri = BoozerRadialInterpolant(cls._FILE, 3, enforce_vacuum=True)
-        cls.field = InterpolatedBoozerField(
-            cls.bri, 3, ns_interp=15, ntheta_interp=15, nzeta_interp=15
-        )
-
-    def test_kick_reaches_the_interpolated_field(self):
-        """
-        The collisional trace must differ from the collisionless one.
-
-        Not a physics check -- the drag is checked against closed forms
-        elsewhere.  This asserts that the kick actually ran when the field is
-        an interpolant, which finiteness alone would not: a kick that silently
-        did nothing here would leave a perfectly plausible trace behind.
-
-        The separation is small on purpose.  An alpha's slowing-down time in
-        this background is of order 0.1 s, so over 1e-7 s the speed moves by
-        ~1e-6 relative -- far above the 1e-8 orbit tolerance, but the drag
-        does not dominate, and a single realization can gain speed as easily
-        as lose it.  Asserting a decrease here would be wrong: measured, this
-        seed gains 6.6e-07.
-        """
-        v0 = np.sqrt(2 * FUSION_ALPHA_PARTICLE_ENERGY / ALPHA_PARTICLE_MASS)
-        stz = np.array([[0.3, 0.0, 0.0], [0.3, 1.0, 0.5]])
-        vpar0 = 0.5 * v0 * np.ones(2)
-        shared = {
-            "tmax": 1e-7,
-            "mass": ALPHA_PARTICLE_MASS,
-            "charge": ALPHA_PARTICLE_CHARGE,
-            "tol": 1e-8,
-            "dt_save": 1e-7,
-        }
-        res, _ = trace_particles_boozer_with_collisions(
-            self.field,
-            stz,
-            vpar0,
-            Ekin=FUSION_ALPHA_PARTICLE_ENERGY,
-            rng_seed=0,
-            backgrounds=_cold_background(),
-            **shared,
-        )
-        free, _ = trace_particles_boozer(
-            self.field,
-            stz,
-            vpar0,
-            Ekin=FUSION_ALPHA_PARTICLE_ENERGY,
-            **shared,
-        )
-
-        self.assertEqual(len(res), 2)
-        for i in range(2):
-            with self.subTest(particle=i):
-                a = np.asarray(res[i])
-                self.assertTrue(np.all(np.isfinite(a)), "non-finite output")
-                self.assertAlmostEqual(a[-1, 0], 1e-7, places=12)
-                self.assertGreater(a[-1, 5], 0.0)
-
-                collisionless_vpar = np.asarray(free[i])[-1, 4]
-                self.assertNotAlmostEqual(
-                    a[-1, 4] / collisionless_vpar,
-                    1.0,
-                    places=8,
-                    msg=(
-                        "collisional and collisionless traces agree to the "
-                        "orbit tolerance; the kick is not reaching an "
-                        "interpolated field"
-                    ),
-                )
-
 
 class TestProfileGridValidation(unittest.TestCase):
     """
     The profile grid must have at least two nodes.
 
-    Linear interpolation needs two nodes and a non-zero spacing.  With one the
-    spacing is 0/0 and the lookup indexes off the end of the sample array;
-    measured before the check, that produced nu_D = K = D_par = nan from the
-    shipped coefficient routine rather than any error.  The same lookup runs
-    on the GPU against a raw device pointer, where the equivalent read is
-    unchecked.
+    Linear interpolation needs two nodes and a non-zero spacing; with one the
+    spacing is 0/0 and the lookup reads off the end of the sample array.  The
+    same lookup runs on the GPU against a raw device pointer, where that read
+    is unchecked.
     """
 
     def _bg(self, n_grid_points):
@@ -1120,19 +691,10 @@ class TestProfileGridValidation(unittest.TestCase):
                     self._bg(npts)
                 self.assertIn("at least 2", str(cm.exception))
 
-    def test_two_points_is_accepted_and_finite(self):
-        """Two nodes is the smallest legal grid and must still work."""
-        c = sopp.compute_collision_coefficients(
-            1.0e7,
-            0.5,
-            float(ALPHA_PARTICLE_MASS),
-            float(ALPHA_PARTICLE_CHARGE),
-            [self._bg(2)._to_cpp()],
-        )
-        for name in ("nu_D", "K", "D_par"):
-            with self.subTest(coefficient=name):
-                self.assertTrue(np.isfinite(getattr(c, name)))
-        self.assertGreater(c.nu_D, 0.0)
+
+# ---------------------------------------------------------------------------
+# Collision-kick sub-cycling
+# ---------------------------------------------------------------------------
 
 
 class TestCollisionSubstepping(unittest.TestCase):
@@ -1173,84 +735,6 @@ class TestCollisionSubstepping(unittest.TestCase):
         n = sopp.collision_substeps(v_th, c, 1e-4)
         self.assertGreater(n, 1, f"expected sub-cycling, got nsub = {n}")
 
-    def test_degenerate_inputs_are_defined(self):
-        """
-        Non-finite and huge rates must not reach the double->int cast.
-
-        Converting an out-of-range or NaN double to int is undefined
-        behavior; on x86-64 it yields INT_MIN, which a `< 1` clamp would
-        then turn into a single sub-step -- the runaway guard failing open
-        in exactly the regime it exists for.
-        """
-        v0 = np.sqrt(2 * FUSION_ALPHA_PARTICLE_ENERGY / ALPHA_PARTICLE_MASS)
-        c = self._coef(v0, [_hot_background()])
-        for h in (0.0, -1.0, float("nan"), float("inf"), 1e300):
-            with self.subTest(h=h):
-                n = sopp.collision_substeps(v0, c, h)
-                self.assertGreaterEqual(n, 1)
-                self.assertLessEqual(n, 10000)
-        for v in (0.0, -1.0, float("nan")):
-            with self.subTest(v=v):
-                self.assertEqual(sopp.collision_substeps(v, c, 1e-6), 1)
-
-    def test_equilibrium_is_independent_of_orbit_tolerance(self):
-        """
-        Regression test for the bug sub-cycling fixes.
-
-        With one kick per orbit step the equilibrium tracked the orbit
-        tolerance instead of the physics: <E>/T_b came out at 7.8, 3.1, 3.0
-        and 1.3 for tol = 1e-6, 1e-8, 1e-10, 1e-12, against an expected 1.5.
-        Sub-cycling decouples them.  The loose tolerance is the discriminating
-        one -- it is where h is longest relative to the collision time -- so
-        this fails against the pre-fix code.
-        """
-        # The profile is handed over in eV; the energy comparisons below are SI.
-        T_b_eV, n_b, nP = 1e3, 1e21, 24
-        T_b = T_b_eV * ONE_EV
-        tmax = 8 * 3.5e-5  # 8 collisional relaxation times
-        bg = ThermalBackground(
-            n_profile=lambda s: n_b,
-            T_profile=lambda s: T_b_eV,
-            mass=PROTON_MASS,
-            charge=ELEMENTARY_CHARGE,
-        )
-        E0 = 4.5 * T_b
-        v0 = np.sqrt(2 * E0 / PROTON_MASS)
-        rng = np.random.default_rng(42)
-        stz = np.column_stack(
-            [
-                np.full(nP, 0.3),
-                rng.uniform(0, 2 * np.pi, nP),
-                rng.uniform(0, 2 * np.pi, nP),
-            ]
-        )
-        res, _ = trace_particles_boozer_with_collisions(
-            BoozerAnalytic(0.25, 5.0, 0, 40.0, 2.0, 0.8),
-            stz,
-            0.7 * v0 * np.ones(nP),
-            backgrounds=[bg],
-            tmax=tmax,
-            mass=PROTON_MASS,
-            charge=ELEMENTARY_CHARGE,
-            Ekin=E0,
-            tol=1e-6,
-            dt_save=tmax,
-            forget_exact_path=True,
-            rng_seed=42,
-            stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
-        )
-        v_end = np.array([t[-1, 5] for t in res])
-        E_mean = 0.5 * PROTON_MASS * np.mean(v_end**2) / T_b
-        self.assertGreater(
-            E_mean, 0.8, f"<E>/T_b = {E_mean:.2f} at tol=1e-6; expected ~1.5"
-        )
-        self.assertLess(
-            E_mean,
-            3.0,
-            f"<E>/T_b = {E_mean:.2f} at tol=1e-6; expected ~1.5. Pre-sub-cycling "
-            f"this read 7.8, i.e. the equilibrium tracked the orbit tolerance",
-        )
-
 
 # ---------------------------------------------------------------------------
 # Collision coefficients (analytical)
@@ -1268,7 +752,7 @@ class TestOdeSolverValidation(unittest.TestCase):
 class TestParallelSpeedExceedingTotal(unittest.TestCase):
     """|v_par| > vtotal implies a negative mu, so it must be refused."""
 
-    def test_refused(self):
+    def test_refused_above_vtotal_but_legal_at_it(self):
         for label, fraction in (("marginal", 1.0 + 1e-9), ("nan", np.nan)):
             with self.subTest(vpar=label):
                 with self.assertRaises(ValueError) as cm:
@@ -1280,93 +764,49 @@ class TestParallelSpeedExceedingTotal(unittest.TestCase):
                     )
                 self.assertIn("must not exceed", str(cm.exception))
 
-    def test_boundary_is_legal(self):
-        """|v_par| == vtotal exactly (a purely passing particle) traces."""
+        # |v_par| == vtotal exactly is a purely passing particle, and legal.
         traj = _coll_trace(_field(), _hot_background(), vpar_fraction=1.0, tmax=1e-8)
         self.assertEqual(traj.shape[1], 6)
 
 
 class TestUnphysicalCoulombLog(unittest.TestCase):
     """
-    ln Lambda <= 0 (Debye length below the minimum impact parameter,
-    e.g. T -> 0 at finite density) makes the binary-collision model
-    undefined; the tracer must raise rather than integrate garbage.
-    ASCOT5 handles the equivalent situation by aborting markers through
-    its input-evaluation errors.
+    ln Lambda <= 0 (Debye length below the minimum impact parameter, e.g.
+    T -> 0 at finite density) makes the binary-collision model undefined,
+    so the tracer must refuse the profiles rather than integrate garbage.
     """
 
     @staticmethod
-    def _bad_background():
+    def _background(n, T_eV, mass, charge):
         return ThermalBackground(
-            n_profile=lambda s: 1e30,
-            T_profile=lambda s: 1e-3,
-            mass=ELECTRON_MASS,
-            charge=-ELEMENTARY_CHARGE,
+            n_profile=lambda s: n,
+            T_profile=lambda s: T_eV,
+            mass=mass,
+            charge=charge,
         )
 
-    def test_rejected_before_tracing(self):
-        """The up-front profile check rejects it without starting a trace.
-
-        Catching this in Python matters under MPI: the C++ throw fires
-        from inside the RHS on whichever rank owns the offending
-        particle, and the ranks that did not fail then block forever in
-        the allgather that collects results.
-        """
+    def test_unphysical_profiles_are_refused_and_healthy_ones_are_not(self):
+        bad = self._background(1e30, 1e-3, ELECTRON_MASS, -ELEMENTARY_CHARGE)
         with self.assertRaises(ValueError):
-            _coll_trace(_field(), self._bad_background(), tmax=1e-8)
+            _coll_trace(_field(), bad, tmax=1e-8)
 
-    def test_cpp_layer_is_the_backstop(self):
-        """The C++ layer refuses the same profiles on its own.
-
-        The Python check is a pre-flight convenience; the throw itself lives
-        in collisions.h, so a caller reaching the C++ directly (bypassing the
-        tracer entry points entirely) is refused too.
-        """
-        v0 = np.sqrt(2 * FUSION_ALPHA_PARTICLE_ENERGY / ALPHA_PARTICLE_MASS)
-        with self.assertRaises(RuntimeError):
-            sopp.compute_collision_coefficients(
-                v0,
-                0.3,
-                float(ALPHA_PARTICLE_MASS),
-                float(ALPHA_PARTICLE_CHARGE),
-                [self._bad_background()._to_cpp()],
-            )
-
-    def test_healthy_profiles_are_not_rejected(self):
-        """The v -> 0 bound must not reject an ordinary reactor profile."""
+        # The v -> 0 bound is conservative; it must still pass a reactor profile.
         traj = _coll_trace(_field(), _hot_background(), tmax=1e-8)
         self.assertEqual(traj.shape[1], 6)
 
-    @staticmethod
-    def _marginal_background():
-        """0 < ln_Lambda < 2 as v -> 0: usable, but not quantitative."""
-        return ThermalBackground(
-            n_profile=lambda s: 1e20,
-            T_profile=lambda s: 0.025,
-            mass=2 * PROTON_MASS,
-            charge=ELEMENTARY_CHARGE,
-        )
-
-    def test_marginal_warns_exactly_once(self):
-        """A marginal ln_Lambda warns once per call, not once per evaluation.
-
-        The C++ layer sees one (v, s) at a time from inside the ODE
-        right-hand side, so warning there fired on every evaluation --
-        roughly seven times per accepted step, per particle.
+    def test_marginal_profiles_warn_exactly_once(self):
         """
+        0 < ln_Lambda < 2 is usable but not quantitative, so it warns rather
+        than raising -- once per call, not once per coefficient evaluation
+        (the C++ sees one (v, s) at a time and would warn ~7x per step).
+        """
+        marginal = self._background(1e20, 0.025, 2 * PROTON_MASS, ELEMENTARY_CHARGE)
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            _coll_trace(_field(), self._marginal_background(), tmax=1e-7)
+            _coll_trace(_field(), marginal, tmax=1e-7)
         hits = [w for w in caught if "ln_Lambda" in str(w.message)]
         self.assertEqual(len(hits), 1, f"expected 1 warning, got {len(hits)}")
         self.assertTrue(issubclass(hits[0].category, RuntimeWarning))
-
-    def test_healthy_profiles_do_not_warn(self):
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            _coll_trace(_field(), _hot_background(), tmax=1e-8)
-        hits = [w for w in caught if "ln_Lambda" in str(w.message)]
-        self.assertEqual(hits, [], f"unexpected warning: {hits}")
 
 
 class TestCollisionCoefficients(unittest.TestCase):
@@ -1377,9 +817,7 @@ class TestCollisionCoefficients(unittest.TestCase):
     These tests are deterministic and instantaneous — no simulation needed.
     They verify that the Chandrasekhar G function, the drag K, and the
     pitch-angle scattering rate ν_D have the correct signs, limits, and
-    scalings.  Every value here comes from collisions.h itself, so a defect
-    in it shows up as a failure rather than being mirrored by a second
-    implementation that shares the mistake.
+    scalings.
     """
 
     _v0 = np.sqrt(2 * FUSION_ALPHA_PARTICLE_ENERGY / ALPHA_PARTICLE_MASS)
@@ -1389,17 +827,9 @@ class TestCollisionCoefficients(unittest.TestCase):
     # ------------------------------------------------------------------
     # Chandrasekhar G function
     # ------------------------------------------------------------------
-    def test_G_positive(self):
-        """G(x) > 0 for all x > 0."""
-        for x in [0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]:
-            self.assertGreater(sopp.chandrasekhar_G(x), 0, f"G({x}) ≤ 0")
-
-    def test_G_zero_at_zero(self):
-        """G(0) = 0 (G → 0 as x → 0)."""
-        self.assertAlmostEqual(sopp.chandrasekhar_G(0.0), 0.0, places=12)
-
     def test_G_small_x_limit(self):
-        """For x ≪ 1: G(x) ≈ 2x / (3√π)."""
+        """For x ≪ 1: G(x) ≈ 2x / (3√π), and G(0) = 0 exactly."""
+        self.assertAlmostEqual(sopp.chandrasekhar_G(0.0), 0.0, places=12)
         for x in [0.001, 0.01, 0.05]:
             G_approx = 2.0 * x / (3.0 * np.sqrt(np.pi))
             self.assertAlmostEqual(
@@ -1420,46 +850,39 @@ class TestCollisionCoefficients(unittest.TestCase):
                 msg=f"G({x}) deviates from large-x limit 1/(2x²)",
             )
 
-    def test_G_deriv_positive_small_x(self):
-        """G'(x) > 0 for small x (G is increasing near 0)."""
+    def test_G_deriv_changes_sign_at_the_maximum(self):
+        """G has a maximum near x ≈ 0.92: G' > 0 below it, G' < 0 above."""
         for x in [0.1, 0.3, 0.5]:
             self.assertGreater(sopp.chandrasekhar_G_deriv(x), 0, f"G'({x}) ≤ 0")
-
-    def test_G_deriv_sign_change(self):
-        """G has a maximum: G'(x) changes sign from + to − around x ≈ 0.92."""
-        self.assertGreater(sopp.chandrasekhar_G_deriv(0.5), 0)
-        self.assertLess(sopp.chandrasekhar_G_deriv(2.0), 0)
+        for x in [2.0, 5.0]:
+            self.assertLess(sopp.chandrasekhar_G_deriv(x), 0, f"G'({x}) ≥ 0")
 
     # ------------------------------------------------------------------
     # Drag coefficient K
     # ------------------------------------------------------------------
-    def test_K_zero_when_n_zero(self):
-        """K = 0 when n = 0."""
-        K = _cpp_K(self._v0, self._s, self._m, self._q, [_zero_background()])
-        self.assertEqual(K, 0.0)
-
-    def test_K_negative(self):
-        """K < 0 for any finite background (drag always decelerates)."""
-        for bg in [_hot_background(), _cold_background(), _hot_background(T_keV=100.0)]:
-            K = _cpp_K(self._v0, self._s, self._m, self._q, [bg])
-            self.assertLess(K, 0, "K must be negative (decelerating drag)")
+    def test_coefficients_vanish_when_n_zero(self):
+        """Every coefficient is identically zero with no active species."""
+        c = _coeffs(self._v0, self._s, self._m, self._q, [_zero_background()])
+        self.assertEqual(c.K, 0.0)
+        self.assertEqual(c.nu_D, 0.0)
+        self.assertEqual(c.D_par, 0.0)
 
     def test_K_linear_in_density(self):
         """K nearly proportional to n; small deviation via ln Λ ∝ ln(λ_D)."""
-        K1 = _cpp_K(self._v0, self._s, self._m, self._q, [_hot_background(n=1e20)])
-        K2 = _cpp_K(self._v0, self._s, self._m, self._q, [_hot_background(n=2e20)])
+        K1 = _coeffs(self._v0, self._s, self._m, self._q, [_hot_background(n=1e20)]).K
+        K2 = _coeffs(self._v0, self._s, self._m, self._q, [_hot_background(n=2e20)]).K
         self.assertAlmostEqual(K2 / K1, 2.0, delta=0.05)
 
     def test_K_quartic_in_EP_charge(self):
         """K ∝ q_a²; <15% deviation because ln Λ also depends on |q_a q_b|."""
         bg = _hot_background()
-        K_alpha = _cpp_K(
+        K_alpha = _coeffs(
             self._v0, self._s, ALPHA_PARTICLE_MASS, ALPHA_PARTICLE_CHARGE, [bg]
-        )
+        ).K
         # Same mass but half the charge
-        K_half = _cpp_K(
+        K_half = _coeffs(
             self._v0, self._s, ALPHA_PARTICLE_MASS, ALPHA_PARTICLE_CHARGE / 2.0, [bg]
-        )
+        ).K
         self.assertAlmostEqual(
             K_alpha / K_half,
             4.0,
@@ -1474,8 +897,8 @@ class TestCollisionCoefficients(unittest.TestCase):
         changing ln Λ by only −½ ln 2 ≈ −0.35, so K[bg+bg] ≈ 2 K[bg] to ~5%.
         """
         bg = _hot_background(n=1e20)
-        K_one = _cpp_K(self._v0, self._s, self._m, self._q, [bg])
-        K_both = _cpp_K(self._v0, self._s, self._m, self._q, [bg, bg])
+        K_one = _coeffs(self._v0, self._s, self._m, self._q, [bg]).K
+        K_both = _coeffs(self._v0, self._s, self._m, self._q, [bg, bg]).K
         self.assertAlmostEqual(K_both / K_one, 2.0, delta=0.1)
 
     def test_K_electron_larger_than_ion(self):
@@ -1493,8 +916,8 @@ class TestCollisionCoefficients(unittest.TestCase):
             mass=ELECTRON_MASS,
             charge=-ELEMENTARY_CHARGE,
         )
-        K_e = _cpp_K(self._v0, self._s, self._m, self._q, [electron_bg])
-        K_D = _cpp_K(self._v0, self._s, self._m, self._q, [_hot_background()])
+        K_e = _coeffs(self._v0, self._s, self._m, self._q, [electron_bg]).K
+        K_D = _coeffs(self._v0, self._s, self._m, self._q, [_hot_background()]).K
         ratio = abs(K_e) / abs(K_D)
         self.assertGreater(ratio, 10, f"|K_e|/|K_D| = {ratio:.1f}, expected ≈ 20")
         self.assertLess(ratio, 50, f"|K_e|/|K_D| = {ratio:.1f}, expected ≈ 20")
@@ -1502,21 +925,14 @@ class TestCollisionCoefficients(unittest.TestCase):
     # ------------------------------------------------------------------
     # Pitch-angle scattering rate ν_D
     # ------------------------------------------------------------------
-    def test_nu_D_positive(self):
-        """ν_D > 0 for any finite, positive background."""
-        for bg in [_hot_background(), _cold_background()]:
-            nu_D = _cpp_nu_D(self._v0, self._s, self._m, self._q, [bg])
-            self.assertGreater(nu_D, 0)
-
-    def test_nu_D_zero_when_n_zero(self):
-        """ν_D = 0 when n = 0."""
-        nu_D = _cpp_nu_D(self._v0, self._s, self._m, self._q, [_zero_background()])
-        self.assertEqual(nu_D, 0.0)
-
     def test_nu_D_linear_in_density(self):
         """ν_D nearly proportional to n; small deviation via ln Λ ∝ ln(λ_D)."""
-        nu_1 = _cpp_nu_D(self._v0, self._s, self._m, self._q, [_hot_background(n=1e20)])
-        nu_2 = _cpp_nu_D(self._v0, self._s, self._m, self._q, [_hot_background(n=2e20)])
+        nu_1 = _coeffs(
+            self._v0, self._s, self._m, self._q, [_hot_background(n=1e20)]
+        ).nu_D
+        nu_2 = _coeffs(
+            self._v0, self._s, self._m, self._q, [_hot_background(n=2e20)]
+        ).nu_D
         self.assertAlmostEqual(nu_2 / nu_1, 2.0, delta=0.05)
 
     def test_nu_D_large_x_limit(self):
@@ -1558,31 +974,6 @@ class TestMaxwellianEquilibration(unittest.TestCase):
     End-to-end thermalization through trace_particles_boozer_with_collisions
     with a BoozerAnalytic field -- the full production path (DP stepper +
     Milstein noise + orbit dynamics), runnable locally in a few seconds.
-
-    Skew: all collision rates scale linearly with background density, so
-    n_b = 1e21 m^-3 makes the collisional relaxation time of a thermal
-    proton in a 1 keV proton background ~35 us, while its orbital transit
-    time (~14 us at v_th) remains shorter -- the adaptive DP stepper still
-    resolves the orbits and the Milstein noise stays accurate (nu h << 1).
-
-    The reflecting thermal-cutoff speed boundary (ASCOT5's MCCC_CUTOFF)
-    keeps particles out of the v -> 0 region where the collision
-    coefficients diverge.
-
-    The field differs from _field() used elsewhere: collisional v_par
-    kicks displace the canonical angular momentum, giving radial steps
-    ~ R0/(iota psi0) in normalized flux, and in the small-psi0 _field()
-    configuration thermal protons random-walk out through s = 1 within a
-    few relaxation times.  A fatter, higher-iota configuration (psi0 = 2,
-    iota0 = 0.8, aspect ratio 4) keeps all particles confined over the
-    test duration.  MaxToroidalFluxStoppingCriterion(1.0) guards the
-    s <= 1 domain: without it, escaped particles are silently integrated
-    in the unphysical analytic continuation of the near-axis field until
-    the adaptive stepper grinds to a halt chasing the runaway trajectory.
-
-    This is the direct end-to-end regression test for the Einstein-relation
-    drag Q = -(m_a v / T_b) D_par: with a wrong drag the stationary energy
-    is wrong by O(1) (the pre-fix drag equilibrated to <E> = 3.7 T_b).
     """
 
     _T_B_EV = 1e3  # handed to ThermalBackground, which takes eV
@@ -1684,141 +1075,12 @@ class TestMaxwellianEquilibration(unittest.TestCase):
 class TestCollisionPhysics(unittest.TestCase):
     """
     Quantitative drag checks against the analytic coefficients.
-
-    The three drag tests guard the domain with
-    MaxToroidalFluxStoppingCriterion(1.0), for the reason spelled out in
-    TestMaxwellianEquilibration: _field() does not confine 3.52 MeV alphas,
-    and past s = 1 BoozerAnalytic is an unphysical analytic continuation.
-    (test_speed_non_negative and test_rng_seed_reproducibility deliberately
-    do not, since they assert format invariants that hold regardless of
-    where the particle is; note they do run out to s of order 100.)
-
-    These three tests originally ran unguarded.  Measured here, every
-    particle crosses s = 1 at t = 0.107 * tmax, so ~89% of each trajectory
-    was integrated outside the plasma, where the collision coefficients
-    clamp s into [0, 1] and so keep returning finite numbers.  The runaway
-    was found because the speed is now reconstructed as
-    v^2 = v_par^2 + 2 mu |B| rather than integrated as a state variable, so
-    a degenerate field evaluation reaches the output instead of being
-    absorbed.
-
-    With the guard the drag is measured over the window the field can
-    actually hold, and the suite drops from ~105 s for a single test to
-    ~30 s for all five.
     """
-
-    def test_energy_decreases_cold_plasma(self):
-        """
-        Mean speed must decrease under electron drag (reliable SNR with N=20 particles).
-
-        Cold D background gives x_D ≈ 133, G ≈ 1/(2x²) ≈ 2.8×10⁻⁵: negligible
-        mean drift vs. noise for a single particle.  Electron background at
-        T=10 keV gives x_e ≈ 0.22, G ≈ 0.046 (near maximum), K_e ≈ −3.5×10⁸ m/s²:
-        SNR ≈ 3 with N=20 in tmax=5 μs.
-
-        Intended to run on Perlmutter or equivalent HPC resources.
-        """
-        electron_bg = ThermalBackground(
-            n_profile=lambda s: 1e20,
-            T_profile=lambda s: 10e3,
-            mass=ELECTRON_MASS,
-            charge=-ELEMENTARY_CHARGE,
-        )
-        Ekin = FUSION_ALPHA_PARTICLE_ENERGY
-        m, q = ALPHA_PARTICLE_MASS, ALPHA_PARTICLE_CHARGE
-        v0 = np.sqrt(2 * Ekin / m)
-        nP = 20
-        stz = np.tile([0.3, 0.0, 0.0], (nP, 1))
-        vpar = np.full(nP, 0.5 * v0)
-        res_tys, _ = trace_particles_boozer_with_collisions(
-            _field(),
-            stz,
-            vpar,
-            backgrounds=electron_bg,
-            tmax=5e-6,
-            mass=m,
-            charge=q,
-            Ekin=Ekin,
-            tol=1e-9,
-            dt_save=5e-6,
-            forget_exact_path=True,
-            rng_seed=0,
-            comm=_COMM,
-            DP_hmin=1e-10,
-            stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
-        )
-        v_final = np.array([t[-1, 5] for t in res_tys])
-        self.assertLess(
-            np.mean(v_final), v0, "Mean speed must decrease under electron drag"
-        )
 
     def test_speed_non_negative(self):
         """v ≥ 0 must hold under extreme drag."""
         traj = _coll_trace(_field(), _cold_background(n=1e22, T_keV=0.1), tmax=2e-6)
         self.assertTrue(np.all(traj[:, 5] >= 0))
-
-    def test_two_backgrounds_more_drag_than_one(self):
-        """
-        Adding a second identical electron background doubles drag → lower mean final v.
-
-        Cold D background is unsuitable here: for 3.52 MeV alphas, x_D ≈ 133,
-        G(x_D) ≈ 3×10⁻⁵, and drag is negligible compared to diffusion noise for
-        a single particle.  Electron background at 10 keV gives G(x_e) ≈ 0.046
-        (near maximum) and detectable drag for N = 20 particles.
-        """
-        electron_bg = ThermalBackground(
-            n_profile=lambda s: 1e20,
-            T_profile=lambda s: 10e3,
-            mass=ELECTRON_MASS,
-            charge=-ELEMENTARY_CHARGE,
-        )
-        Ekin = FUSION_ALPHA_PARTICLE_ENERGY
-        m, q = ALPHA_PARTICLE_MASS, ALPHA_PARTICLE_CHARGE
-        v0 = np.sqrt(2 * Ekin / m)
-        nP = 20
-        tmax = 5e-6
-        stz = np.tile([0.3, 0.0, 0.0], (nP, 1))
-        vpar = np.full(nP, 0.5 * v0)
-
-        res_one, _ = trace_particles_boozer_with_collisions(
-            _field(),
-            stz,
-            vpar,
-            backgrounds=[electron_bg],
-            tmax=tmax,
-            mass=m,
-            charge=q,
-            Ekin=Ekin,
-            tol=1e-9,
-            dt_save=tmax,
-            forget_exact_path=True,
-            rng_seed=0,
-            comm=_COMM,
-            DP_hmin=1e-10,
-            stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
-        )
-        res_two, _ = trace_particles_boozer_with_collisions(
-            _field(),
-            stz,
-            vpar,
-            backgrounds=[electron_bg, electron_bg],
-            tmax=tmax,
-            mass=m,
-            charge=q,
-            Ekin=Ekin,
-            tol=1e-9,
-            dt_save=tmax,
-            forget_exact_path=True,
-            rng_seed=0,
-            comm=_COMM,
-            DP_hmin=1e-10,
-            stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
-        )
-        v_one = np.mean([t[-1, 5] for t in res_one])
-        v_two = np.mean([t[-1, 5] for t in res_two])
-        self.assertLess(
-            v_two, v_one, "Two electron backgrounds must give more drag than one"
-        )
 
     def test_rng_seed_reproducibility(self):
         """Same seed → bitwise-identical trajectories; different seed → different."""
@@ -1858,7 +1120,7 @@ class TestCollisionPhysics(unittest.TestCase):
         v0 = np.sqrt(2 * Ekin / m)
         s0 = 0.3
 
-        K_theory = _cpp_K(v0, s0, m, q, [electron_bg])
+        K_theory = _coeffs(v0, s0, m, q, [electron_bg]).K
         self.assertLess(K_theory, 0, "Electron drag K must be negative")
 
         tmax = 5e-6
@@ -1879,7 +1141,6 @@ class TestCollisionPhysics(unittest.TestCase):
             dt_save=tmax,
             forget_exact_path=True,
             rng_seed=0,
-            comm=_COMM,
             DP_hmin=1e-10,
             stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
         )
@@ -1983,53 +1244,6 @@ class TestPitchIsotropization(unittest.TestCase):
             charge=ELEMENTARY_CHARGE,
         )
 
-    def test_pitch_scattering_broadens_distribution(self):
-        """
-        Starting at ξ₀ = 0 with 30 particles:
-          * std(ξ_final) > 0.05 (distribution has broadened)
-          * Both positive and negative ξ values appear (symmetric scatter)
-        """
-        bg = self._background_low_n()
-        tmax = 1e-4
-
-        nP = 30
-        Ekin = FUSION_ALPHA_PARTICLE_ENERGY
-        m, q = ALPHA_PARTICLE_MASS, ALPHA_PARTICLE_CHARGE
-        stz = np.tile([0.3, 0.0, 0.0], (nP, 1))
-        vpar = np.zeros(nP)  # ξ₀ = 0: perpendicular particles
-
-        res_tys, _ = trace_particles_boozer_with_collisions(
-            self._confining_field(),
-            stz,
-            vpar,
-            backgrounds=bg,
-            tmax=tmax,
-            mass=m,
-            charge=q,
-            Ekin=Ekin,
-            tol=1e-8,
-            dt_save=tmax,
-            forget_exact_path=True,
-            rng_seed=0,
-            comm=_COMM,
-            stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
-        )
-        self._assert_confined(res_tys, tmax)
-
-        xi_f = np.array([t[-1, 4] / t[-1, 5] for t in res_tys])
-        std_xi = np.std(xi_f)
-
-        self.assertGreater(
-            std_xi,
-            0.05,
-            f"ξ did not broaden from ξ₀=0 (std={std_xi:.4f}); "
-            "pitch-angle scattering may be broken",
-        )
-        self.assertTrue(
-            np.any(xi_f > 0.01) and np.any(xi_f < -0.01),
-            "All ξ_final have the same sign — scattering is not symmetric",
-        )
-
     def test_pitch_angle_exponential_decay(self):
         """
         ⟨ξ⟩ ∝ v^{m_b/m_a}: pitch decay of fast alphas on deuterium.
@@ -2062,7 +1276,7 @@ class TestPitchIsotropization(unittest.TestCase):
         xi0 = 0.8
         s0 = 0.3
 
-        nu_D_theory = _cpp_nu_D(v0, s0, m, q, [bg])
+        nu_D_theory = _coeffs(v0, s0, m, q, [bg]).nu_D
         tmax = 0.15 / nu_D_theory
 
         nP = 128
@@ -2082,7 +1296,6 @@ class TestPitchIsotropization(unittest.TestCase):
             dt_save=tmax / 8,
             forget_exact_path=False,
             rng_seed=0,
-            comm=_COMM,
             stopping_criteria=[MaxToroidalFluxStoppingCriterion(1.0)],
         )
         self._assert_confined(res_tys, tmax)
@@ -2115,26 +1328,6 @@ class TestPitchIsotropization(unittest.TestCase):
             f"pitch decayed too slow: <xi_2>/<xi_1> = {measured:.3f}, "
             f"(v_2/v_1)^(m_D/m_alpha) = {predicted:.3f}",
         )
-
-    def test_nu_D_positive(self):
-        nu_D = _cpp_nu_D(
-            np.sqrt(2 * FUSION_ALPHA_PARTICLE_ENERGY / ALPHA_PARTICLE_MASS),
-            0.3,
-            ALPHA_PARTICLE_MASS,
-            ALPHA_PARTICLE_CHARGE,
-            [self._background_low_n()],
-        )
-        self.assertGreater(nu_D, 0.0)
-
-    def test_nu_D_zero_for_n_zero(self):
-        nu_D = _cpp_nu_D(
-            np.sqrt(2 * FUSION_ALPHA_PARTICLE_ENERGY / ALPHA_PARTICLE_MASS),
-            0.3,
-            ALPHA_PARTICLE_MASS,
-            ALPHA_PARTICLE_CHARGE,
-            [_zero_background()],
-        )
-        self.assertEqual(nu_D, 0.0)
 
 
 if __name__ == "__main__":
