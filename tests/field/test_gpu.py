@@ -1218,18 +1218,6 @@ class TestGPUTracing(unittest.TestCase):
         """
         A zero-density background makes every collision coefficient zero, so
         the collisional tracer must reproduce the collisionless one.
-
-        This is the only test tying the 8-column layout back to the
-        7-column one: the flux-label column changes the row stride in both
-        the Python packing and the device interpolator, and a mistake there
-        corrupts the field the orbit integrates.  Agreement is required in
-        position as well as parallel speed, since a stride error moves the
-        orbit before it moves the speed.
-
-        The kick is not exactly the identity at zero density -- it rewrites
-        v_par as v * xi and recomputes mu -- so the trajectories differ at
-        roundoff and diverge slowly, hence a fraction-of-particles bound
-        rather than an elementwise one.
         """
         from firm3d.catapult.tracing import (
             trace_particles_cartesian_gpu,
@@ -1398,22 +1386,12 @@ class TestGPUTracing(unittest.TestCase):
         Full-energy alphas in a DT + electron background relax in two stages:
         electron drag slows them with almost no pitch scattering, then ion
         scattering isotropizes the pitch as the speed approaches the critical
-        velocity.  Both stages must appear at the same times in both tracers,
-        and the confined speed distributions must agree as distributions (KS),
-        not merely in mean.
+        velocity.
 
         A third trace with a deliberately constant label is the control: it
         must miss the Boozer answer by far more than the two tracers miss
         each other, which is what makes their agreement evidence rather than
-        insensitivity.  It uses s = 0 because drag is not monotonic in s here
-        -- density falls as 1 - 0.8 s^2 but electron drag goes as n/T^(3/2)
-        and T falls faster, so the edge drags harder than density alone
-        suggests, and a constant near the ensemble mean (s = 0.34) nearly
-        reproduces the right answer.
-
-        Measured at these settings: energy agrees to 0.0012 against a
-        seed-to-seed spread of 0.002, pitch to 0.007, KS 0.033, and the
-        control lands 0.098 away.  Bounds sit a few times above those.
+        insensitivity.
         """
         from scipy.stats import ks_2samp
 
