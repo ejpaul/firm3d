@@ -2,10 +2,6 @@ import time
 
 import numpy as np
 
-# Ensure mpi4py is imported and initialized before firm3d modules
-# This ensures the mpi4py C API is available for C++ bindings
-from mpi4py import MPI  # noqa: F401
-
 from firm3d.field.boozermagneticfield import (
     InterpolatedBoozerField,
 )
@@ -34,13 +30,13 @@ from firm3d.util.mpi import comm_size, comm_world, verbose
 time1 = time.time()
 
 resolution = 10 if in_github_actions else 48  # Resolution for field interpolation
-nParticles = 50 if in_github_actions else 5000  # Number of particles to trace
+nParticles = 50 if in_github_actions else 1000  # Number of particles to trace
 reltol = 1e-4 if in_github_actions else 1e-8  # Relative tolerance for the ODE solver
 abstol = 1e-4 if in_github_actions else 1e-8  # Absolute tolerance for the ODE solver
 order = 3  # Order for radial interpolation
 degree = 3  # Degree for 3d interpolation
-boozmn_filename = "../inputs/boozmn_aten_rescaled.nc"
-tmax = 1e-4 if in_github_actions else 1e-2  # Time for integration
+wout_filename = "../inputs/wout_aten_rescaled.nc"
+tmax = 1e-4 if in_github_actions else 2e-1  # Time for integration
 ns_interp = resolution
 ntheta_interp = resolution
 nzeta_interp = resolution
@@ -50,12 +46,17 @@ setup_logging(f"stdout_{nParticles}_{resolution}_{comm_size}.txt")
 
 ## Setup field interpolation
 field = InterpolatedBoozerField.from_booz_xform(
-    boozmn_filename,
+    wout_filename,
     degree=order,
     ns=ns_interp,
     ntheta=ntheta_interp,
     nzeta=nzeta_interp,
     comm=comm_world,
+    write_boozmn=False,
+    # Vacuum guiding-center equations, matching the GPU collisional examples.
+    # from_booz_xform otherwise defaults to the no-K equations, which the GPU
+    # collisional entry points do not accept and which give different orbits.
+    enforce_vacuum=True,
 )
 
 # Define fusion birth distribution
@@ -86,14 +87,9 @@ charge = ALPHA_PARTICLE_CHARGE
 vpar0 = np.sqrt(2 * Ekin / mass)
 vpar_init = initialize_velocity_uniform(vpar0, nParticles, comm=comm_world)
 
-# Background plasma the alphas collide with: a 50/50 DT fuel mix and the
-# electrons that neutralize it, on the same profiles that set the birth
-# distribution above.  n_ref is the on-axis electron density; the ion
-# densities halve it so the plasma is quasineutral.  Temperature is in eV
-# at this interface, while T(s) above is in keV.
 n_ref = 1e20  # m^-3
 ne = lambda s: n_ref * nD(s)
-Te = lambda s: 1e3 * T(s)
+Te = lambda s: 1e3 * T(s)  # eV
 
 deuterium = ThermalBackground(
     n_profile=lambda s: 0.5 * ne(s),
@@ -116,9 +112,7 @@ electrons = ThermalBackground(
 
 time1 = time.time()
 ## Trace alpha particles in Boozer coordinates, with collisions, until they
-## hit the s = 1 surface.  DP_hmin floors the orbit step: as a particle
-## thermalizes the pitch-scattering rate grows as 1/v^3, and without a floor
-## the adaptive step grinds down chasing it.
+## hit the s = 1 surface.
 res_tys, res_zeta_hits = trace_particles_boozer_with_collisions(
     field,
     points,
@@ -140,35 +134,36 @@ res_tys, res_zeta_hits = trace_particles_boozer_with_collisions(
 time2 = time.time()
 proc0_print("Elapsed time for tracing = ", time2 - time1)
 
-## Post-process results.  The collisional output carries the total speed in
-## the final column, which the collisionless tracer does not need: without
-## collisions the speed is a known invariant, with them it is not.  The
-## energy each particle retains is therefore recoverable per particle.
-energy_fraction = np.array([(traj[-1, 5] / vpar0) ** 2 for traj in res_tys])
-lost = np.array([traj[-1, 0] < tmax for traj in res_tys])
+t_end = np.array([traj[-1, 0] for traj in res_tys])
+v_end = np.array([traj[-1, 5] for traj in res_tys])
+lost = t_end < tmax
+
+grid = np.logspace(-6, np.log10(tmax), 200)
+particle_loss = np.array([np.sum(lost & (t_end <= t)) for t in grid]) / nParticles
+energy_loss = (
+    np.array([np.sum((v_end[lost & (t_end <= t)] / vpar0) ** 2) for t in grid])
+    / nParticles
+)
+
 proc0_print(f"Number of particles = {nParticles}")
-proc0_print(f"Loss fraction: {np.mean(lost):.3f}")
+proc0_print(f"Particle loss fraction: {particle_loss[-1]:.3f}")
+proc0_print(f"Energy loss fraction: {energy_loss[-1]:.3f}")
 proc0_print(
-    f"Mean energy fraction of confined alphas: {np.mean(energy_fraction[~lost]):.3f}"
+    f"Mean energy fraction of confined alphas: "
+    f"{np.mean((v_end[~lost] / vpar0) ** 2):.3f}"
 )
 
 if verbose and not in_github_actions:
-    from firm3d.field.trajectory_helpers import compute_loss_fraction
-
-    times, loss_frac = compute_loss_fraction(res_tys, tmin=1e-5, tmax=tmax)
     import matplotlib
 
     matplotlib.use("Agg")  # Don't use interactive backend
     import matplotlib.pyplot as plt
 
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-    axes[0].loglog(times, loss_frac)
-    axes[0].set_xlim([1e-5, tmax])
-    axes[0].set_xlabel("Time [s]")
-    axes[0].set_ylabel("Fraction of lost particles")
-
-    axes[1].hist(energy_fraction[~lost], bins=40)
-    axes[1].set_xlabel(r"$E/E_0$ at $t_{max}$ (confined)")
-    axes[1].set_ylabel("Number of particles")
-    fig.tight_layout()
-    fig.savefig("collisional_slowing_down.png")
+    plt.figure()
+    plt.loglog(grid, particle_loss, label="particle loss fraction")
+    plt.loglog(grid, energy_loss, "--", label="energy loss fraction")
+    plt.xlabel("Time [s]")
+    plt.ylabel("Fraction lost to the wall")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("collisional_slowing_down.png")

@@ -1,6 +1,5 @@
-#!/usr/bin/env python
-
-
+import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -25,13 +24,17 @@ from firm3d.util.constants import (
 from firm3d.util.functions import in_github_actions
 from firm3d.util.mpi import comm_world
 
+matplotlib.use("Agg")  # Don't use an interactive backend
+
 resolution = 5 if in_github_actions else 15  # Resolution for field interpolation
 nparticles = 100 if in_github_actions else 1000  # Number of particles to trace
 tol = 1e-4 if in_github_actions else 1e-8  # Tolerance for ODE solver
+tmax = 2e-1
 
-### CREATE A FIELD FOR TRACING
-boozmn_filename = "../inputs/boozmn_aten_rescaled.nc"
-bri = BoozerRadialInterpolant(boozmn_filename, 3, comm=comm_world, enforce_vacuum=True)
+wout_filename = "../inputs/wout_aten_rescaled.nc"
+bri = BoozerRadialInterpolant(
+    wout_filename, 3, comm=comm_world, enforce_vacuum=True, write_boozmn=False
+)
 
 field = InterpolatedBoozerField(
     bri,
@@ -99,11 +102,6 @@ backgrounds = [
     ),
 ]
 
-# The alpha slowing-down time in this background is of order 0.1 s, so
-# the collisionless examples' 1e-5 s window would show no slowing at
-# all.  1e-2 s costs a few tens of seconds on one GPU and takes about
-# a tenth of the birth energy off the confined population.
-tmax = 1e-2
 last_time = trace_particles_boozer_with_collisions_gpu(
     field,
     stz_inits,
@@ -139,13 +137,27 @@ particle_data = pd.DataFrame(
 )
 particle_data.to_csv("./particle_data.csv")
 
+t_end = last_time[:, 0]
+v_end = last_time[:, 5]
+lost = t_end < tmax
 
-did_leave = np.array([t < tmax for t in particle_data["last_time"]])
-loss_frac = did_leave.sum() / len(did_leave)
-# Averaged over confined particles only: a lost particle's speed is frozen
-# at the moment it left, so mixing them in would average over different
-# elapsed times.
-energy_fraction = ((particle_data["v_end"] / vpar0) ** 2)[~did_leave]
+grid = np.logspace(-6, np.log10(tmax), 200)
+particle_loss = np.array([np.sum(lost & (t_end <= t)) for t in grid]) / nparticles
+energy_loss = (
+    np.array([np.sum((v_end[lost & (t_end <= t)] / vpar0) ** 2) for t in grid])
+    / nparticles
+)
+
 print(f"Number of particles= {nparticles}")
-print(f"Loss fraction: {loss_frac:.3f}")
-print(f"Mean energy fraction of confined particles: {energy_fraction.mean():.4f}")
+print(f"Particle loss fraction: {particle_loss[-1]:.3f}")
+print(f"Energy loss fraction: {energy_loss[-1]:.3f}")
+print(f"Mean energy fraction of confined: {np.mean((v_end[~lost] / vpar0) ** 2):.4f}")
+
+plt.figure()
+plt.loglog(grid, particle_loss, label="particle loss fraction")
+plt.loglog(grid, energy_loss, "--", label="energy loss fraction")
+plt.xlabel("Time [s]")
+plt.ylabel("Fraction lost to the wall")
+plt.legend()
+plt.tight_layout()
+plt.savefig("loss_fractions.png")

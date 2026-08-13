@@ -1,3 +1,5 @@
+import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
@@ -8,7 +10,6 @@ from simsopt.field import (
     coils_via_symmetries,
     load_coils_from_makegrid_file,
 )
-from simsopt.field.sampling import draw_uniform_on_surface
 from simsopt.geo import SurfaceRZFourier
 
 from firm3d.catapult.tracing import trace_particles_cartesian_with_collisions_gpu
@@ -19,6 +20,7 @@ from firm3d.field.boozermagneticfield import (
 from firm3d.field.collisions import ThermalBackground
 from firm3d.field.coordinates import boozer_to_cylindrical
 from firm3d.field.tracing_helpers import (
+    initialize_position_profile,
     initialize_velocity_uniform,
 )
 from firm3d.util.constants import (
@@ -30,9 +32,14 @@ from firm3d.util.constants import (
     PROTON_MASS,
 )
 
+matplotlib.use("Agg")  # Don't use an interactive backend
+
 degree = 3  # degree of interpolant
 n = 16  # resolution of interpolant
 order = 12  # order of coil curves
+nparticles = 1000
+tmax = 2e-1
+tol = 1e-8
 
 filename = "../inputs/coils.curves_22_7_21"
 wout_filename = "../inputs/wout_aten_rescaled.nc"
@@ -50,8 +57,6 @@ for _i, coil in enumerate(coils):
 coils_full = coils_via_symmetries(curves, currents, surf.nfp, True)
 bs = BiotSavart(coils_full)
 
-surf_launch = SurfaceRZFourier.from_wout(wout_filename, s=0.3)
-
 sc_particle = SurfaceClassifier(surf, h=0.1, p=2)
 rs = np.linalg.norm(surf.gamma()[:, :, 0:2], axis=2)
 zs = surf.gamma()[:, :, 2]
@@ -64,17 +69,7 @@ bsh = InterpolatedField(
     bs, degree, rrange, phirange, zrange, True, nfp=surf.nfp, stellsym=True
 )
 
-# The thermal profiles are functions of the normalized flux s, which the
-# Cartesian state does not carry, so the tracer needs it as a scalar field
-# s(r, phi, z) to interpolate alongside the magnetic field.  Build it from
-# the equilibrium that the coils were designed for: map a dense grid of
-# Boozer coordinates forward to cylindrical, then answer queries with the
-# s of the nearest mapped point.  Inverting the map with root finding per
-# query point would cost minutes; the label error here is set by the sample
-# spacing, well below what the collision rates resolve.  Points outside the
-# plasma inherit s ~ 1 from the nearest boundary sample, which is harmless:
-# the profile lookup clamps to its grid, and such particles are terminated
-# by the boundary check anyway.
+# Build the normalized toroidal flux s(r, phi, z) for evaluation of profiles.
 bri = BoozerRadialInterpolant(wout_filename, 3, enforce_vacuum=True)
 bfield = InterpolatedBoozerField(bri, 3, ns_interp=n, ntheta_interp=n, nzeta_interp=n)
 
@@ -107,11 +102,26 @@ def flux_label(points_rphiz):
     return s_samples[idx]
 
 
+# Fusion-reactivity birth distribution, sampled in Boozer coordinates and
+# mapped through the equilibrium.
+nD = lambda s: 1 - s**5  # Normalized density
+T_keV = lambda s: 11.5 * (1 - s)
+
+
+def sigmav(T):
+    if T > 0:
+        return T ** (-2 / 3) * np.exp(-19.94 * T ** (-1 / 3))
+    else:
+        return 0
+
+
+reactivity = lambda s: nD(s) * nD(s) * sigmav(T_keV(s))
+
 # Background plasma the alphas collide with: a 50/50 DT fuel mix and the
 # electrons that neutralize it.  Temperature is in eV at this interface.
 n_ref = 1e20  # m^-3
-ne = lambda s: n_ref * (1 - s**5)
-Te = lambda s: 11.5e3 * (1 - s)
+ne = lambda s: n_ref * nD(s)
+Te = lambda s: 1e3 * T_keV(s)
 
 backgrounds = [
     ThermalBackground(
@@ -134,18 +144,20 @@ backgrounds = [
     ),
 ]
 
-# sample particles from surface
-nparticles = 1000
-xyz, _ = draw_uniform_on_surface(surf_launch, nparticles, safetyfactor=10)
+np.random.seed(8)
+stz_inits = initialize_position_profile(bfield, nparticles, reactivity)
+cyl_inits = boozer_to_cylindrical(bfield, stz_inits)
+xyz = np.column_stack(
+    [
+        cyl_inits[:, 0] * np.cos(cyl_inits[:, 1]),
+        cyl_inits[:, 0] * np.sin(cyl_inits[:, 1]),
+        cyl_inits[:, 2],
+    ]
+)
 
 vpar0 = np.sqrt(2 * FUSION_ALPHA_PARTICLE_ENERGY / ALPHA_PARTICLE_MASS)
 vpar_inits = initialize_velocity_uniform(vpar0, nparticles)
 
-# The alpha slowing-down time in this background is of order 0.1 s, so
-# the collisionless examples' 1e-5 s window would show no slowing at
-# all.  1e-2 s costs a few tens of seconds on one GPU and takes about
-# a tenth of the birth energy off the confined population.
-tmax = 1e-2
 last_time = trace_particles_cartesian_with_collisions_gpu(
     bsh,
     sc_particle,
@@ -157,12 +169,10 @@ last_time = trace_particles_cartesian_with_collisions_gpu(
     mass=ALPHA_PARTICLE_MASS,
     charge=ALPHA_PARTICLE_CHARGE,
     vtotal=vpar0,
-    tol=1e-8,
+    tol=tol,
     rng_seed=0,
 )
-# The collisional output has seven columns rather than six: the total speed
-# is reported before the final step size, because collisions change it and
-# it is no longer recoverable from the launch energy.
+
 particle_data = pd.DataFrame(
     {
         "x_start": xyz[:, 0],
@@ -180,13 +190,27 @@ particle_data = pd.DataFrame(
 )
 particle_data.to_csv("./particle_data.csv")
 
+t_end = last_time[:, 0]
+v_end = last_time[:, 5]
+lost = t_end < tmax
 
-did_leave = np.array([t < tmax for t in particle_data["last_time"]])
-loss_frac = did_leave.sum() / len(did_leave)
-# Averaged over confined particles only: a lost particle's speed is frozen
-# at the moment it left, so mixing them in would average over different
-# elapsed times.
-energy_fraction = ((particle_data["v_end"] / vpar0) ** 2)[~did_leave]
+grid = np.logspace(-6, np.log10(tmax), 200)
+particle_loss = np.array([np.sum(lost & (t_end <= t)) for t in grid]) / nparticles
+energy_loss = (
+    np.array([np.sum((v_end[lost & (t_end <= t)] / vpar0) ** 2) for t in grid])
+    / nparticles
+)
+
 print(f"Number of particles= {nparticles}")
-print(f"Loss fraction: {loss_frac:.3f}")
-print(f"Mean energy fraction of confined particles: {energy_fraction.mean():.4f}")
+print(f"Particle loss fraction: {particle_loss[-1]:.3f}")
+print(f"Energy loss fraction: {energy_loss[-1]:.3f}")
+print(f"Mean energy fraction of confined: {np.mean((v_end[~lost] / vpar0) ** 2):.4f}")
+
+plt.figure()
+plt.loglog(grid, particle_loss, label="particle loss fraction")
+plt.loglog(grid, energy_loss, "--", label="energy loss fraction")
+plt.xlabel("Time [s]")
+plt.ylabel("Fraction lost to the wall")
+plt.legend()
+plt.tight_layout()
+plt.savefig("loss_fractions.png")
