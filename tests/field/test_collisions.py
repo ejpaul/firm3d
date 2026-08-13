@@ -809,6 +809,105 @@ class TestUnphysicalCoulombLog(unittest.TestCase):
         self.assertTrue(issubclass(hits[0].category, RuntimeWarning))
 
 
+class TestCartesianCollisionValidation(unittest.TestCase):
+    """
+    Python-layer validation of the Cartesian collisional GPU entry point.
+
+    Every check here fires before any GPU call, so these run without CUDA;
+    the field and classifier arguments are placeholders that must never be
+    touched.
+    """
+
+    @staticmethod
+    def _trace(**overrides):
+        from firm3d.catapult.tracing import (
+            trace_particles_cartesian_with_collisions_gpu,
+        )
+
+        kw = {
+            "field": None,
+            "surface_classifier": None,
+            "flux_label": lambda pts: np.full(pts.shape[0], 0.5),
+            "xyz_inits": np.zeros((4, 3)),
+            "parallel_speeds": np.zeros(4),
+            "backgrounds": _hot_background(),
+            "tmax": 1e-8,
+            "mass": ALPHA_PARTICLE_MASS,
+            "charge": ALPHA_PARTICLE_CHARGE,
+            "vtotal": 1e6,
+            "tol": 1e-8,
+        }
+        kw.update(overrides)
+        return trace_particles_cartesian_with_collisions_gpu(**kw)
+
+    def test_missing_flux_label_is_refused(self):
+        """
+        Without the label column the kernel would read the 8-column layout
+        off a 7-column array, so None must be refused before any tracing.
+        """
+        with self.assertRaises(ValueError) as cm:
+            self._trace(flux_label=None)
+        self.assertIn("flux_label", str(cm.exception))
+
+    def test_empty_backgrounds_are_refused(self):
+        with self.assertRaises(ValueError) as cm:
+            self._trace(backgrounds=[])
+        self.assertIn("collisionless", str(cm.exception))
+
+    def test_mismatched_parallel_speeds_are_refused(self):
+        with self.assertRaises(ValueError) as cm:
+            self._trace(parallel_speeds=np.zeros(3))
+        self.assertIn("parallel_speeds", str(cm.exception))
+
+
+class TestCartesianFluxLabelColumn(unittest.TestCase):
+    """
+    Python-layer validation of the flux-label column, with stub field and
+    classifier objects.  The column's values are checked end-to-end on GPU
+    hardware by test_cartesian_collision_interpolant, so only the column
+    count and the rejection of bad label output are covered here.
+    """
+
+    class _StubField:
+        r_range = (1.0, 2.0, 2)
+        phi_range = (0.0, np.pi, 2)
+        z_range = (0.0, 0.5, 2)
+
+        def set_points_cyl(self, pts):
+            self._pts = pts
+
+        def B_cyl(self):
+            return np.zeros((self._pts.shape[0], 3))
+
+        def GradAbsB_cyl(self):
+            return np.zeros((self._pts.shape[0], 3))
+
+    class _StubClassifier:
+        def evaluate_rphiz(self, pts):
+            return np.ones((pts.shape[0], 1))
+
+    def _interpolant(self, **kwargs):
+        from firm3d.catapult.utils import cartesian_interpolant
+
+        return cartesian_interpolant(
+            self._StubField(), self._StubClassifier(), **kwargs
+        )
+
+    def test_label_column_count_and_validation(self):
+        _, _, _, quad = self._interpolant(flux_label=lambda pts: np.ones(len(pts)))
+        self.assertEqual(quad.shape[1], 8)
+
+        _, _, _, quad = self._interpolant()
+        self.assertEqual(quad.shape[1], 7)
+
+        with self.assertRaises(ValueError) as cm:
+            self._interpolant(flux_label=lambda pts: np.full(len(pts), np.nan))
+        self.assertIn("non-finite", str(cm.exception))
+
+        with self.assertRaises(ValueError):
+            self._interpolant(flux_label=lambda pts: np.ones(3))
+
+
 class TestCollisionCoefficients(unittest.TestCase):
     """
     Unit tests for the shipped collision coefficients, reached through the

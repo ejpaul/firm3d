@@ -2,6 +2,7 @@ __all__ = [
     "trace_particles_boozer_gpu",
     "trace_particles_boozer_with_collisions_gpu",
     "trace_particles_cartesian_gpu",
+    "trace_particles_cartesian_with_collisions_gpu",
 ]
 import numpy as np
 
@@ -192,6 +193,132 @@ def trace_particles_cartesian_gpu(
     )
     last_time = np.reshape(last_time, (nparticles, 6))
     return last_time
+
+
+def trace_particles_cartesian_with_collisions_gpu(
+    field,
+    surface_classifier,
+    flux_label,
+    xyz_inits,
+    parallel_speeds,
+    backgrounds,
+    tmax,
+    mass,
+    charge,
+    vtotal,
+    tol,
+    dt=None,
+    rng_seed=0,
+):
+    """
+    Trace particles in Cartesian coordinates on the GPU, including Monte
+    Carlo Coulomb collisions.
+
+    The collision operator matches
+    :func:`trace_particles_boozer_with_collisions_gpu`.  The thermal
+    profiles remain functions of the flux label ``s``; since the Cartesian
+    state does not carry ``s``, ``flux_label`` supplies it as a scalar field
+    that is interpolated alongside the magnetic field and evaluated at the
+    particle position after each accepted orbit step.
+
+    The output has seven columns: ``[t, x, y, z, v_par, v, dt]``; see
+    :func:`trace_particles_boozer_with_collisions_gpu` for why the total
+    speed ``v`` is reported and for the other differences from CPU tracing.
+
+    Args:
+        field: InterpolatedField object (simsopt) defined in cylindrical
+            coordinates, as in :func:`trace_particles_cartesian_gpu`.
+        surface_classifier: SurfaceClassifier object for detecting the
+            plasma boundary.
+        flux_label: Callable mapping an ``(N, 3)`` array of cylindrical
+            points ``(r, phi, z)`` to the flux label ``s`` the background
+            profiles are parametrized by, e.g. built from
+            :class:`~firm3d.field.coordinates.BoozerCoordinateTransformer`.
+            It must return finite values on the whole interpolation grid;
+            values above 1 outside the plasma are clamped by the profile
+            lookup.
+        xyz_inits: ``(nparticles, 3)`` array of initial ``(x, y, z)``.
+        parallel_speeds: ``(nparticles,)`` array of initial ``v_par`` in m/s.
+        backgrounds: A :class:`~firm3d.field.collisions.ThermalBackground` or
+            a list of them; coefficients are summed over species.
+        tmax: Integration time in seconds.
+        mass: EP mass in kg.
+        charge: EP charge in C.
+        vtotal: Initial speed of every particle, in m/s.
+        tol: Tolerance for the adaptive step control.
+        dt: Initial step size; ``None`` lets the tracer choose.
+        rng_seed: Base seed.  Each particle uses a Philox stream keyed on its
+            global index, so results do not depend on the block layout.
+
+    Returns:
+        ``(nparticles, 7)`` array of final states,
+        ``[t, x, y, z, v_par, v, dt]``.
+
+    Raises:
+        ValueError: If ``backgrounds`` is empty or holds more than
+            ``firm3dpp.COLL_MAX_SPECIES`` species; if ``parallel_speeds``
+            does not match ``xyz_inits`` in length or exceeds ``vtotal`` in
+            magnitude; if ``flux_label`` returns non-finite values on the
+            grid; or if the profiles give an unphysical Coulomb logarithm.
+    """
+    from firm3d.field.collisions import (
+        ThermalBackground,
+        _validate_coulomb_log,
+        _validate_species_count,
+    )
+
+    nparticles = xyz_inits.shape[0]
+
+    if not callable(flux_label):
+        raise ValueError(
+            "flux_label must be callable; the collisional kernel reads the "
+            "flux label as an interpolant column, so tracing without one is "
+            "not possible -- use trace_particles_cartesian_gpu for a "
+            "collisionless trace"
+        )
+
+    if len(parallel_speeds) != nparticles:
+        raise ValueError(
+            f"parallel_speeds has length {len(parallel_speeds)} but xyz_inits "
+            f"has {nparticles} rows; the C++ layer indexes both by particle "
+            f"and would read past the shorter one"
+        )
+
+    _validate_parallel_speeds(parallel_speeds, vtotal)
+    parallel_speeds = np.asarray(parallel_speeds)
+
+    if isinstance(backgrounds, ThermalBackground):
+        backgrounds = [backgrounds]
+    if len(backgrounds) == 0:
+        raise ValueError(
+            "backgrounds is empty; use trace_particles_cartesian_gpu for a "
+            "collisionless trace"
+        )
+    _validate_species_count(backgrounds)
+    cpp_backgrounds = [b._to_cpp() for b in backgrounds]
+    _validate_coulomb_log(cpp_backgrounds, float(mass), float(charge))
+
+    r_range, phi_range, z_range, quad_info = cartesian_interpolant(
+        field, surface_classifier, flux_label=flux_label
+    )
+    last_time = firm3dpp.cartesian_collision_gpu_tracing(
+        quad_pts=quad_info,
+        rrange=r_range,
+        phirange=phi_range,
+        zrange=z_range,
+        xyz_init=xyz_inits,
+        m=mass,
+        q=charge,
+        vtotal=vtotal,
+        vtang=parallel_speeds,
+        tmax=tmax,
+        tol=tol,
+        dt_in=-np.ones(nparticles) if dt is None else dt * np.ones(nparticles),
+        nparticles=nparticles,
+        backgrounds=cpp_backgrounds,
+        rng_seed=int(rng_seed),
+    )
+    return np.reshape(last_time, (nparticles, 7))
 
 
 def trace_particles_boozer_with_collisions_gpu(

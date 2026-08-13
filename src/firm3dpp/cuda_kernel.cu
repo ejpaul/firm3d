@@ -31,7 +31,7 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 
 // enum used for templating
 // https://stackoverflow.com/questions/9116267/how-can-i-use-an-enumeration-as-a-template-parameter
-enum class RHS {GC_CartesianVacuum, GC_BoozerVacuum, GC_Boozer, GC_BoozerVacuumSAW, GC_BoozerNoKSAW};
+enum class RHS {GC_CartesianVacuum, GC_CartesianVacuumColl, GC_BoozerVacuum, GC_Boozer, GC_BoozerVacuumSAW, GC_BoozerNoKSAW};
 
 enum class CoordSys {Cartesian, Boozer};
 
@@ -39,7 +39,7 @@ template<RHS id>
 __host__ __device__ constexpr CoordSys map_rhs_to_coord(){
     if constexpr(id == RHS::GC_BoozerVacuum || id == RHS::GC_Boozer || id == RHS::GC_BoozerVacuumSAW || id == RHS::GC_BoozerNoKSAW){
         return CoordSys::Boozer;
-    } else if constexpr (id == RHS::GC_CartesianVacuum) {
+    } else if constexpr (id == RHS::GC_CartesianVacuum || id == RHS::GC_CartesianVacuumColl) {
         return CoordSys::Cartesian;
     }
 }
@@ -161,6 +161,35 @@ template <int n> __device__ void interpolate(double*  out, const double* __restr
     }
 }
 
+// interpolate_one_column evaluates a single column of the cell-ordered
+// quad-point data for the calling thread alone, reusing the cell index and
+// shape values build_state computed for this particle.
+//
+// It exists because the collision kick runs per-thread inside the accept
+// branch of the step controller, where the block-cooperative interpolate()
+// above cannot be called.  NCOLS is the row stride of the data.
+template <int NCOLS>
+__device__ double interpolate_one_column(const double* __restrict__ data, int col,
+    const int* __restrict__ index_i, const int* __restrict__ index_j, const int* __restrict__ index_k,
+    const double* __restrict__ x1_shape, const double* __restrict__ x2_shape, const double* __restrict__ x3_shape){
+    const int tid = threadIdx.x;
+    int i = index_i[tid];
+    int j = index_j[tid];
+    int k = index_k[tid];
+
+    double local_val = 0.0;
+    for(int ii=0; ii<4; ++ii){
+        for(int jj=0; jj<4; ++jj){
+            for(int kk=0; kk<4; ++kk){
+                int row_idx = 64*(i*n_x23_d + j*n_x3_d + k) + 16*ii + 4*jj + kk;
+                double shape_val = x1_shape[ii*PARTICLES_PER_BLOCK + tid] * x2_shape[jj*PARTICLES_PER_BLOCK + tid] * x3_shape[kk*PARTICLES_PER_BLOCK + tid];
+                local_val += data[NCOLS*row_idx + col] * shape_val;
+            }
+        }
+    }
+    return local_val;
+}
+
 // calc_derivs computes the derivatives at points for which the corresponding
 // i,j,k indices and shape functions have been precomputed
 // the results are stored in the appropriate region of derivs
@@ -175,16 +204,21 @@ __device__ void calc_derivs(double* derivs, int deriv_id, double* quadpts_arr, d
 };
 
 
-// calc_derivs implementation for guiding center cartesian vacuum tracing
-template <> 
-__device__ void calc_derivs<RHS::GC_CartesianVacuum>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited, 
+// ---------------------------------------------------------------------------
+// Guiding center cartesian vacuum right-hand side, shared by the
+// collisionless and collisional instantiations.  NCOLS is the number of
+// interpolated columns: 7 normally, 8 when the flux-label column rides along
+// for the collision kick.
+// ---------------------------------------------------------------------------
+template <int NCOLS>
+__device__ void cartesian_vacuum_derivs(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited,
                                     int* index_i, int* index_j, int* index_k, double* x1_shape, double* x2_shape, double* x3_shape,
                                     double* mu, int nparticles_blk){
 
-    __shared__ double block_interpolants[7*PARTICLES_PER_BLOCK];
+    __shared__ double block_interpolants[NCOLS*PARTICLES_PER_BLOCK];
 
     __syncthreads();
-    interpolate<7>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
+    interpolate<NCOLS>(block_interpolants, quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, nparticles_blk);
     __syncthreads();
 
     if(threadIdx.x < nparticles_blk){
@@ -227,6 +261,22 @@ __device__ void calc_derivs<RHS::GC_CartesianVacuum>(double* derivs, int deriv_i
         derivs[(6*deriv_id + 4)*PARTICLES_PER_BLOCK + threadIdx.x] = AbsB; // AbsB
         derivs[(6*deriv_id + 5)*PARTICLES_PER_BLOCK + threadIdx.x] = block_interpolants[6*PARTICLES_PER_BLOCK + threadIdx.x]; // boundary dist fn
     }
+}
+
+template <>
+__device__ void calc_derivs<RHS::GC_CartesianVacuum>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited,
+                                    int* index_i, int* index_j, int* index_k, double* x1_shape, double* x2_shape, double* x3_shape,
+                                    double* mu, int nparticles_blk){
+    cartesian_vacuum_derivs<7>(derivs, deriv_id, quadpts_arr, x_temp, symmetry_exploited,
+                               index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, mu, nparticles_blk);
+}
+
+template <>
+__device__ void calc_derivs<RHS::GC_CartesianVacuumColl>(double* derivs, int deriv_id, double* quadpts_arr, double* x_temp, bool* symmetry_exploited,
+                                    int* index_i, int* index_j, int* index_k, double* x1_shape, double* x2_shape, double* x3_shape,
+                                    double* mu, int nparticles_blk){
+    cartesian_vacuum_derivs<8>(derivs, deriv_id, quadpts_arr, x_temp, symmetry_exploited,
+                               index_i, index_j, index_k, x1_shape, x2_shape, x3_shape, mu, nparticles_blk);
 }
 
 
@@ -824,18 +874,19 @@ __device__ void check_has_left<CoordSys::Boozer>(bool* has_left, double* state, 
 
 // ---------------------------------------------------------------------------
 // Collision kick, applied to (v, xi) after an accepted orbit step.
+//
+// s_flux is the flux label at the post-step position; the caller computes it
+// from whatever its coordinate system provides (the Boozer state carries it
+// directly, the Cartesian path interpolates it).
 // ---------------------------------------------------------------------------
 __device__ void collision_kick(double* state, double* mu, double* derivs,
-                               double dt_taken,
+                               double dt_taken, double s_flux,
                                curandStatePhilox4_32_10_t* rng,
                                double* v_out)
 {
     if (coll_n_backgrounds_d <= 0) return;
 
     const int tid = threadIdx.x;
-    double x1 = state[0*PARTICLES_PER_BLOCK + tid];
-    double x2 = state[1*PARTICLES_PER_BLOCK + tid];
-    double s_flux = sqrt(x1*x1 + x2*x2);
     double v_par  = state[3*PARTICLES_PER_BLOCK + tid];
     double B      = derivs[(6*6 + 4)*PARTICLES_PER_BLOCK + tid];   // stage 6 AbsB
 
@@ -875,11 +926,11 @@ __device__ void collision_kick(double* state, double* mu, double* derivs,
 // this function estimates error, accepts/rejects the proposed step
 // and adjust the step size
 template<RHS id>
-// mu and rng default to null so callers that do not trace physics -- the
-// timestep probe kernel -- opt out of the collision kick explicitly.
 __device__ void adjust_time(double* t, double* dt, double* state, double* derivs, double* x_temp, bool* has_left, double* dtmax,
                             double* mu = nullptr, curandStatePhilox4_32_10_t* rng = nullptr,
-                            double* v_out = nullptr){
+                            double* v_out = nullptr, double* quadpts_arr = nullptr,
+                            int* index_i = nullptr, int* index_j = nullptr, int* index_k = nullptr,
+                            double* x1_shape = nullptr, double* x2_shape = nullptr, double* x3_shape = nullptr){
     if(has_left[threadIdx.x] || t[threadIdx.x] >= tmax_d){
         return;
     }
@@ -938,7 +989,15 @@ __device__ void adjust_time(double* t, double* dt, double* state, double* derivs
         constexpr CoordSys coord = map_rhs_to_coord<id>();
         if constexpr (coord == CoordSys::Boozer) {
             if (mu != nullptr && rng != nullptr && v_out != nullptr) {
-                collision_kick(state, mu, derivs, dt_accepted, rng, v_out);
+                double x1 = state[0*PARTICLES_PER_BLOCK + threadIdx.x];
+                double x2 = state[1*PARTICLES_PER_BLOCK + threadIdx.x];
+                collision_kick(state, mu, derivs, dt_accepted, sqrt(x1*x1 + x2*x2), rng, v_out);
+            }
+        } else if constexpr (id == RHS::GC_CartesianVacuumColl) {
+            if (mu != nullptr && rng != nullptr && v_out != nullptr && coll_n_backgrounds_d > 0) {
+                double s_flux = interpolate_one_column<8>(quadpts_arr, 7,
+                    index_i, index_j, index_k, x1_shape, x2_shape, x3_shape);
+                collision_kick(state, mu, derivs, dt_accepted, s_flux, rng, v_out);
             }
         }
         check_has_left<coord>(has_left, state, derivs);
@@ -1019,7 +1078,8 @@ __global__ void particle_trace_kernel(double* out, double* init_pos, double* qua
 
         __syncthreads();
         if(is_valid){
-            adjust_time<id>(t, dt, state, derivs, x_temp, has_left, dtmax, mu, &rng_state[threadIdx.x], v_tot);
+            adjust_time<id>(t, dt, state, derivs, x_temp, has_left, dtmax, mu, &rng_state[threadIdx.x], v_tot,
+                            quadpts_arr, index_i, index_j, index_k, x1_shape, x2_shape, x3_shape);
         }
         __syncthreads();
     }
@@ -1191,6 +1251,27 @@ extern "C" vector<double> cartesian_gpu_tracing(py::array_t<double> quad_pts, py
         double tmax, double tol, py::array_t<double> dt_in, int nparticles){
             return gpu_tracing<RHS::GC_CartesianVacuum>(quad_pts, rrange, phirange, zrange, xyz_init, m, q, vtotal, vtang, tmax, tol, dt_in, nparticles);
         }
+
+// Collisional Cartesian tracing.  Identical to cartesian_gpu_tracing apart
+// from uploading the background profiles and a seed, and reading the
+// 8-column quad-point layout whose last column is the flux label the
+// profiles are parametrized by.
+extern "C" vector<double> cartesian_collision_gpu_tracing(py::array_t<double> quad_pts, py::array_t<double> rrange,
+        py::array_t<double> phirange, py::array_t<double> zrange, py::array_t<double> xyz_init, double m, double q, double vtotal, py::array_t<double> vtang,
+        double tmax, double tol, py::array_t<double> dt_in, int nparticles,
+        const vector<ThermalBackground>& backgrounds, unsigned long long rng_seed=0){
+
+    vector<double*> owned = upload_collision_backgrounds(backgrounds, rng_seed);
+
+    vector<double> results = gpu_tracing<RHS::GC_CartesianVacuumColl, 7>(quad_pts, rrange, phirange, zrange, xyz_init, m, q, vtotal, vtang, tmax, tol, dt_in, nparticles);
+
+    // Switch collisions back off and release the profile buffers.
+    int zero = 0;
+    gpuErrchk(cudaMemcpyToSymbol(coll_n_backgrounds_d, &zero, sizeof(int)));
+    for (double* p : owned) gpuErrchk(cudaFree(p));
+
+    return results;
+}
 
 
 // Collisional Boozer tracing.  Identical to boozer_gpu_tracing apart from
@@ -1418,7 +1499,9 @@ __device__ void account_for_symmetry<CoordSys::Boozer>(double* interpolants, boo
 template<RHS id, int n>
 __device__ void account_for_symmetry_rhs(double* interpolants, bool* symmetry_exploited){
     if(!symmetry_exploited[threadIdx.x]) return;
-    if constexpr (id == RHS::GC_CartesianVacuum){
+    if constexpr (id == RHS::GC_CartesianVacuum || id == RHS::GC_CartesianVacuumColl){
+        // B_r, GradAbsB_phi, GradAbsB_z flip; the signed distance and the
+        // flux-label column (when present) are stellarator symmetric.
         interpolants[0] *= -1.0;
         interpolants[4] *= -1.0;
         interpolants[5] *= -1.0;
@@ -1504,7 +1587,7 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
     
     // map input data
     // Cartesian Coordinates
-    if(rhs == "cartesian_vacuum"){
+    if(rhs == "cartesian_vacuum" || rhs == "cartesian_vacuum_coll"){
         for(int i=0; i<n_points; ++i){
             double x = loc_arr[3*i] * cos(loc_arr[3*i + 1]);
             double y = loc_arr[3*i] * sin(loc_arr[3*i + 1]);
@@ -1528,6 +1611,8 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
     int n;
     if(rhs == "cartesian_vacuum"){
         n = 7;
+    } else if(rhs == "cartesian_vacuum_coll"){
+        n = 8;
     } else if(rhs == "boozer_vacuum"){
         n = 6;
     } else if(rhs == "boozer_saw_vacuum"){
@@ -1578,6 +1663,8 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
 
     if(rhs == "cartesian_vacuum"){
         test_gpu_interpolation_kernel<RHS::GC_CartesianVacuum, 7><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
+    } else if(rhs == "cartesian_vacuum_coll") {
+        test_gpu_interpolation_kernel<RHS::GC_CartesianVacuumColl, 8><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
     } else if(rhs == "boozer_vacuum") {
         test_gpu_interpolation_kernel<RHS::GC_BoozerVacuum, 6><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
     } else if(rhs == "boozer_saw_vacuum") {

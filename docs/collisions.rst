@@ -224,8 +224,11 @@ Entry Points
    * - ``trace_particles_boozer_with_collisions_gpu``
      - ``firm3d.catapult.tracing``
      - Final state only, no stopping criteria, scalar ``vtotal``.
+   * - ``trace_particles_cartesian_with_collisions_gpu``
+     - ``firm3d.catapult.tracing``
+     - As above, in Cartesian coordinates; takes a ``flux_label`` callable.
 
-All three accept a single ``ThermalBackground`` or a list of them.
+All four accept a single ``ThermalBackground`` or a list of them.
 
 On the CPU entry points, ``ode_solver`` may be ``"dormand_prince"``
 (recommended) or ``"boost"``; ``"symplectic"`` is collisionless-only and is
@@ -427,3 +430,39 @@ particle, and :math:`\mu` is derived from it as
 :math:`|v_\parallel| > v_\mathrm{total}` would give a negative :math:`\mu` and
 is rejected. The GPU tracer requires ``field.field_type`` to be ``"vac"`` or
 ``""``.
+
+GPU Collisional Tracing in Cartesian Coordinates
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The thermal profiles are functions of the flux label :math:`s`, which the
+Cartesian state does not carry. ``trace_particles_cartesian_with_collisions_gpu``
+therefore takes a ``flux_label`` callable mapping cylindrical points
+``(r, phi, z)`` to :math:`s`; its values are interpolated on the same grid as
+the magnetic field and evaluated at the particle position after each accepted
+orbit step, so the same 1D profiles serve both coordinate systems. With an
+equilibrium available, the label can be built from
+:class:`~firm3d.field.coordinates.BoozerCoordinateTransformer`; it must
+return finite values on the whole grid box, and values above 1 outside the
+last closed flux surface are clamped by the profile lookup.
+
+.. code-block:: python
+
+   from firm3d.catapult.tracing import trace_particles_cartesian_with_collisions_gpu
+
+   final_states = trace_particles_cartesian_with_collisions_gpu(
+       field=bsh,                        # simsopt InterpolatedField
+       surface_classifier=sc_particle,   # simsopt SurfaceClassifier
+       flux_label=s_of_rphiz,            # (N, 3) cylindrical points -> s
+       xyz_inits=xyz,
+       parallel_speeds=vpar_init,
+       backgrounds=[deuterium, tritium, electrons],
+       tmax=1e-2,
+       mass=ALPHA_PARTICLE_MASS,
+       charge=ALPHA_PARTICLE_CHARGE,
+       vtotal=v0,
+       tol=1e-8,
+       rng_seed=42,
+   )
+
+   # (nparticles, 7): [t, x, y, z, v_par, v, dt]
+   v_final = final_states[:, 5]
