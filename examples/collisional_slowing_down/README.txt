@@ -1,0 +1,7 @@
+This example traces 5000 alpha particles in the Wistell-A configuration scaled to the size and field strength of ARIES-CS, including Monte Carlo Coulomb collisions with a 50/50 DT background and its electrons. Particles are initialized proportional to the fusion reactivity profile and traced until they reach the boundary (s=1) or the elapsed time is 1e-2 seconds. This is the collisional counterpart of the fusion_distribution example and uses the same configuration, birth distribution and integration time, so the two can be compared directly.
+
+Over 1e-2 seconds the confined population retains about 93% of the birth energy and 2% of particles are lost. The alpha slowing-down time in this background is of order 0.1 seconds, so this window shows the onset of slowing rather than full thermalization; tracing to 1e-1 seconds leaves about 40% of the birth energy but costs roughly ten times as long.
+
+Unlike the collisionless tracers, each trajectory carries the total speed in its final column, so the energy a particle retains is recovered per particle rather than assumed constant. The energy fraction is reported for confined particles only, since a lost particle's speed is frozen at the moment it left. DP_hmin floors the orbit step: the pitch-scattering rate grows as 1/v^3 as a particle thermalizes, and without a floor the adaptive step grinds down chasing it.
+
+On perlmutter (08.13.26), the wallclock time is about 4 minutes using the attached slurm script.

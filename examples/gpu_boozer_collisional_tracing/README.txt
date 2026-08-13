@@ -1,0 +1,7 @@
+This example traces 1000 alpha particles in the Wistell-A configuration scaled to the size and field strength of ARIES-CS, including Monte Carlo Coulomb collisions with a 50/50 DT background and its electrons. Particles are initialized proportional to the fusion reactivity profile and traced until they reach the boundary (s=1) or the elapsed time is 1e-2 seconds.
+
+The integration time is longer than in the collisionless gpu_boozer_tracing example because the alpha slowing-down time in this background is of order 0.1 seconds: over the 1e-5 seconds used there, collisions would change the energy by a part in 10^4. Over 1e-2 seconds the confined population retains about 93% of the birth energy, and 3% of particles are lost. Tracing for 1e-1 seconds instead costs about 4 minutes and leaves 40% of the birth energy, with 20% of particles lost.
+
+The output has seven columns, [t, s, theta, zeta, v_par, v, dt], one more than the collisionless tracer: collisions change the total speed, so it is reported rather than inferred from the launch energy. Each particle draws from a counter-based Philox stream keyed on its global index, so results are reproducible but differ from the CPU tracer, which uses a different generator; the two agree statistically rather than element by element.
+
+On perlmutter (08.13.26), the wallclock time is about 60 seconds using the attached slurm script, of which roughly 40 seconds is building the field interpolant.
