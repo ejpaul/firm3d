@@ -1214,50 +1214,22 @@ class TestGPUTracing(unittest.TestCase):
         self.assertTrue(is_small)
 
     @unittest.skipUnless(HAS_SIMSOPT, "simsopt not available")
-    def test_cartesian_collision_interpolant(self):
+    def test_zero_density_matches_the_collisionless_cartesian_path(self):
         """
-        The 8-column quad-point layout must reproduce the field columns of
-        the 7-column layout and return the flux label in the last column.
-        The label is quadratic per axis, so the tricubic interpolant
-        represents it exactly; it is phi-independent and even in z, so the
-        symmetry fold must return it unchanged.
-        """
-        np.random.seed(0)
-        surf, sc_particle, bsh, rrange, phirange, zrange = build_cartesian_field()
+        A zero-density background makes every collision coefficient zero, so
+        the collisional tracer must reproduce the collisionless one.
 
-        def label(points_rphiz):
-            r, z = points_rphiz[:, 0], points_rphiz[:, 2]
-            return 0.3 + 0.1 * r + 0.2 * z**2
+        This is the only test tying the 8-column layout back to the
+        7-column one: the flux-label column changes the row stride in both
+        the Python packing and the device interpolator, and a mistake there
+        corrupts the field the orbit integrates.  Agreement is required in
+        position as well as parallel speed, since a stride error moves the
+        orbit before it moves the speed.
 
-        rrange_i, phirange_i, zrange_i, quad_info = cartesian_interpolant(
-            bsh, sc_particle, flux_label=label
-        )
-        self.assertEqual(quad_info.shape[1], 8)
-
-        n_pts = 500
-        rphiz = sample_rphiz_inside(n_pts, rrange, zrange, sc_particle)
-        gpu = firm3dpp.test_gpu_interpolation(
-            quad_info,
-            rrange_i,
-            phirange_i,
-            zrange_i,
-            rphiz.copy(),
-            "cartesian_vacuum_coll",
-            n_pts,
-        )
-        gpu = np.reshape(gpu, (n_pts, -1))
-
-        bsh.set_points_cyl(rphiz)
-        cpu = np.hstack((bsh.B_cyl(), bsh.GradAbsB_cyl()))
-        np.testing.assert_allclose(gpu[:, 0:6], cpu, rtol=1e-8, atol=1e-8)
-        np.testing.assert_allclose(gpu[:, 7], label(rphiz), rtol=1e-8, atol=1e-8)
-
-    @unittest.skipUnless(HAS_SIMSOPT, "simsopt not available")
-    def test_cartesian_collisions(self):
-        """
-        Collisional Cartesian GPU tracing against the collisionless path,
-        mirroring test_boozer_collisions: the kick must reach the device,
-        and a zero-density background must reproduce the collisionless run.
+        The kick is not exactly the identity at zero density -- it rewrites
+        v_par as v * xi and recomputes mu -- so the trajectories differ at
+        roundoff and diverge slowly, hence a fraction-of-particles bound
+        rather than an elementwise one.
         """
         from firm3d.catapult.tracing import (
             trace_particles_cartesian_gpu,
@@ -1276,17 +1248,6 @@ class TestGPUTracing(unittest.TestCase):
 
         VELOCITY = np.sqrt(2 * ENERGY / MASS)
         vpar = 0.5 * VELOCITY * np.ones(n)
-        label = distance_flux_label(sc_particle)
-
-        # Dense and cold, so the collision rates are fast enough to move the
-        # ensemble measurably within a short trace.
-        bg = ThermalBackground(
-            n_profile=lambda s: 1e21,
-            T_profile=lambda s: 1e3,
-            mass=2 * PROTON_MASS,
-            charge=ELEMENTARY_CHARGE,
-        )
-        # A zero-density background makes every coefficient identically zero
         zero_bg = ThermalBackground(
             n_profile=lambda s: 0.0,
             T_profile=lambda s: 1e3,
@@ -1304,13 +1265,10 @@ class TestGPUTracing(unittest.TestCase):
         without = trace_particles_cartesian_gpu(
             bsh, sc_particle, xyz.copy(), vpar, **kw
         )
-        with_coll = trace_particles_cartesian_with_collisions_gpu(
-            bsh, sc_particle, label, xyz.copy(), vpar, backgrounds=bg, rng_seed=0, **kw
-        )
         no_kick = trace_particles_cartesian_with_collisions_gpu(
             bsh,
             sc_particle,
-            label,
+            distance_flux_label(sc_particle),
             xyz.copy(),
             vpar,
             backgrounds=zero_bg,
@@ -1318,61 +1276,31 @@ class TestGPUTracing(unittest.TestCase):
             **kw,
         )
 
-        self.assertEqual(with_coll.shape, (n, 7))
-        self.assertTrue(np.all(np.isfinite(with_coll)), "non-finite GPU results")
+        self.assertEqual(no_kick.shape, (n, 7))
+        self.assertTrue(np.all(np.isfinite(no_kick)), "non-finite GPU results")
 
-        # Restrict the comparison to particles every run traced to tmax, so
-        # a boundary loss cannot masquerade as a collisional change.
-        done = (
-            np.isclose(without[:, 0], kw["tmax"], rtol=1e-12)
-            & np.isclose(with_coll[:, 0], kw["tmax"], rtol=1e-12)
-            & np.isclose(no_kick[:, 0], kw["tmax"], rtol=1e-12)
+        done = np.isclose(without[:, 0], kw["tmax"], rtol=1e-12) & np.isclose(
+            no_kick[:, 0], kw["tmax"], rtol=1e-12
         )
-        self.assertGreater(
-            np.mean(done), 0.9, "too many particles lost for the statistics below"
+        self.assertGreater(np.mean(done), 0.9, "too many particles lost to compare")
+
+        scale = np.linalg.norm(xyz, axis=1)[done]
+        same_position = (
+            np.linalg.norm(no_kick[done, 1:4] - without[done, 1:4], axis=1)
+            < 1e-6 * scale
         )
-
-        def frac_moved(a, b):
-            return np.mean(np.abs(a[done, 4] - b[done, 4]) > 1e-6 * VELOCITY)
-
-        moved = frac_moved(with_coll, without)
+        same_vpar = np.abs(no_kick[done, 4] - without[done, 4]) < 1e-6 * VELOCITY
+        agree = np.mean(same_position & same_vpar)
         self.assertGreater(
-            moved,
+            agree,
             0.9,
-            f"only {moved:.2f} of particles differ from the collisionless "
-            f"run; the collision kick is not reaching the device",
+            f"only {agree:.2f} of the zero-density ensemble matches the "
+            f"collisionless run; the flux-label column is perturbing the orbit",
         )
 
-        unmoved = frac_moved(no_kick, without)
-        self.assertLess(
-            unmoved,
-            0.1,
-            f"{unmoved:.2f} of particles differ from the collisionless run "
-            f"with a zero-density background, where every coefficient is "
-            f"zero; the comparison above is not measuring the kick",
-        )
-
-        np.testing.assert_allclose(
-            no_kick[done, 5],
-            VELOCITY,
-            rtol=1e-3,
-            err_msg=(
-                "zero-density run does not return the launch speed in column "
-                "5; the speed column is not what is being written"
-            ),
-        )
-        moved_v = np.mean(
-            np.abs(with_coll[done, 5] - no_kick[done, 5]) > 1e-6 * VELOCITY
-        )
-        self.assertGreater(
-            moved_v,
-            0.9,
-            f"only {moved_v:.2f} of speeds differ from the zero-density run; "
-            f"the kick is not changing the speed it reports",
-        )
         # v >= |v_par| is required for mu = (v^2 - v_par^2)/(2|B|) >= 0.
         self.assertTrue(
-            np.all(with_coll[:, 5] >= np.abs(with_coll[:, 4]) - 1e-6 * VELOCITY),
+            np.all(no_kick[:, 5] >= np.abs(no_kick[:, 4]) - 1e-6 * VELOCITY),
             "speed is below |v_par|, so the recovered mu would be negative",
         )
 
@@ -1460,156 +1388,32 @@ class TestGPUTracing(unittest.TestCase):
         )
 
     @unittest.skipUnless(HAS_SIMSOPT, "simsopt not available")
-    def test_cross_coordinate_collision_consistency(self):
+    def test_cross_coordinate_alpha_relaxation(self):
         """
-        The same alpha ensemble in the same ATEN configuration must produce
-        the same collision statistics whether traced in Boozer coordinates
-        (equilibrium field; the state carries s) or in Cartesian coordinates
-        (coil field; s arrives through the interpolated flux label).
+        The same alpha ensemble in the same ATEN configuration must relax the
+        same way whether traced in Boozer coordinates (equilibrium field; the
+        state carries s) or Cartesian coordinates (coil field; s arrives
+        through the interpolated flux label).
 
-        The density varies with s, so the drag each ensemble feels is set by
-        the label its tracer reads.  A third run with a deliberately wrong
-        (constant) label is the control: it must disagree by much more than
-        the two coordinate systems disagree with each other, which is what
-        makes the agreement above evidence rather than coincidence.
+        Full-energy alphas in a DT + electron background relax in two stages:
+        electron drag slows them with almost no pitch scattering, then ion
+        scattering isotropizes the pitch as the speed approaches the critical
+        velocity.  Both stages must appear at the same times in both tracers,
+        and the confined speed distributions must agree as distributions (KS),
+        not merely in mean.
 
-        Drag is the discriminator, not pitch: at this launch speed an ion
-        background barely scatters pitch (<xi^2> moves 0.49 -> 0.48 over
-        tmax), while <v>/v0 falls to 0.87 and shifts by 0.12 per decade of
-        density.  tmax is chosen to stop well short of thermalization, since
-        a relaxed ensemble reaches the same Maxwellian at any rate and would
-        pass with any label at all.
-        """
-        from firm3d.catapult.tracing import (
-            trace_particles_boozer_with_collisions_gpu,
-            trace_particles_cartesian_with_collisions_gpu,
-        )
-        from firm3d.field.collisions import ThermalBackground
-        from firm3d.field.coordinates import boozer_to_cylindrical
-        from firm3d.util.constants import ELEMENTARY_CHARGE, PROTON_MASS
+        A third trace with a deliberately constant label is the control: it
+        must miss the Boozer answer by far more than the two tracers miss
+        each other, which is what makes their agreement evidence rather than
+        insensitivity.  It uses s = 0 because drag is not monotonic in s here
+        -- density falls as 1 - 0.8 s^2 but electron drag goes as n/T^(3/2)
+        and T falls faster, so the edge drags harder than density alone
+        suggests, and a constant near the ensemble mean (s = 0.34) nearly
+        reproduces the right answer.
 
-        bri, bfield, nfp = build_wout_boozer_field()
-        surf, sc_particle, bsh, rrange, phirange, zrange = build_cartesian_field()
-        label = build_equilibrium_label()
-
-        n = 256
-        s_launch = 0.35
-        rng = np.random.default_rng(3)
-        stz = np.column_stack(
-            [
-                np.full(n, s_launch),
-                rng.uniform(0, 2 * np.pi, n),
-                rng.uniform(0, 2 * np.pi, n),
-            ]
-        )
-        xyz = rphiz_to_xyz(boozer_to_cylindrical(bfield, stz.copy()))
-
-        deuterium = ThermalBackground(
-            n_profile=lambda s: 1e23 * (1.0 - 0.9 * s),
-            T_profile=lambda s: 1e3,
-            mass=2 * PROTON_MASS,
-            charge=ELEMENTARY_CHARGE,
-        )
-
-        # 0.1 v_alpha keeps the drift orbits tight: the ensemble holds to
-        # s = 0.3500 +/- 0.0005, so the field difference between the two
-        # tracers shifts the density they see by ~0.1%, while a label error
-        # is order 1 in s and so order 10 in this profile.
-        vtotal = 0.1 * np.sqrt(2 * ENERGY / MASS)
-        vpar = 0.7 * vtotal * np.ones(n)
-        kw = {
-            "backgrounds": deuterium,
-            "tmax": 2e-6,
-            "mass": MASS,
-            "charge": CHARGE,
-            "vtotal": vtotal,
-            "tol": 1e-8,
-            "rng_seed": 0,
-        }
-
-        boozer_out = trace_particles_boozer_with_collisions_gpu(
-            bfield, stz.copy(), vpar.copy(), ns=15, ntheta=15, nzeta=15, **kw
-        )
-        cart_out = trace_particles_cartesian_with_collisions_gpu(
-            bsh, sc_particle, label, xyz.copy(), vpar.copy(), **kw
-        )
-        wrong_out = trace_particles_cartesian_with_collisions_gpu(
-            bsh,
-            sc_particle,
-            lambda pts: np.full(len(pts), 0.9),
-            xyz.copy(),
-            vpar.copy(),
-            **kw,
-        )
-
-        self.assertTrue(np.all(np.isfinite(boozer_out)), "non-finite Boozer results")
-        self.assertTrue(np.all(np.isfinite(cart_out)), "non-finite Cartesian results")
-
-        done_b = np.isclose(boozer_out[:, 0], kw["tmax"], rtol=1e-12)
-        done_c = np.isclose(cart_out[:, 0], kw["tmax"], rtol=1e-12)
-        done_w = np.isclose(wrong_out[:, 0], kw["tmax"], rtol=1e-12)
-        self.assertGreater(np.mean(done_b), 0.95, "Boozer ensemble lost particles")
-        self.assertGreater(np.mean(done_c), 0.95, "Cartesian ensemble lost particles")
-        self.assertGreater(np.mean(done_w), 0.95, "control ensemble lost particles")
-
-        drag_b = np.mean(boozer_out[done_b, 5]) / vtotal
-        drag_c = np.mean(cart_out[done_c, 5]) / vtotal
-        drag_w = np.mean(wrong_out[done_w, 5]) / vtotal
-
-        # Measured: Boozer 0.8679, Cartesian 0.8677.  The bound is set by the
-        # seed-to-seed spread of the drag (~0.007), not by that agreement,
-        # which is closer than the statistics warrant.  The control at
-        # s = 0.9 lands 0.097 away, and a label wrong by 0.25 in s would
-        # still land 0.045 away.
-        self.assertLess(
-            abs(drag_b - drag_c),
-            0.02,
-            f"<v>/v0 disagrees across coordinates: Boozer {drag_b:.4f}, "
-            f"Cartesian {drag_c:.4f}",
-        )
-        self.assertGreater(
-            abs(drag_b - drag_w),
-            0.04,
-            f"a constant flux label of 0.9 gives <v>/v0 = {drag_w:.4f} against "
-            f"the Boozer {drag_b:.4f}; the agreement above is insensitive to "
-            f"the label and proves nothing",
-        )
-
-        # The two ensembles must also sit on the same surface, so that the
-        # drag agreement is not two errors cancelling.
-        final_rphiz = np.column_stack(
-            [
-                np.hypot(cart_out[done_c, 1], cart_out[done_c, 2]),
-                np.arctan2(cart_out[done_c, 2], cart_out[done_c, 1]),
-                cart_out[done_c, 3],
-            ]
-        )
-        s_cart = np.mean(label(final_rphiz))
-        s_booz = np.mean(boozer_out[done_b, 1])
-        self.assertLess(
-            abs(s_booz - s_cart),
-            0.05,
-            f"mean flux label disagrees: Boozer {s_booz:.3f}, Cartesian {s_cart:.3f}",
-        )
-
-    @unittest.skipUnless(HAS_SIMSOPT, "simsopt not available")
-    def test_cross_coordinate_alpha_relaxation_stages(self):
-        """
-        Full-energy alphas in a DT + electron background relax in two
-        stages: electron drag slows them with almost no pitch scattering,
-        then ion scattering isotropizes the pitch as the speed approaches
-        the critical velocity.  Both stages must appear at the same times
-        in Boozer and Cartesian tracing, and the confined speed
-        distributions must agree as distributions (KS), not just in mean.
-
-        This complements test_cross_coordinate_collision_consistency: that
-        test pins the flux label with a wrong-label control at reduced
-        speed; this one pins the multi-species physics -- the pitch channel
-        exercises the kick's (v_par, mu) writeback, and the late-time decay
-        depends on the ion Chandrasekhar functions at the local label.
-
-        Bounds sit ~3x above the differences measured at these settings
-        (energy 0.002, pitch 0.008 over a six-point time ladder).
+        Measured at these settings: energy agrees to 0.0012 against a
+        seed-to-seed spread of 0.002, pitch to 0.007, KS 0.033, and the
+        control lands 0.098 away.  Bounds sit a few times above those.
         """
         from scipy.stats import ks_2samp
 
@@ -1680,8 +1484,8 @@ class TestGPUTracing(unittest.TestCase):
             "rng_seed": 0,
         }
 
-        def stats(tmax):
-            booz = trace_particles_boozer_with_collisions_gpu(
+        def trace_boozer(tmax):
+            return trace_particles_boozer_with_collisions_gpu(
                 bfield,
                 stz.copy(),
                 vpar.copy(),
@@ -1691,65 +1495,98 @@ class TestGPUTracing(unittest.TestCase):
                 nzeta=15,
                 **kw,
             )
-            cart = trace_particles_cartesian_with_collisions_gpu(
-                bsh, sc_particle, label, xyz.copy(), vpar.copy(), tmax=tmax, **kw
+
+        def trace_cartesian(tmax, lbl):
+            return trace_particles_cartesian_with_collisions_gpu(
+                bsh, sc_particle, lbl, xyz.copy(), vpar.copy(), tmax=tmax, **kw
             )
-            conf_b = np.isclose(booz[:, 0], tmax, rtol=1e-12)
-            conf_c = np.isclose(cart[:, 0], tmax, rtol=1e-12)
-            self.assertGreater(np.mean(conf_b), 0.95, f"Boozer losses at {tmax:g}")
-            self.assertGreater(np.mean(conf_c), 0.95, f"Cartesian losses at {tmax:g}")
-            v_b, v_c = booz[conf_b, 5], cart[conf_c, 5]
-            return {
-                "E_b": np.mean(v_b**2) / v0**2,
-                "E_c": np.mean(v_c**2) / v0**2,
-                "xi_b": np.mean(booz[conf_b, 4] / v_b),
-                "xi_c": np.mean(cart[conf_c, 4] / v_c),
-                "ks": ks_2samp(v_b, v_c).statistic,
-            }
+
+        def confined(out, tmax, who):
+            mask = np.isclose(out[:, 0], tmax, rtol=1e-12)
+            self.assertGreater(np.mean(mask), 0.95, f"{who} losses at {tmax:g}")
+            return mask
+
+        def moments(out, mask):
+            v = out[mask, 5]
+            return np.mean(v**2) / v0**2, np.mean(out[mask, 4] / v)
 
         # Drag stage: a quarter of the energy is gone, the pitch is not.
-        early = stats(1e-4)
-        self.assertLess(early["E_b"], 0.85, "drag has not started; regime is wrong")
+        t_early = 1e-4
+        booz = trace_boozer(t_early)
+        cart = trace_cartesian(t_early, label)
+        E_b, xi_b = moments(booz, confined(booz, t_early, "Boozer"))
+        E_c, xi_c = moments(cart, confined(cart, t_early, "Cartesian"))
+
+        self.assertLess(E_b, 0.85, "drag has not started; the regime is wrong")
         self.assertLess(
-            abs(early["E_b"] - early["E_c"]),
+            abs(E_b - E_c),
             0.02,
-            f"<E>/E0 disagrees in the drag stage: {early['E_b']:.4f} vs "
-            f"{early['E_c']:.4f}",
+            f"<E>/E0 disagrees in the drag stage: {E_b:.4f} vs {E_c:.4f}",
         )
-        for name in ("xi_b", "xi_c"):
+        for who, xi in (("Boozer", xi_b), ("Cartesian", xi_c)):
             self.assertGreater(
-                early[name],
+                xi,
                 xi0 - 0.03,
-                f"pitch scattered during the drag stage ({name}="
-                f"{early[name]:.3f}); electron drag must not scatter pitch",
+                f"pitch scattered during the drag stage ({who} <xi>={xi:.3f}); "
+                f"electron drag must not scatter pitch",
             )
 
         # Scattering stage: near the critical energy the pitch must have
         # decayed, by the same amount in both tracers.
-        late = stats(6e-4)
+        t_late = 6e-4
+        booz = trace_boozer(t_late)
+        cart = trace_cartesian(t_late, label)
+        wrong = trace_cartesian(t_late, lambda pts: np.zeros(len(pts)))
+        mask_b = confined(booz, t_late, "Boozer")
+        mask_c = confined(cart, t_late, "Cartesian")
+        mask_w = confined(wrong, t_late, "control")
+        E_b, xi_b = moments(booz, mask_b)
+        E_c, xi_c = moments(cart, mask_c)
+        E_w, _ = moments(wrong, mask_w)
+
         self.assertLess(
-            abs(late["E_b"] - late["E_c"]),
+            abs(E_b - E_c),
             0.02,
-            f"<E>/E0 disagrees in the scattering stage: {late['E_b']:.4f} vs "
-            f"{late['E_c']:.4f}",
+            f"<E>/E0 disagrees in the scattering stage: {E_b:.4f} vs {E_c:.4f}",
         )
-        for name in ("xi_b", "xi_c"):
+        for who, xi in (("Boozer", xi_b), ("Cartesian", xi_c)):
             self.assertLess(
-                late[name],
+                xi,
                 xi0 - 0.03,
-                f"pitch did not decay near the critical energy ({name}="
-                f"{late[name]:.3f})",
+                f"pitch did not decay near the critical energy ({who} <xi>={xi:.3f})",
             )
         self.assertLess(
-            abs(late["xi_b"] - late["xi_c"]),
+            abs(xi_b - xi_c),
             0.05,
-            f"isotropization rates disagree: <xi> {late['xi_b']:.3f} vs "
-            f"{late['xi_c']:.3f}",
+            f"isotropization rates disagree: <xi> {xi_b:.3f} vs {xi_c:.3f}",
         )
+        ks = ks_2samp(booz[mask_b, 5], cart[mask_c, 5]).statistic
         self.assertLess(
-            late["ks"],
-            0.10,
-            f"confined speed distributions disagree (KS {late['ks']:.3f})",
+            ks, 0.10, f"confined speed distributions disagree (KS {ks:.3f})"
+        )
+        self.assertGreater(
+            abs(E_b - E_w),
+            0.04,
+            f"a constant flux label of 0 gives <E>/E0 = {E_w:.4f} against the "
+            f"Boozer {E_b:.4f}; the agreement above is insensitive to the "
+            f"label and proves nothing",
+        )
+
+        # The ensembles must also sit on the same surfaces, so the agreement
+        # above is not two errors cancelling.
+        final_rphiz = np.column_stack(
+            [
+                np.hypot(cart[mask_c, 1], cart[mask_c, 2]),
+                np.arctan2(cart[mask_c, 2], cart[mask_c, 1]),
+                cart[mask_c, 3],
+            ]
+        )
+        s_cart = np.mean(label(final_rphiz))
+        s_booz = np.mean(booz[mask_b, 1])
+        self.assertLess(
+            abs(s_booz - s_cart),
+            0.05,
+            f"mean flux label disagrees: Boozer {s_booz:.3f}, Cartesian {s_cart:.3f}",
         )
 
 

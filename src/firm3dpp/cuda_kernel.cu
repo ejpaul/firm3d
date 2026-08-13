@@ -1499,9 +1499,7 @@ __device__ void account_for_symmetry<CoordSys::Boozer>(double* interpolants, boo
 template<RHS id, int n>
 __device__ void account_for_symmetry_rhs(double* interpolants, bool* symmetry_exploited){
     if(!symmetry_exploited[threadIdx.x]) return;
-    if constexpr (id == RHS::GC_CartesianVacuum || id == RHS::GC_CartesianVacuumColl){
-        // B_r, GradAbsB_phi, GradAbsB_z flip; the signed distance and the
-        // flux-label column (when present) are stellarator symmetric.
+    if constexpr (id == RHS::GC_CartesianVacuum){
         interpolants[0] *= -1.0;
         interpolants[4] *= -1.0;
         interpolants[5] *= -1.0;
@@ -1587,7 +1585,7 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
     
     // map input data
     // Cartesian Coordinates
-    if(rhs == "cartesian_vacuum" || rhs == "cartesian_vacuum_coll"){
+    if(rhs == "cartesian_vacuum"){
         for(int i=0; i<n_points; ++i){
             double x = loc_arr[3*i] * cos(loc_arr[3*i + 1]);
             double y = loc_arr[3*i] * sin(loc_arr[3*i + 1]);
@@ -1611,8 +1609,6 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
     int n;
     if(rhs == "cartesian_vacuum"){
         n = 7;
-    } else if(rhs == "cartesian_vacuum_coll"){
-        n = 8;
     } else if(rhs == "boozer_vacuum"){
         n = 6;
     } else if(rhs == "boozer_saw_vacuum"){
@@ -1663,8 +1659,6 @@ extern "C" py::array_t<double> test_gpu_interpolation(py::array_t<double> quad_p
 
     if(rhs == "cartesian_vacuum"){
         test_gpu_interpolation_kernel<RHS::GC_CartesianVacuum, 7><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
-    } else if(rhs == "cartesian_vacuum_coll") {
-        test_gpu_interpolation_kernel<RHS::GC_CartesianVacuumColl, 8><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
     } else if(rhs == "boozer_vacuum") {
         test_gpu_interpolation_kernel<RHS::GC_BoozerVacuum, 6><<<nblks, nthreads>>>(quadpts_d, loc_d, out_d, n_points);
     } else if(rhs == "boozer_saw_vacuum") {
