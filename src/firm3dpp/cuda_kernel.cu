@@ -752,7 +752,10 @@ template<>
 __device__ void calc_max_timestep_size<CoordSys::Boozer>(double* dtmax, double* loc, double* derivs){
     double modB = derivs[(6*0 + 4)*PARTICLES_PER_BLOCK + threadIdx.x];
     double G = derivs[(6*0 + 5)*PARTICLES_PER_BLOCK + threadIdx.x];
-    dtmax[threadIdx.x] = (G / modB)*0.5*M_PI / v_total_d;
+    // |G|: its sign is an equilibrium convention, but this bound is a time.
+    // A negative dtmax seeds a negative dt in setup_particle, and the step
+    // loop then runs backwards and never reaches tmax.
+    dtmax[threadIdx.x] = (fabs(G) / modB)*0.5*M_PI / v_total_d;
 }
 
 // set up particles for tracing
