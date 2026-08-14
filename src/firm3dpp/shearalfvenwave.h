@@ -558,8 +558,7 @@ public:
     if (!harmonic) {
       throw std::invalid_argument(
         "A ShearAlfvenWavesSuperposition may only contain "
-        "ShearAlfvenHarmonics: it evaluates them together in a single pass "
-        "rather than wave by wave."
+        "ShearAlfvenHarmonics."
       );
     }
     waves.push_back(wave);
@@ -604,8 +603,6 @@ public:
     if (index >= waves.size()) {
       throw std::out_of_range("Wave index out of range");
     }
-    // The harmonics are never given the points individually, so bring this one
-    // up to date before it is handed out to be queried on its own.
     if (points.size() > 0) {
       Array2 p = points;
       waves[index]->set_points(p);
@@ -618,17 +615,6 @@ public:
   }
 
 private:
-  /* All harmonics share one B0 and are evaluated together in a single pass.
-   *
-   * Giving the points to each wave in turn instead, and summing a per-wave
-   * array for every quantity read, costs far more than the arithmetic: each
-   * wave re-sets B0, re-reads its flux functions, builds xtensor temporaries
-   * and allocates its own ten output arrays, all to produce one value per
-   * quantity. A tracing RHS evaluates a single point per step, so that
-   * per-wave cost dominated and grew linearly with the number of harmonics.
-   *
-   * Harmonics are accumulated in the order they were added.
-   */
   std::vector<ShearAlfvenHarmonic*> harmonics;  // non-owning; parallel to waves
   Array2 total_Phi, total_dPhidpsi, total_dPhidtheta, total_dPhidzeta,
       total_Phidot, total_alpha, total_alphadot, total_dalphadpsi,
@@ -725,9 +711,6 @@ private:
       total_dPhidtheta(i, 0) = sum_dPhidtheta;
       total_dPhidzeta(i, 0) = sum_dPhidzeta;
       total_Phidot(i, 0) = sum_Phidot;
-      // alpha and dalphadzeta are only defined when the field retains K; the
-      // per-wave path leaves them untouched in the vacuum case, so report
-      // zero rather than a stale value.
       total_alpha(i, 0) = sum_alpha;
       total_dalphadzeta(i, 0) = sum_dalphadzeta;
       total_alphadot(i, 0) = sum_alphadot;

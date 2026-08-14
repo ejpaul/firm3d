@@ -3839,11 +3839,9 @@ class ShearAlfvenWavesSuperposition(
 ):
     r"""
     Class representing a superposition of multiple Shear Alfvén Waves (SAWs).
-
-    This class models the superposition of multiple Shear Alfvén waves,
-    combining their scalar
-    potential `Phi`, vector potential `alpha`, and their respective derivatives
-    to represent a more
+    This class models the superposition of :class:`ShearAlfvenHarmonic` instances
+    in the same equilibrium field, combining their scalar potential `Phi`,
+    vector potential `alpha`, and their respective derivatives to represent a more
     complex wave structure in the equilibrium field `B0`.
 
     The superposition of waves is initialized with a base wave, which defines
@@ -3851,11 +3849,6 @@ class ShearAlfvenWavesSuperposition(
     equilibrium field `B0` for all subsequent waves added to the superposition.
     All added waves
     must have the same `B0` field.
-
-    The waves must be :class:`ShearAlfvenHarmonic` instances: the superposition
-    evaluates them together in a single pass over the points rather than one
-    wave at a time, which is what makes tracing cost independent of the number
-    of harmonics. Adding any other kind of wave raises.
 
     See Paul et al., JPP (2023; 89(5):905890515.
     doi:10.1017/S0022377823001095) for more details.
