@@ -3852,14 +3852,19 @@ class ShearAlfvenWavesSuperposition(
     All added waves
     must have the same `B0` field.
 
+    The waves must be :class:`ShearAlfvenHarmonic` instances: the superposition
+    evaluates them together in a single pass over the points rather than one
+    wave at a time, which is what makes tracing cost independent of the number
+    of harmonics. Adding any other kind of wave raises.
+
     See Paul et al., JPP (2023; 89(5):905890515.
     doi:10.1017/S0022377823001095) for more details.
 
     Parameters
     ----------
-    SAWs : list of ShearAlfvenWave
-        A list of ShearAlfvenWave objects to be superposed. The first wave in
-        the list is used
+    SAWs : list of ShearAlfvenHarmonic
+        A list of ShearAlfvenHarmonic objects to be superposed. The first wave
+        in the list is used
         as the base wave and defines the reference `B0` field for the
         superposition. All other
         waves in the list must have the same `B0`.
@@ -3869,6 +3874,8 @@ class ShearAlfvenWavesSuperposition(
     TypeError
         If `SAWs` is not a list of `ShearAlfvenWave` objects.
         If the base wave is not provided or if the waves have different `B0` fields.
+    ValueError
+        If any wave is not a `ShearAlfvenHarmonic`.
 
     Examples
     --------

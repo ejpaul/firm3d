@@ -537,14 +537,16 @@ public:
   std::vector<std::shared_ptr<ShearAlfvenWave>> waves;
 
   /**
-  * @brief Adds a new wave to the superposition.
+  * @brief Adds a new harmonic to the superposition.
   *
-  *  Adds a new wave to the superposition after verifying
-  *  that it has the same equilibrium magnetic field `B0`.
+  *  Adds a new wave to the superposition after verifying that it is a
+  *  ShearAlfvenHarmonic and has the same equilibrium magnetic field `B0`.
+  *  The superposition evaluates its harmonics together in a single pass
+  *  (see evaluate_harmonics), which is why only harmonics are accepted.
   *
-  * @param wave Shared pointer to a ShearAlfvenWave object to be added.
+  * @param wave Shared pointer to a ShearAlfvenHarmonic to be added.
   * @throws std::invalid_argument if the wave's `B0` field does not
-  * match the superposition's `B0`.
+  * match the superposition's `B0`, or if it is not a ShearAlfvenHarmonic.
   */
   void add_wave(const std::shared_ptr<ShearAlfvenWave>& wave) {
     if (wave->get_B0() != this->B0) {
@@ -552,8 +554,16 @@ public:
         "The wave's B0 field does not match the superposition's B0 field."
       );
     }
+    auto* harmonic = dynamic_cast<ShearAlfvenHarmonic*>(wave.get());
+    if (!harmonic) {
+      throw std::invalid_argument(
+        "A ShearAlfvenWavesSuperposition may only contain "
+        "ShearAlfvenHarmonics: it evaluates them together in a single pass "
+        "rather than wave by wave."
+      );
+    }
     waves.push_back(wave);
-    refresh_fusion();
+    harmonics.push_back(harmonic);
   }
 
   /**
@@ -579,29 +589,24 @@ public:
   /**
   * @brief Sets the points (s, theta, zeta, time)
   *
-  * Sets the points for the superposition and propagates them to all waves.
+  * Sets the points for the superposition and evaluates every harmonic at
+  * them in a single pass.
   *
   * @param p A tensor representing the points in Boozer coordinates
   *          and time (s, theta, zeta, time).
   */
   void set_points(Array2& p) override {
     ShearAlfvenWave::set_points(p);  // stores the points and sets B0 once
-    if (fused) {
-      evaluate_fused(p);
-    } else {
-      for (const auto& wave : waves) {
-        wave->set_points(p);  // Propagate points to each wave
-      }
-    }
+    evaluate_harmonics(p);
   }
 
   std::shared_ptr<ShearAlfvenWave> get_wave(size_t index) const {
     if (index >= waves.size()) {
       throw std::out_of_range("Wave index out of range");
     }
-    // The fused path never hands the points to the individual waves, so bring
-    // this one up to date before it is handed out to be queried on its own.
-    if (fused && points.size() > 0) {
+    // The harmonics are never given the points individually, so bring this one
+    // up to date before it is handed out to be queried on its own.
+    if (points.size() > 0) {
       Array2 p = points;
       waves[index]->set_points(p);
     }
@@ -613,40 +618,23 @@ public:
   }
 
 private:
-  /* Fused evaluation of a superposition of ShearAlfvenHarmonics.
+  /* All harmonics share one B0 and are evaluated together in a single pass.
    *
-   * All waves share one B0 (add_wave enforces it), so when every wave is a
-   * ShearAlfvenHarmonic the whole superposition can be evaluated in a single
-   * pass. The generic path below instead calls set_points on every wave --
-   * each of which re-sets B0 and re-reads its flux functions, allocates ten
-   * output arrays and builds xtensor temporaries -- and then sums N per-wave
-   * arrays again for each quantity read. A tracing RHS evaluates one point at
-   * a time, so that per-wave framework cost, not the arithmetic, dominates.
+   * Giving the points to each wave in turn instead, and summing a per-wave
+   * array for every quantity read, costs far more than the arithmetic: each
+   * wave re-sets B0, re-reads its flux functions, builds xtensor temporaries
+   * and allocates its own ten output arrays, all to produce one value per
+   * quantity. A tracing RHS evaluates a single point per step, so that
+   * per-wave cost dominated and grew linearly with the number of harmonics.
    *
-   * Harmonics are accumulated in the order they appear in `waves`, matching
-   * the summation order of the generic path.
+   * Harmonics are accumulated in the order they were added.
    */
-  std::vector<ShearAlfvenHarmonic*> harmonics;  // non-owning; valid iff fused
-  bool fused = false;
-  Array2 fused_Phi, fused_dPhidpsi, fused_dPhidtheta, fused_dPhidzeta,
-      fused_Phidot, fused_alpha, fused_alphadot, fused_dalphadpsi,
-      fused_dalphadtheta, fused_dalphadzeta;
+  std::vector<ShearAlfvenHarmonic*> harmonics;  // non-owning; parallel to waves
+  Array2 total_Phi, total_dPhidpsi, total_dPhidtheta, total_dPhidzeta,
+      total_Phidot, total_alpha, total_alphadot, total_dalphadpsi,
+      total_dalphadtheta, total_dalphadzeta;
 
-  void refresh_fusion() {
-    harmonics.clear();
-    for (const auto& wave : waves) {
-      auto* h = dynamic_cast<ShearAlfvenHarmonic*>(wave.get());
-      if (!h) {  // e.g. a nested superposition or an interpolated wave
-        harmonics.clear();
-        fused = false;
-        return;
-      }
-      harmonics.push_back(h);
-    }
-    fused = !harmonics.empty();
-  }
-
-  void evaluate_fused(Array2& p) {
+  void evaluate_harmonics(Array2& p) {
     // retains_K mirrors the branch in ShearAlfvenHarmonic::set_points
     const bool retains_K = (B0->field_type == "nok" || B0->field_type == "");
     const double psi0 = B0->psi0;
@@ -660,16 +648,16 @@ private:
     auto& data_dGds = retains_K ? B0->dGds_ref() : empty;
     auto& data_dIds = retains_K ? B0->dIds_ref() : empty;
 
-    fused_Phi.resize({npoints, 1});
-    fused_dPhidpsi.resize({npoints, 1});
-    fused_dPhidtheta.resize({npoints, 1});
-    fused_dPhidzeta.resize({npoints, 1});
-    fused_Phidot.resize({npoints, 1});
-    fused_alpha.resize({npoints, 1});
-    fused_alphadot.resize({npoints, 1});
-    fused_dalphadpsi.resize({npoints, 1});
-    fused_dalphadtheta.resize({npoints, 1});
-    fused_dalphadzeta.resize({npoints, 1});
+    total_Phi.resize({npoints, 1});
+    total_dPhidpsi.resize({npoints, 1});
+    total_dPhidtheta.resize({npoints, 1});
+    total_dPhidzeta.resize({npoints, 1});
+    total_Phidot.resize({npoints, 1});
+    total_alpha.resize({npoints, 1});
+    total_alphadot.resize({npoints, 1});
+    total_dalphadpsi.resize({npoints, 1});
+    total_dalphadtheta.resize({npoints, 1});
+    total_dalphadzeta.resize({npoints, 1});
 
     for (long i = 0; i < npoints; ++i) {
       const double s = p(i, 0);
@@ -732,130 +720,60 @@ private:
         sum_dalphadtheta += -dPhidtheta * alpha_fac;
       }
 
-      fused_Phi(i, 0) = sum_Phi;
-      fused_dPhidpsi(i, 0) = sum_dPhidpsi;
-      fused_dPhidtheta(i, 0) = sum_dPhidtheta;
-      fused_dPhidzeta(i, 0) = sum_dPhidzeta;
-      fused_Phidot(i, 0) = sum_Phidot;
+      total_Phi(i, 0) = sum_Phi;
+      total_dPhidpsi(i, 0) = sum_dPhidpsi;
+      total_dPhidtheta(i, 0) = sum_dPhidtheta;
+      total_dPhidzeta(i, 0) = sum_dPhidzeta;
+      total_Phidot(i, 0) = sum_Phidot;
       // alpha and dalphadzeta are only defined when the field retains K; the
       // per-wave path leaves them untouched in the vacuum case, so report
       // zero rather than a stale value.
-      fused_alpha(i, 0) = sum_alpha;
-      fused_dalphadzeta(i, 0) = sum_dalphadzeta;
-      fused_alphadot(i, 0) = sum_alphadot;
-      fused_dalphadpsi(i, 0) = sum_dalphadpsi;
-      fused_dalphadtheta(i, 0) = sum_dalphadtheta;
+      total_alpha(i, 0) = sum_alpha;
+      total_dalphadzeta(i, 0) = sum_dalphadzeta;
+      total_alphadot(i, 0) = sum_alphadot;
+      total_dalphadpsi(i, 0) = sum_dalphadpsi;
+      total_dalphadtheta(i, 0) = sum_dalphadtheta;
     }
   }
 
 protected:
   void _Phi_impl(Array2& Phi) override {
-    if (fused) {
-      Phi = fused_Phi;
-      return;
-    }
-    Phi.fill(0.0);
-    for (const auto& wave : waves) {
-      Phi += wave->Phi();
-    }
+    Phi = total_Phi;
   }
 
   void _dPhidpsi_impl(Array2& dPhidpsi) override {
-    if (fused) {
-      dPhidpsi = fused_dPhidpsi;
-      return;
-    }
-    dPhidpsi.fill(0.0);
-    for (const auto& wave : waves) {
-      dPhidpsi += wave->dPhidpsi();
-    }
+    dPhidpsi = total_dPhidpsi;
   }
 
   void _dPhidtheta_impl(Array2& dPhidtheta) override {
-    if (fused) {
-      dPhidtheta = fused_dPhidtheta;
-      return;
-    }
-    dPhidtheta.fill(0.0);
-    for (const auto& wave : waves) {
-      dPhidtheta += wave->dPhidtheta();
-    }
+    dPhidtheta = total_dPhidtheta;
   }
 
   void _dPhidzeta_impl(Array2& dPhidzeta) override {
-    if (fused) {
-      dPhidzeta = fused_dPhidzeta;
-      return;
-    }
-    dPhidzeta.fill(0.0);
-    for (const auto& wave : waves) {
-      dPhidzeta += wave->dPhidzeta();
-    }
+    dPhidzeta = total_dPhidzeta;
   }
 
   void _Phidot_impl(Array2& Phidot) override {
-    if (fused) {
-      Phidot = fused_Phidot;
-      return;
-    }
-    Phidot.fill(0.0);
-      for (const auto& wave : waves) {
-      Phidot += wave->Phidot();
-    }
+    Phidot = total_Phidot;
   }
 
   void _alpha_impl(Array2& alpha) override {
-    if (fused) {
-      alpha = fused_alpha;
-      return;
-    }
-    alpha.fill(0.0);
-    for (const auto& wave : waves) {
-      alpha += wave->alpha();
-    }
+    alpha = total_alpha;
   }
 
   void _dalphadpsi_impl(Array2& dalphadpsi) override {
-    if (fused) {
-      dalphadpsi = fused_dalphadpsi;
-      return;
-    }
-    dalphadpsi.fill(0.0);
-    for (const auto& wave : waves) {
-      dalphadpsi += wave->dalphadpsi();
-    }
+    dalphadpsi = total_dalphadpsi;
   }
 
   void _dalphadtheta_impl(Array2& dalphadtheta) override {
-    if (fused) {
-      dalphadtheta = fused_dalphadtheta;
-      return;
-    }
-    dalphadtheta.fill(0.0);
-    for (const auto& wave : waves) {
-      dalphadtheta += wave->dalphadtheta();
-    }
+    dalphadtheta = total_dalphadtheta;
   }
 
   void _dalphadzeta_impl(Array2& dalphadzeta) override {
-    if (fused) {
-      dalphadzeta = fused_dalphadzeta;
-      return;
-    }
-    dalphadzeta.fill(0.0);
-    for (const auto& wave : waves) {
-      dalphadzeta += wave->dalphadzeta();
-    }
+    dalphadzeta = total_dalphadzeta;
   }
 
   void _alphadot_impl(Array2& alphadot) override {
-    if (fused) {
-      alphadot = fused_alphadot;
-      return;
-    }
-    alphadot.fill(0.0);
-    for (const auto& wave : waves) {
-      alphadot += wave->alphadot();
-    }
+    alphadot = total_alphadot;
   }
 };

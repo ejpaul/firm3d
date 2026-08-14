@@ -1484,23 +1484,21 @@ class TestingShearAlfvenWavesSuperposition(unittest.TestCase):
         harmonics[2].set_points(points)
         np.testing.assert_allclose(got, np.asarray(harmonics[2].Phi()), rtol=1e-13)
 
-    def test_nested_superposition_falls_back(self):
-        """A wave that is not a plain harmonic disables fusion but still works."""
+    def test_only_harmonics_accepted(self):
+        """
+        The superposition evaluates its harmonics together in one pass, so it
+        only accepts ShearAlfvenHarmonics. Anything else is rejected when it is
+        added rather than silently taking a different path.
+        """
         field = self._field()
-        inner_harmonics = self._harmonics(field, n=2)
-        inner = ShearAlfvenWavesSuperposition(inner_harmonics)
-        outer_harmonics = self._harmonics(field, n=2)
-        outer = ShearAlfvenWavesSuperposition([inner] + outer_harmonics)
+        inner = ShearAlfvenWavesSuperposition(self._harmonics(field, n=2))
 
-        points = self._points(npts=12, seed=7)
-        outer.set_points(points)
-        got = np.asarray(outer.Phi()).copy()
+        with self.assertRaises(ValueError):
+            ShearAlfvenWavesSuperposition([inner] + self._harmonics(field, n=2))
 
-        expected = 0.0
-        for h in inner_harmonics + outer_harmonics:
-            h.set_points(points)
-            expected = expected + np.asarray(h.Phi())
-        np.testing.assert_allclose(got, expected, rtol=1e-12)
+        saw = ShearAlfvenWavesSuperposition(self._harmonics(field, n=2))
+        with self.assertRaises(ValueError):
+            saw.add_wave(inner)
 
 
 class TestInterpolatedShearAlfvenWave(unittest.TestCase):
