@@ -17,7 +17,12 @@ from firm3d.field.boozermagneticfield import (
     ShearAlfvenWavesSuperposition,
 )
 from firm3d.saw.ae3d import AE3DEigenvector
-from firm3dpp import inverse_fourier_transform_even, inverse_fourier_transform_odd
+from firm3dpp import (
+    RegularGridInterpolant3D,
+    UniformInterpolationRule,
+    inverse_fourier_transform_even,
+    inverse_fourier_transform_odd,
+)
 
 TEST_DIR = (Path(__file__).parent / ".." / "test_files").resolve()
 filename_vac = str((TEST_DIR / "boozmn_LandremanPaul2021_QA_lowres.nc").resolve())
@@ -999,6 +1004,92 @@ class TestingFiniteBeta(unittest.TestCase):
             old_err_Z = err_Z
             old_err_nu = err_nu
             old_err_K = err_K
+
+
+class TestingRegularGridInterpolantStorage(unittest.TestCase):
+    """
+    Tests for how RegularGridInterpolant3D stores its coefficients.
+
+    The values of every cell live in one flat array indexed through
+    cell_offsets, and the dof-ordered ``vals`` array is released once that has
+    been built. These check the paths that depend on the layout: evaluation for
+    each value_size that selects a different kernel, and the serialisation
+    round-trip, which has to rebuild ``vals`` from the per-cell storage.
+    """
+
+    RANGE = (0.0, 1.0, 8)
+
+    def _build(self, f, value_size, degree=3, out_of_bounds_ok=True):
+        interp = RegularGridInterpolant3D(
+            UniformInterpolationRule(degree),
+            self.RANGE,
+            self.RANGE,
+            self.RANGE,
+            value_size,
+            out_of_bounds_ok,
+        )
+        interp.interpolate_batch(
+            lambda x, y, z: (
+                f(np.asarray(x), np.asarray(y), np.asarray(z)).flatten().tolist()
+            )
+        )
+        return interp
+
+    @staticmethod
+    def _f(value_size):
+        # separable and linear in each argument, so the degree-3 rule
+        # reproduces it exactly and the expected values are known in closed form
+        def f(x, y, z):
+            return np.stack([(l + 1) * (x + y + z) + l for l in range(value_size)], -1)
+
+        return f
+
+    def test_evaluate_exact_for_each_value_size(self):
+        """value_size 1-4 use per-size kernels and 5+ the general one."""
+        rng = np.random.default_rng(3)
+        pts = np.ascontiguousarray(rng.uniform(0.02, 0.98, (200, 3)))
+        for value_size in (1, 2, 3, 4, 5, 7):
+            with self.subTest(value_size=value_size):
+                f = self._f(value_size)
+                interp = self._build(f, value_size)
+                out = np.zeros((pts.shape[0], value_size))
+                interp.evaluate_batch(pts, out)
+                np.testing.assert_allclose(
+                    out, f(pts[:, 0], pts[:, 1], pts[:, 2]), atol=1e-10
+                )
+
+    def test_roundtrip_through_interpolant_data(self):
+        """
+        get_interpolant_data has to rebuild the dof-ordered array from the
+        per-cell storage, since it is no longer retained after construction.
+        Feeding it back must give an interpolant that evaluates identically.
+        """
+        for value_size in (1, 3):
+            with self.subTest(value_size=value_size):
+                src = self._build(self._f(value_size), value_size)
+                dst = RegularGridInterpolant3D(
+                    UniformInterpolationRule(3),
+                    self.RANGE,
+                    self.RANGE,
+                    self.RANGE,
+                    value_size,
+                    True,
+                )
+                dst.set_interpolant_data(src.get_interpolant_data())
+
+                pts = np.ascontiguousarray(
+                    np.random.default_rng(0).uniform(0.02, 0.98, (500, 3))
+                )
+                a = np.zeros((500, value_size))
+                b = np.zeros((500, value_size))
+                src.evaluate_batch(pts, a)
+                dst.evaluate_batch(pts, b)
+                np.testing.assert_array_equal(a, b)
+
+    def test_set_interpolant_data_rejects_wrong_size(self):
+        interp = self._build(self._f(1), 1)
+        with self.assertRaises(RuntimeError):
+            interp.set_interpolant_data({"vals": [1.0, 2.0]})
 
 
 class TestingInverseFourier(unittest.TestCase):
