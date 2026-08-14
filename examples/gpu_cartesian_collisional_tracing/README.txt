@@ -5,3 +5,11 @@ The thermal profiles are functions of the normalized flux s, which a Cartesian s
 The coil field and the equilibrium supplying the label must describe the same device. The label here is built from wout_aten_rescaled.nc, the file the coil set and the boundary classifier come from.
 
 On perlmutter (08.13.26), the wallclock time is about 5 minutes using the attached slurm script.
+
+All three collisional examples trace the same equilibrium with the same
+equations and background, and agree: 0.2% of particles lost and about 24% of
+the birth energy retained by the confined population, whether traced on the
+CPU, on the GPU in Boozer coordinates, or on the GPU in Cartesian
+coordinates with the profiles reaching the kick through an interpolated flux
+label.
+
