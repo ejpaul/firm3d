@@ -139,10 +139,6 @@ particle_data.to_csv("./particle_data.csv")
 
 t_end = last_time[:, 0]
 v_end = last_time[:, 5]
-# The GPU has no stopping criteria, so loss is inferred from the clock.
-# That is exact here: the step loop runs while t < tmax and the particle is
-# inside, and the final step is clipped to tmax - t, so a surviving particle
-# always exits with t >= tmax and only a lost one stops short.
 lost = t_end < tmax
 
 grid = np.logspace(-6, np.log10(tmax), 200)

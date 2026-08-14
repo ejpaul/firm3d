@@ -136,11 +136,6 @@ proc0_print("Elapsed time for tracing = ", time2 - time1)
 
 t_end = np.array([traj[-1, 0] for traj in res_tys])
 v_end = np.array([traj[-1, 5] for traj in res_tys])
-# res_hits records stopping criterion hits and nothing else on the
-# collisional entry points, so a non-empty entry is the tracer's own record
-# that this particle hit the boundary.  Inferring loss from t_end < tmax
-# instead would misread the adaptive solver finishing an ULP short of tmax
-# as a loss.
 lost = np.array([len(hits) > 0 for hits in res_zeta_hits])
 
 grid = np.logspace(-6, np.log10(tmax), 200)
