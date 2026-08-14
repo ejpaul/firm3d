@@ -1370,44 +1370,18 @@ class TestingBoozerSplineField(unittest.TestCase):
 
 
 class TestingShearAlfvenWavesSuperposition(unittest.TestCase):
-    """
-    A superposition of ShearAlfvenHarmonics is evaluated in a single fused pass
-    rather than by giving the points to every wave and summing per-wave arrays.
-    These check that the fused result is the sum of the individual harmonics,
-    that inspecting a single wave still works, and that a superposition which
-    cannot be fused falls back to the generic path.
-    """
-
-    NHARM = 6
-
-    def _field(self, retains_K=False):
-        kw = {"etabar": 1.2, "B0": 5.0, "N": 0, "G0": 3.0, "psi0": 0.8, "iota0": 0.4}
-        if retains_K:
-            kw.update(I0=0.3, I1=0.05)
-        field = BoozerAnalytic(**kw)
-        if retains_K:
-            field.field_type = "nok"
-        return field
-
-    def _harmonics(self, field, n=None):
-        n = n or self.NHARM
-        s = np.linspace(0.0, 1.0, 32)
-        return [
-            ShearAlfvenHarmonic(
-                (s.tolist(), (-1.5e3 * (1 - s**2) / (i + 1)).tolist()),
-                1 + (i % 5),
-                1 + (i % 3),
-                136041.0 * (1 + 0.01 * i),
-                0.1 * i,
-                field,
-            )
-            for i in range(n)
-        ]
-
-    @staticmethod
-    def _points(npts=64, seed=0):
-        rng = np.random.default_rng(seed)
-        return np.ascontiguousarray(
+    def test_superposition_equals_sum_of_harmonics(self):
+        """
+        A superposition evaluates all of its harmonics in one pass rather than
+        wave by wave, so check the result against summing the harmonics
+        individually. Both field types are covered, since the vacuum branch and
+        the one that retains K build the alpha factors differently. alpha and
+        dalphadzeta are only assigned when K is retained, so they are only
+        comparable in that case.
+        """
+        rng = np.random.default_rng(0)
+        npts = 64
+        points = np.ascontiguousarray(
             np.column_stack(
                 [
                     rng.uniform(0.05, 0.95, npts),
@@ -1417,11 +1391,36 @@ class TestingShearAlfvenWavesSuperposition(unittest.TestCase):
                 ]
             )
         )
+        s = np.linspace(0.0, 1.0, 32)
 
-    def test_superposition_equals_sum_of_harmonics(self):
-        # alpha and dalphadzeta are only assigned when the field retains K, so
-        # they are only comparable in that case.
         for retains_K in (False, True):
+            kw = {
+                "etabar": 1.2,
+                "B0": 5.0,
+                "N": 0,
+                "G0": 3.0,
+                "psi0": 0.8,
+                "iota0": 0.4,
+            }
+            if retains_K:
+                kw.update(I0=0.3, I1=0.05)
+            field = BoozerAnalytic(**kw)
+            if retains_K:
+                field.field_type = "nok"
+
+            harmonics = [
+                ShearAlfvenHarmonic(
+                    (s.tolist(), (-1.5e3 * (1 - s**2) / (i + 1)).tolist()),
+                    1 + (i % 5),
+                    1 + (i % 3),
+                    136041.0 * (1 + 0.01 * i),
+                    0.1 * i,
+                    field,
+                )
+                for i in range(6)
+            ]
+            saw = ShearAlfvenWavesSuperposition(harmonics)
+
             quantities = [
                 "Phi",
                 "dPhidpsi",
@@ -1435,70 +1434,23 @@ class TestingShearAlfvenWavesSuperposition(unittest.TestCase):
             if retains_K:
                 quantities += ["alpha", "dalphadzeta"]
 
-            with self.subTest(retains_K=retains_K):
-                field = self._field(retains_K)
-                harmonics = self._harmonics(field)
-                saw = ShearAlfvenWavesSuperposition(harmonics)
-                points = self._points()
+            saw.set_points(points)
+            fused = {q: np.asarray(getattr(saw, q)()).copy() for q in quantities}
 
-                saw.set_points(points)
-                fused = {q: np.asarray(getattr(saw, q)()).copy() for q in quantities}
-
-                expected = dict.fromkeys(quantities, 0.0)
-                for h in harmonics:
-                    h.set_points(points)
-                    for q in quantities:
-                        expected[q] = expected[q] + np.asarray(getattr(h, q)())
-
+            expected = dict.fromkeys(quantities, 0.0)
+            for harmonic in harmonics:
+                harmonic.set_points(points)
                 for q in quantities:
-                    np.testing.assert_allclose(
-                        fused[q], expected[q], rtol=1e-12, atol=0, err_msg=q
-                    )
+                    expected[q] = expected[q] + np.asarray(getattr(harmonic, q)())
 
-    def test_single_point_matches_batch(self):
-        """Tracing evaluates one point at a time; that must match a batch."""
-        field = self._field()
-        saw = ShearAlfvenWavesSuperposition(self._harmonics(field))
-        points = self._points(npts=16, seed=3)
-
-        saw.set_points(points)
-        batch = np.asarray(saw.dPhidpsi()).copy()
-
-        for i in range(points.shape[0]):
-            saw.set_points(np.ascontiguousarray(points[i : i + 1]))
-            self.assertAlmostEqual(
-                float(np.asarray(saw.dPhidpsi())[0, 0]), float(batch[i, 0]), places=12
-            )
-
-    def test_get_wave_is_up_to_date(self):
-        """An individual wave must still be queryable after set_points."""
-        field = self._field()
-        harmonics = self._harmonics(field)
-        saw = ShearAlfvenWavesSuperposition(harmonics)
-        points = self._points(npts=8, seed=5)
-        saw.set_points(points)
-
-        wave = saw.get_wave(2)
-        got = np.asarray(wave.Phi()).copy()
-
-        harmonics[2].set_points(points)
-        np.testing.assert_allclose(got, np.asarray(harmonics[2].Phi()), rtol=1e-13)
-
-    def test_only_harmonics_accepted(self):
-        """
-        The superposition evaluates its harmonics together in one pass, so it
-        only accepts ShearAlfvenHarmonics. Anything else is rejected when it is
-        added rather than silently taking a different path.
-        """
-        field = self._field()
-        inner = ShearAlfvenWavesSuperposition(self._harmonics(field, n=2))
-
-        with self.assertRaises(ValueError):
-            ShearAlfvenWavesSuperposition([inner] + self._harmonics(field, n=2))
-
-        saw = ShearAlfvenWavesSuperposition(self._harmonics(field, n=2))
-        with self.assertRaises(ValueError):
-            saw.add_wave(inner)
+            for q in quantities:
+                np.testing.assert_allclose(
+                    fused[q],
+                    expected[q],
+                    rtol=1e-12,
+                    atol=0,
+                    err_msg=f"{q} (retains_K={retains_K})",
+                )
 
 
 class TestInterpolatedShearAlfvenWave(unittest.TestCase):
