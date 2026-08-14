@@ -33,6 +33,13 @@ echo "Activating conda environment: $env_name"
 source activate "$env_name" || conda activate "$env_name"
 check_success "Failed to activate conda environment $env_name"
 
+# FIRM3D uses Boost header-only. nersc-python does not ship the headers and the
+# system Boost in /usr/include is older than the required 1.76, so without this
+# the build falls back to downloading boost, which fails on compute nodes.
+echo "Installing Boost headers..."
+conda install -y -c conda-forge libboost-headers
+check_success "Failed to install Boost headers"
+
 # FIRM3D Installation
 cd firm3d || { echo "Error: firm3d directory not found. Exiting."; exit 1; }
 export CI=True
