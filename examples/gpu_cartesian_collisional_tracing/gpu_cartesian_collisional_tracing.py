@@ -1,5 +1,3 @@
-import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
@@ -31,8 +29,6 @@ from firm3d.util.constants import (
     FUSION_ALPHA_PARTICLE_ENERGY,
     PROTON_MASS,
 )
-
-matplotlib.use("Agg")  # Don't use an interactive backend
 
 degree = 3  # degree of interpolant
 n = 16  # resolution of interpolant
@@ -194,23 +190,10 @@ t_end = last_time[:, 0]
 v_end = last_time[:, 5]
 lost = t_end < tmax
 
-grid = np.logspace(-6, np.log10(tmax), 200)
-particle_loss = np.array([np.sum(lost & (t_end <= t)) for t in grid]) / nparticles
-energy_loss = (
-    np.array([np.sum((v_end[lost & (t_end <= t)] / vpar0) ** 2) for t in grid])
-    / nparticles
-)
+particle_loss = lost.sum() / nparticles
+energy_loss = np.sum((v_end[lost] / vpar0) ** 2) / nparticles
 
 print(f"Number of particles= {nparticles}")
-print(f"Particle loss fraction: {particle_loss[-1]:.3f}")
-print(f"Energy loss fraction: {energy_loss[-1]:.3f}")
+print(f"Particle loss fraction: {particle_loss:.3f}")
+print(f"Energy loss fraction: {energy_loss:.3f}")
 print(f"Mean energy fraction of confined: {np.mean((v_end[~lost] / vpar0) ** 2):.4f}")
-
-plt.figure()
-plt.loglog(grid, particle_loss, label="particle loss fraction")
-plt.loglog(grid, energy_loss, "--", label="energy loss fraction")
-plt.xlabel("Time [s]")
-plt.ylabel("Fraction lost to the wall")
-plt.legend()
-plt.tight_layout()
-plt.savefig("loss_fractions.png")

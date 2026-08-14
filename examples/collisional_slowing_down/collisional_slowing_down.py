@@ -25,7 +25,7 @@ from firm3d.util.constants import (
     PROTON_MASS,
 )
 from firm3d.util.functions import in_github_actions, proc0_print, setup_logging
-from firm3d.util.mpi import comm_size, comm_world, verbose
+from firm3d.util.mpi import comm_size, comm_world
 
 time1 = time.time()
 
@@ -138,32 +138,13 @@ t_end = np.array([traj[-1, 0] for traj in res_tys])
 v_end = np.array([traj[-1, 5] for traj in res_tys])
 lost = np.array([len(hits) > 0 for hits in res_zeta_hits])
 
-grid = np.logspace(-6, np.log10(tmax), 200)
-particle_loss = np.array([np.sum(lost & (t_end <= t)) for t in grid]) / nParticles
-energy_loss = (
-    np.array([np.sum((v_end[lost & (t_end <= t)] / vpar0) ** 2) for t in grid])
-    / nParticles
-)
+particle_loss = lost.sum() / nParticles
+energy_loss = np.sum((v_end[lost] / vpar0) ** 2) / nParticles
 
 proc0_print(f"Number of particles = {nParticles}")
-proc0_print(f"Particle loss fraction: {particle_loss[-1]:.3f}")
-proc0_print(f"Energy loss fraction: {energy_loss[-1]:.3f}")
+proc0_print(f"Particle loss fraction: {particle_loss:.3f}")
+proc0_print(f"Energy loss fraction: {energy_loss:.3f}")
 proc0_print(
     f"Mean energy fraction of confined alphas: "
     f"{np.mean((v_end[~lost] / vpar0) ** 2):.3f}"
 )
-
-if verbose and not in_github_actions:
-    import matplotlib
-
-    matplotlib.use("Agg")  # Don't use interactive backend
-    import matplotlib.pyplot as plt
-
-    plt.figure()
-    plt.loglog(grid, particle_loss, label="particle loss fraction")
-    plt.loglog(grid, energy_loss, "--", label="energy loss fraction")
-    plt.xlabel("Time [s]")
-    plt.ylabel("Fraction lost to the wall")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig("collisional_slowing_down.png")
