@@ -1144,6 +1144,70 @@ class TestingInverseFourier(unittest.TestCase):
                     assert np.allclose(odd_K[i], odd_output[0], rtol=1e-12, atol=1e-11)
 
 
+class TestingBoozerRadialInterpolantSums(unittest.TestCase):
+    """
+    Check the inverse Fourier sum of BoozerRadialInterpolant against a direct
+    evaluation of the harmonic series, for point sets that exercise each of the
+    evaluation paths: a single point, a repeated small point set, scattered
+    points, and a tensor-product lattice.
+    """
+
+    @staticmethod
+    def _scattered(rng, npoints):
+        return np.column_stack(
+            [
+                rng.uniform(0.1, 0.9, npoints),
+                rng.uniform(0, 2 * np.pi, npoints),
+                rng.uniform(0, 2 * np.pi, npoints),
+            ]
+        )
+
+    @staticmethod
+    def _modB_directly(bri, points):
+        """|B| summed one point and one mode at a time."""
+        modB = np.zeros(len(points))
+        for i, (s, theta, zeta) in enumerate(points):
+            angle = bri.xm_b * theta - bri.xn_b * zeta
+            modB[i] = np.sum(bri.bmnc_splines(np.array([s]))[0] * np.cos(angle))
+            if bri.asym:
+                modB[i] += np.sum(bri.bmns_splines(np.array([s]))[0] * np.sin(angle))
+        return modB
+
+    def test_modB_matches_direct_sum(self):
+        for asym in [True, False]:
+            if asym:
+                bri = BoozerRadialInterpolant(
+                    filename_mhd_lasym, 3, mpol=20, ntor=18, no_K=True, comm=comm
+                )
+            else:
+                bri = BoozerRadialInterpolant(filename_vac, 3, no_K=True, comm=comm)
+            self.assertEqual(bri.asym, asym)
+
+            rng = np.random.default_rng(17)
+            scattered = functools.partial(self._scattered, rng)
+
+            # A lattice of (s, theta, zeta) values, the shape used when
+            # building an InterpolatedBoozerField.
+            thetas = np.linspace(0, 2 * np.pi, 21)
+            zetas = np.linspace(0, 2 * np.pi / bri.nfp, 23)
+            grid = np.meshgrid(np.array([0.3, 0.7]), thetas, zetas, indexing="ij")
+            lattice = np.column_stack([g.ravel() for g in grid])
+
+            point_sets = [scattered(n) for n in (1, 2, 3, 200)]
+            # Evaluate each point set twice, at slightly shifted positions the
+            # second time, so that any state cached from the first call has to
+            # be invalidated.
+            point_sets += [p + 0.01 for p in point_sets]
+            point_sets.append(lattice)
+
+            for points in point_sets:
+                bri.set_points(points)
+                modB = np.asarray(bri.modB()).ravel()
+                assert np.allclose(
+                    modB, self._modB_directly(bri, points), rtol=1e-12, atol=1e-11
+                )
+
+
 class TestingBoozerSplineField(unittest.TestCase):
     def test_boozersplinefield_initialization(self):
         """
