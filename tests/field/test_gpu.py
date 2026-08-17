@@ -3,6 +3,7 @@ import functools
 import unittest
 
 import numpy as np
+from scipy.io import netcdf_file
 
 import firm3dpp
 
@@ -139,8 +140,30 @@ def build_cartesian_field():
         curves.append(coil.curve)
         currents.append(coil.current)
 
-    coils_full = coils_via_symmetries(curves, currents, surf.nfp, True)
+    # coils.curves_22_7_21 holds 20 coils: the stellarator-symmetric half of a
+    # full-torus 40-coil set, so only stellsym is left to apply.  Passing
+    # surf.nfp replicates an already complete set nfp times and makes |B| about
+    # nfp times too strong, which shows up only as suspiciously good
+    # confinement.  Assert the field against the equilibrium so it cannot drift.
+    coils_full = coils_via_symmetries(curves, currents, 1, True)
     bs = BiotSavart(coils_full)
+
+    # Mean |B| over whole periods in both angles leaves only the (0, 0)
+    # harmonic, so the equilibrium's LCFS mean is bmnc(0, 0) at s = 1; bmnc is
+    # on the half mesh, hence the extrapolation.
+    with netcdf_file(wout_filename, mmap=False) as f:
+        xm_nyq = np.asarray(f.variables["xm_nyq"][:])
+        xn_nyq = np.asarray(f.variables["xn_nyq"][:])
+        bmnc = np.asarray(f.variables["bmnc"][:])
+    (i00,) = np.where((xm_nyq == 0) & (xn_nyq == 0))[0]
+    modB_equil = 1.5 * bmnc[-1, i00] - 0.5 * bmnc[-2, i00]
+    bs.set_points(surf.gamma().reshape(-1, 3))
+    modB_coils = np.linalg.norm(bs.B(), axis=1).mean()
+    assert abs(modB_coils / modB_equil - 1) < 0.03, (
+        f"coil field is {modB_coils / modB_equil:.3f}x the equilibrium "
+        f"({modB_coils:.4f} T vs {modB_equil:.4f} T) -- check the symmetry "
+        "arguments to coils_via_symmetries against the coil file"
+    )
 
     sc_particle = SurfaceClassifier(surf, h=0.1, p=2)
     rs = np.linalg.norm(surf.gamma()[:, :, 0:2], axis=2)

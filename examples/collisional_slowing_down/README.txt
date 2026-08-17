@@ -5,9 +5,18 @@ Over 2e-1 seconds the confined population thermalizes to about 24% of the birth 
 On perlmutter (08.13.26), the wallclock time is about 4 minutes using the attached slurm script.
 
 All three collisional examples trace the same equilibrium with the same
-equations and background, and agree: 0.2% of particles lost and about 24% of
-the birth energy retained by the confined population, whether traced on the
-CPU, on the GPU in Boozer coordinates, or on the GPU in Cartesian
-coordinates with the profiles reaching the kick through an interpolated flux
-label.
+equations and background, on the CPU, on the GPU in Boozer coordinates, and on
+the GPU in Cartesian coordinates with the profiles reaching the kick through an
+interpolated flux label. The two Boozer examples take |B| from the equilibrium
+and agree with each other: 0.2% of particles lost and about 24% of the birth
+energy retained by the confined population.
 
+The Cartesian leg of that comparison is currently unverified. It builds |B|
+from the coil set, and the version of the example that produced the figures
+above applied the coil symmetries once too often, making the field about 4x too
+strong. The agreement was not sensitive enough to notice: at 1000 particles a
+0.2% loss is two events, and Poisson noise on two events hides a factor of
+several in |B|, while the retained-energy figure is set by the collision
+profiles rather than the field. The Cartesian example has been corrected and
+now checks |B| against the equilibrium before tracing, but it has not been
+rerun, so do not quote a three-way agreement until it has been.
