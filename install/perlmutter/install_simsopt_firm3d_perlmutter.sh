@@ -40,9 +40,6 @@ echo "Installing numpy (>=2.0,<2.4 for jax/simsopt + numba compatibility)..."
 pip install "numpy>=2.0,<2.4"
 check_success "Failed to install numpy"
 
-# firm3d uses Boost header-only. nersc-python does not ship the headers and the
-# system Boost in /usr/include is older than the required 1.76, so without this
-# the build falls back to downloading boost, which fails on compute nodes.
 echo "Installing Boost headers..."
 conda install -y -c conda-forge libboost-headers
 check_success "Failed to install Boost headers"
