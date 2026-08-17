@@ -132,14 +132,7 @@ else()
     set(USE_MPI FALSE)
 endif()
 
-# firm3d only uses header-only Boost (boost/format.hpp,
-# boost/math/tools/roots.hpp and boost/numeric/odeint.hpp), so a plain header
-# tree is all that is required -- no imported targets, no compiled components.
 set(BOOST_MINIMUM_VERSION 1.76.0)
-
-# A rejected find_package still caches Boost_INCLUDE_DIR pointing at whatever it
-# looked at, which would stop the fallback below from searching at all. Keep any
-# genuinely user-supplied value so it can be used as a hint instead.
 set(_boost_user_include_dir "${Boost_INCLUDE_DIR}")
 
 # Preferred route: an install that ships BoostConfig.cmake.
