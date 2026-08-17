@@ -151,16 +151,7 @@ endif()
 # too-old system Boost. Either way the download below would be triggered on
 # every fresh configure, so locate the headers directly instead.
 if(NOT Boost_FOUND)
-    # Discard the rejected location so find_path actually searches. Anything a
-    # too-old or incomplete install left behind must not win by default.
     unset(Boost_INCLUDE_DIR CACHE)
-
-    # An explicit Boost_INCLUDE_DIR first, then BOOST_ROOT/BOOSTROOT from the
-    # cache or the environment, then the prefix of the Python interpreter driving
-    # the build (conda envs keep Boost headers there). Hints outrank the system
-    # prefixes, so a current conda Boost beats an ancient /usr/include one.
-    # CMAKE_PREFIX_PATH and the standard system prefixes are searched by
-    # find_path itself.
     set(_boost_hints)
     if(_boost_user_include_dir)
         list(APPEND _boost_hints "${_boost_user_include_dir}")
