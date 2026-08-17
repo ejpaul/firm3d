@@ -192,24 +192,14 @@ if(NOT Boost_FOUND)
 
     set(_boost_version_string)
     if(Boost_INCLUDE_DIR AND EXISTS "${Boost_INCLUDE_DIR}/boost/version.hpp")
-        file(STRINGS "${Boost_INCLUDE_DIR}/boost/version.hpp" _boost_version_defines
-             REGEX "^#define[ \t]+BOOST_(LIB_)?VERSION[ \t]+")
-        foreach(_line ${_boost_version_defines})
-            if(_line MATCHES "^#define[ \t]+BOOST_VERSION[ \t]+([0-9]+)")
-                # BOOST_VERSION is encoded as major * 100000 + minor * 100 + patch.
-                math(EXPR _boost_major "${CMAKE_MATCH_1} / 100000")
-                math(EXPR _boost_minor "${CMAKE_MATCH_1} / 100 % 1000")
-                math(EXPR _boost_patch "${CMAKE_MATCH_1} % 100")
-                set(_boost_version_string "${_boost_major}.${_boost_minor}.${_boost_patch}")
-            endif()
-        endforeach()
-        if(NOT _boost_version_string)
-            # Fall back to the "1_76" style string if BOOST_VERSION is absent.
-            foreach(_line ${_boost_version_defines})
-                if(_line MATCHES "^#define[ \t]+BOOST_LIB_VERSION[ \t]+\"([0-9_]+)\"")
-                    string(REPLACE "_" "." _boost_version_string "${CMAKE_MATCH_1}")
-                endif()
-            endforeach()
+        file(STRINGS "${Boost_INCLUDE_DIR}/boost/version.hpp" _boost_version_line
+             REGEX "^#define[ \t]+BOOST_VERSION[ \t]+[0-9]+")
+        if(_boost_version_line MATCHES "BOOST_VERSION[ \t]+([0-9]+)")
+            # BOOST_VERSION is encoded as major * 100000 + minor * 100 + patch.
+            math(EXPR _boost_major "${CMAKE_MATCH_1} / 100000")
+            math(EXPR _boost_minor "${CMAKE_MATCH_1} / 100 % 1000")
+            math(EXPR _boost_patch "${CMAKE_MATCH_1} % 100")
+            set(_boost_version_string "${_boost_major}.${_boost_minor}.${_boost_patch}")
         endif()
     endif()
 
