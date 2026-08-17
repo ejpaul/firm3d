@@ -250,11 +250,16 @@ n_lost = int(lost.sum())
 particle_loss = n_lost / nparticles
 energy_loss = np.sum((v_end[lost] / vpar0) ** 2) / nparticles
 
-rel_err = 1.0 / np.sqrt(n_lost) if n_lost else np.inf
-
 print(f"Number of particles= {nparticles}")
-print(
-    f"Particles lost: {n_lost} ({particle_loss:.3e} +/- {particle_loss * rel_err:.1e})"
-)
+# Reported with its counting uncertainty, since a loss fraction means nothing
+# until it is many events; with no losses at all the informative statement is
+# the one-sided 95% Poisson limit of 3 events.
+if n_lost:
+    print(
+        f"Particles lost: {n_lost} "
+        f"({particle_loss:.3e} +/- {particle_loss / np.sqrt(n_lost):.1e})"
+    )
+else:
+    print(f"Particles lost: 0 (< {3.0 / nparticles:.1e} at 95% CL)")
 print(f"Energy loss fraction: {energy_loss:.3e}")
 print(f"Mean energy fraction of confined: {np.mean((v_end[~lost] / vpar0) ** 2):.4f}")

@@ -139,8 +139,14 @@ particle_data.to_csv("./particle_data.csv")
 did_leave = [t < tmax for t in particle_data["last_time"]]
 n_lost = sum(did_leave)
 loss_frac = n_lost / len(did_leave)
-# Printed with its counting uncertainty: the loss fraction is the figure a
-# mis-scaled field would move, and it is only meaningful once it is many events.
-rel_err = 1.0 / np.sqrt(n_lost) if n_lost else np.inf
 print(f"Number of particles= {nparticles}")
-print(f"Particles lost: {n_lost} ({loss_frac:.3e} +/- {loss_frac * rel_err:.1e})")
+# Reported with its counting uncertainty, since a loss fraction means nothing
+# until it is many events.  Over this window the losses are usually zero, where
+# the informative statement is the one-sided 95% Poisson limit of 3 events.
+if n_lost:
+    print(
+        f"Particles lost: {n_lost} "
+        f"({loss_frac:.3e} +/- {loss_frac / np.sqrt(n_lost):.1e})"
+    )
+else:
+    print(f"Particles lost: 0 (< {3.0 / nparticles:.1e} at 95% CL)")
