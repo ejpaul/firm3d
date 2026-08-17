@@ -14,6 +14,9 @@
 #include <stdexcept>
 #include <iomanip>
 #include <boost/math/tools/roots.hpp>
+// Not redundant: newer Boost only pulls this in from roots.hpp when
+// BOOST_MATH_HAS_GPU_SUPPORT is undefined, and nvcc defines it.
+#include <boost/math/tools/toms748_solve.hpp>
 #include <boost/numeric/odeint.hpp>
 
 using std::shared_ptr;
