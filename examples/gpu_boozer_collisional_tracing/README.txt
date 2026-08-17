@@ -13,12 +13,24 @@ interpolated flux label. The two Boozer examples take |B| from the equilibrium
 and agree with each other: 0.2% of particles lost and about 24% of the birth
 energy retained by the confined population.
 
-The Cartesian leg of that comparison is currently unverified. It builds |B|
-from the coil set, and the version of the example that produced the figures
-above applied the coil symmetries once too often, making the field about 4x too
-strong. The agreement was not sensitive enough to notice: at 1000 particles a
-0.2% loss is two events, and Poisson noise on two events hides a factor of
-several in |B|, while the retained-energy figure is set by the collision
-profiles rather than the field. The Cartesian example has been corrected and
-now checks |B| against the equilibrium before tracing, but it has not been
-rerun, so do not quote a three-way agreement until it has been.
+That agreement does not extend to the Cartesian leg, which builds |B| from the
+coil set rather than taking it from the equilibrium. Two separate problems hid
+behind the claim.
+
+First, the Cartesian example applied the coil symmetries once too often and ran
+with |B| about 4x too strong. That has been fixed, and it now asserts the mean
+LCFS |B| against the equilibrium before tracing.
+
+Second, and not fixed, the two do not agree even with the correct field. At
+1000 particles a 0.2% loss is two events, so the old comparison could not
+resolve anything; run both at 10000 particles and the picture is unambiguous:
+
+    Boozer,    equilibrium |B|:  8 lost, 8.000e-04 +/- 2.8e-04, retained 0.2356
+    Cartesian, coil |B|:        88 lost, 8.800e-03 +/- 9.4e-04, retained 0.2380
+
+An eleven-fold difference in the loss fraction at 8 events against 88 is not
+counting noise. The retained energy still agrees, as expected for a quantity
+the collision profiles set rather than the field. Treat the CPU and GPU Boozer
+examples as the pair that cross-checks the tracer, and see
+gpu_cartesian_collisional_tracing/README.txt for what is known about the
+remaining difference.
