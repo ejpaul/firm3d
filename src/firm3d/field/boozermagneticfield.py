@@ -3044,12 +3044,6 @@ class BoozerRadialInterpolant(BoozerMagneticField):
         # Create minimal arrays for single point computation
         us = np.array([s])
 
-        # The single-point branch of the C++ kernel vectorizes over the mode
-        # index with *aligned* SIMD loads, so the mode-indexed arrays must be
-        # aligned and padded to the SIMD width (on x86, unaligned or
-        # non-padded arrays crash or give garbage; this also converts xm_b /
-        # xn_b when booz_xform hands them over as integers). The multi-point
-        # branch has no such requirement on these arrays.
         chunk_mn = align_and_pad(coeffs(us).reshape(-1))
         xm = align_and_pad(self.xm_b)
         xn = align_and_pad(self.xn_b)
