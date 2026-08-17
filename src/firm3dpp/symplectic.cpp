@@ -1,8 +1,12 @@
 #include <gsl/gsl_vector.h>
 #include <gsl/gsl_multiroots.h>
+#include <gsl/gsl_errno.h>
 #include "boozermagneticfield.h"
 #include "symplectic.h"
 #include <cassert>
+#include <cmath>
+#include <stdexcept>
+#include <string>
 #include "tracing_helpers.h"
 
 
@@ -58,7 +62,7 @@ void SymplField::eval_field(double s, double theta, double zeta)
 
 }
 
-// compute pzeta normalized by m * vnorm**2 * tnorm 
+// compute pzeta normalized by m * vnorm**2 * tnorm
 double SymplField::get_pzeta(double vpar) {
     double pzeta = (m*hzeta*vpar + q*Azeta/vnorm) / (m * vnorm * tnorm);
     return pzeta;
@@ -67,7 +71,7 @@ double SymplField::get_pzeta(double vpar) {
 // computes values of H, ptheta and vpar at z=(s, theta, zeta, pzeta)
 void SymplField::get_val(double pzeta) {
     vpar = (pzeta * m * vnorm * tnorm - q*Azeta/vnorm)/(hzeta*m);
-    // H is normalized by m * vnorm**2 
+    // H is normalized by m * vnorm**2
     H = pow(vpar,2)/2.0 + mu*modB/pow(vnorm,2);
     // ptheta is normalized by vnorm
     ptheta = (m*htheta*vpar + q*Atheta/vnorm) / (m * vnorm * tnorm);
@@ -93,14 +97,14 @@ void SymplField::get_derivatives(double pzeta) {
 }
 
 double SymplField::get_dsdtau() {
-    // H is normalized by m*vnorm**2 
+    // H is normalized by m*vnorm**2
     // ptheta is normalized by m*vnorm**2 * tnorm
     // dsdt is normalized by tnorm
     return (-dH[1] + dptheta[3]*dH[2] - dptheta[2]*dH[3])/dptheta[0];
 }
 
 double SymplField::get_dthdtau() {
-    // H is normalized by m*vnorm**2 
+    // H is normalized by m*vnorm**2
     // ptheta is normalized by m*vnorm**2 * tnorm
     // dthdt is normalized by tnorm
     return dH[0]/dptheta[0];
@@ -108,9 +112,9 @@ double SymplField::get_dthdtau() {
 
 double SymplField::get_dzedtau() {
     // vpar is normalized by vnorm
-    // H is normalized by m*vnorm**2 
+    // H is normalized by m*vnorm**2
     // ptheta is normalized by m*vnorm**2 * tnorm
-    // htheta and hzeta have units of length -> normalized by tnorm/vnorm 
+    // htheta and hzeta have units of length -> normalized by tnorm/vnorm
     return (vpar * tnorm * vnorm - dH[0]/dptheta[0]*htheta) / (hzeta);
 }
 
@@ -152,13 +156,13 @@ public:
     void update(double tau, double dtau, vector<double> y, SymplField f) {
         tau_last = tau;
         tau_current = tau + dtau;
-        
+
         // Store the state and derivatives at the endpoints
         bracket_s[0] = y[0];
         bracket_theta[0] = y[1];
         bracket_zeta[0] = y[2];
         bracket_vpar[0] = y[3];
-        
+
         // Calculate derivatives at tau
         // Convert to physical coordinates only for field evaluation
         f.eval_field(y[0], y[1], y[2]);
@@ -168,7 +172,7 @@ public:
         bracket_dthdtau[0] = f.get_dthdtau();
         bracket_dzedtau[0] = f.get_dzedtau();
         bracket_dvpardtau[0] = f.get_dvpardtau();
-        
+
         // Calculate state at tau+dtau (this is approximate)
         double dtau_small = dtau * 0.1;
         vector<double> y_next = y;
@@ -176,12 +180,12 @@ public:
         y_next[1] += dtau_small * bracket_dthdtau[0];
         y_next[2] += dtau_small * bracket_dzedtau[0];
         y_next[3] += dtau_small * bracket_dvpardtau[0];
-        
+
         bracket_s[1] = y_next[0];
         bracket_theta[1] = y_next[1];
         bracket_zeta[1] = y_next[2];
         bracket_vpar[1] = y_next[3];
-        
+
         // Calculate derivatives at tau+dtau (approximate)
         // Convert to physical coordinates only for field evaluation
         f.eval_field(y_next[0], y_next[1], y_next[2]);
@@ -192,7 +196,7 @@ public:
         bracket_dzedtau[1] = f.get_dzedtau();
         bracket_dvpardtau[1] = f.get_dvpardtau();
     }
-    
+
     void calc_state(double eval_tau, vector<double> &temp) {
         assert (tau_last <= eval_tau && eval_tau <= tau_current);
         temp.resize(4);
@@ -222,10 +226,19 @@ int f_euler_quasi_func_vector(const gsl_vector* x, void* p, gsl_vector* f)
     const double x0 = gsl_vector_get(x,0);
     const double x1 = gsl_vector_get(x,1);
 
+    // The field interpolant is only defined for s > 0. Fast passing orbits
+    // born near the magnetic axis can drive the root solver to trial points
+    // at or beyond the axis (x0 = s <= 0) or to non-finite values; signal a
+    // domain error instead of evaluating the field there. The caller detects
+    // the failed step and terminates the particle.
+    if (!std::isfinite(x0) || !std::isfinite(x1) || x0 <= 0.0) {
+        return GSL_EDOM;
+    }
+
     field.eval_field(x0, z[1], z[2]);
     field.get_derivatives(x1);
 
-    // Apply normalization factor to make order unity 
+    // Apply normalization factor to make order unity
     double norm = field.q * field.Atheta / (field.m * field.vnorm * field.vnorm * field.tnorm);
     const double f0 = (field.dptheta[0]*(field.ptheta - ptheta_old)
         + dtau*(field.dH[1]*field.dptheta[0] - field.dH[0]*field.dptheta[1])) / (norm * norm); // corresponds with (2.6) in JPP 2020
@@ -277,7 +290,7 @@ void sympl_dense::calc_state(double eval_t, State &temp) {
 //         orbit_symplectic_quasi.f90:timestep_euler1_quasi
 tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
     SymplField f,
-    vector<double> y, 
+    vector<double> y,
     double tau_max,
     double dtau,
     double roottol,
@@ -385,8 +398,59 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
         while (status == GSL_CONTINUE && root_iter < 50);
         iter++;
 
-        z[0] = gsl_vector_get(s_euler->x, 0);  // s
-        z[3] = gsl_vector_get(s_euler->x, 1);  // pzeta
+        double s_trial = gsl_vector_get(s_euler->x, 0);
+        double pzeta_trial = gsl_vector_get(s_euler->x, 1);
+
+        // The symplectic solver cannot integrate through the magnetic axis:
+        // a fast passing orbit can cross s = 0 within a single step, in which
+        // case the root solve either diverges (GSL reports "iteration is not
+        // making progress towards solution") or lands at s <= 0, and the
+        // resulting state must not be used to evaluate the field interpolant.
+        // Terminate the particle at its last accepted state, recorded as a
+        // MinToroidalFluxStoppingCriterion hit when one is provided.
+        bool solver_failed = (status != GSL_SUCCESS && status != GSL_CONTINUE);
+        bool state_invalid = !std::isfinite(s_trial) || !std::isfinite(pzeta_trial)
+            || s_trial <= 0.0;
+        // GSL_EBADFUNC means the root function reported GSL_EDOM, i.e. the
+        // solver stepped to a trial point at or beyond the axis.
+        bool axis_crossing = state_invalid || status == GSL_EBADFUNC;
+        if (solver_failed || state_invalid) {
+            int min_flux_idx = -1;
+            double min_s = 0.0;
+            for (int i = 0; i < stopping_criteria.size(); ++i) {
+                auto crit = std::dynamic_pointer_cast<MinToroidalFluxStoppingCriterion>(stopping_criteria[i]);
+                if (crit) {
+                    min_flux_idx = i;
+                    min_s = crit->get_min_s();
+                    break;
+                }
+            }
+            if (min_flux_idx >= 0 && (axis_crossing || s_trial <= min_s)) {
+                vector<double> stzvt(4);
+                y_to_stzvt(y, stzvt, 0, f.vnorm, f.tnorm);
+                vector<double> hit_state = {tau * f.tnorm, -1.0 - double(min_flux_idx)};
+                hit_state.insert(hit_state.end(), stzvt.begin(), stzvt.end());
+                res_hits.push_back(hit_state);
+                stop = true;
+                break;
+            } else if (axis_crossing) {
+                gsl_multiroot_fsolver_free(s_euler);
+                gsl_vector_free(xvec_quasi);
+                throw std::runtime_error(
+                    "Symplectic solver: implicit step produced an invalid state (s = "
+                    + std::to_string(s_trial) + ", t = " + std::to_string(tau * f.tnorm)
+                    + " s). This orbit crossed the magnetic axis, which the symplectic "
+                    "solver cannot integrate through. Add a MinToroidalFluxStoppingCriterion "
+                    "to terminate such particles cleanly, or use ODE_solver='boost' or "
+                    "'dormand_prince' with axis=1 or 2.");
+            }
+            // Otherwise the root solve stalled at a valid state away from the
+            // axis; fall through and continue with the unconverged state as
+            // before (the warning has already been printed above).
+        }
+
+        z[0] = s_trial;   // s
+        z[3] = pzeta_trial;  // pzeta
 
         // We now evaluate the explicit part of the time-step at [s, pzeta]
         // given by the Euler step.
@@ -416,6 +480,15 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
         if (predictor_step) {
             s_guess = z[0] + dtau*(-f.dH[1] + f.dptheta[3]*f.dH[2] - f.dptheta[2]*f.dH[3])/f.dptheta[0];
             pzeta_guess = z[3] + dtau*(- f.dH[2] + f.dH[0]*f.dptheta[2]/f.dptheta[0]); // corresponds with (2.7s) in JPP 2020
+            // The explicit predictor can overshoot the axis (s <= 0) for fast
+            // passing orbits; fall back to the last accepted state so the next
+            // root solve starts from a valid field evaluation point.
+            if (!std::isfinite(s_guess) || s_guess <= 0.0) {
+                s_guess = z[0];
+            }
+            if (!std::isfinite(pzeta_guess)) {
+                pzeta_guess = z[3];
+            }
         } else {
             s_guess = z[0];
             pzeta_guess = z[3];
@@ -467,7 +540,7 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
         tau_last = tau_current;
     } while(tau < tau_max && !stop);
 
-    // Save tau = tau_max if we have not already saved it 
+    // Save tau = tau_max if we have not already saved it
     if (stop) {
         tau_max = tau_last;
     }

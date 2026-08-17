@@ -413,7 +413,16 @@ def trace_particles_boozer(
             Option 2 (default) is recommended.
         dt: time step for the symplectic solver. Only used if `ODE_solver` is
             "symplectic".
-        ODE_solver: Choice of ODE_solver: "boost", "dormand_prince" or "symplectic"
+        ODE_solver: Choice of ODE_solver: "boost", "dormand_prince" or "symplectic".
+            Note that the symplectic solver integrates in (s, theta, zeta)
+            coordinates and cannot integrate through the magnetic axis: if an
+            orbit crosses s = 0 within a single step (e.g., a strongly passing
+            particle born near the axis), the particle is terminated at its
+            last accepted state and recorded as a hit on the
+            :obj:`MinToroidalFluxStoppingCriterion` if one is provided;
+            otherwise a ``RuntimeError`` is raised. To trace such orbits
+            through the axis, use "boost" or "dormand_prince" with axis=1
+            or 2 (SIMPLE handles these orbits with axis-healing bridges).
         roottol: root solver tolerance for the symplectic solver. Only used if
             `ODE_solver` is "symplectic". If None, defaults to `tol`.
         predictor_step: provide better initial guess for the next time step
