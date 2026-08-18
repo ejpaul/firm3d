@@ -13,9 +13,6 @@
 #define _EPS_ 1e-13
 
 template<class Array>
-const int RegularGridInterpolant3D<Array>::simdcount;
-
-template<class Array>
 const int RegularGridInterpolant3D<Array>::MAX_NODES;
 
 // Copy the dof-ordered vals array into per-cell contiguous blocks
@@ -26,7 +23,7 @@ template<class Array>
 void RegularGridInterpolant3D<Array>::build_local_vals() {
     int degree = rule.degree;
     cell_offsets.assign((size_t)nx*ny*nz, -1);
-    local_vals_flat = AlignedPaddedVec((size_t)cells_to_keep * local_vals_size, 0.);
+    local_vals_flat.assign((size_t)cells_to_keep * local_vals_size, 0.);
     int64_t flat_offset = 0;
     for (int xidx = 0; xidx < nx; ++xidx) {
         for (int yidx = 0; yidx < ny; ++yidx) {

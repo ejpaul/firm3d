@@ -111,13 +111,12 @@ class RegularGridInterpolant3D {
         // Per-cell storage used for evaluation. For each kept cell,
         // local_vals_flat holds a contiguous block of
         // (degree+1)^3 * value_size values (one entry per dof of the cell,
-        // dofs ordered by idx_dof_local, values contiguous per dof). Block
-        // lengths are rounded up to a multiple of the simd width so every
-        // block starts aligned. cell_offsets maps a cell index to the offset
-        // of its block within local_vals_flat, or -1 for skipped cells. It is
-        // sized nx*ny*nz from construction, and evaluate_inplace() clamps or
-        // rejects out-of-range cell indices, so lookups index it directly.
-        AlignedPaddedVec local_vals_flat;
+        // dofs ordered by idx_dof_local, values contiguous per dof).
+        // cell_offsets maps a cell index to the offset of its block within
+        // local_vals_flat, or -1 for skipped cells. It is sized nx*ny*nz from
+        // construction, and evaluate_inplace() clamps or rejects out-of-range
+        // cell indices, so lookups index it directly.
+        Vec local_vals_flat;
         std::vector<int64_t> cell_offsets;
         std::vector<bool> skip_cell; // whether to skip each cell or not
         // since we are skipping some dofs, we need mappings into the list of
@@ -128,7 +127,6 @@ class RegularGridInterpolant3D {
         uint32_t cells_to_skip, cells_to_keep, dofs_to_skip, dofs_to_keep; // which cells and dofs we skip and keep
         int local_vals_size; // length of each cell's block in local_vals_flat
 
-        static const int simdcount = xsimd::simd_type<double>::size; // vector width for simd instructions
         static const int MAX_NODES = 16; // upper bound on degree+1, so basis function values fit in stack buffers
 
         inline int idx_dof(int i, int j, int k) const {
@@ -296,11 +294,9 @@ class RegularGridInterpolant3D {
                 }
             }
 
-            // each cell's block holds (degree+1)^3 dofs with value_size values
-            // per dof; round the block length up to a multiple of the simd
-            // width so that every block in local_vals_flat starts aligned
-            int block = (degree+1)*(degree+1)*(degree+1)*value_size;
-            local_vals_size = ((block + simdcount - 1) / simdcount) * simdcount;
+            // each cell's block holds (degree+1)^3 dofs with value_size
+            // values per dof; the scalar kernels need no padding or alignment
+            local_vals_size = (degree+1)*(degree+1)*(degree+1)*value_size;
             cell_offsets.assign((size_t)nx*ny*nz, -1);
         }
         RegularGridInterpolant3D(InterpolationRule rule, RangeTriplet xrange, RangeTriplet yrange, RangeTriplet zrange, int value_size, bool out_of_bounds_ok) :
