@@ -27,6 +27,18 @@ So the three-way agreement the examples used to claim does not hold, and the coi
 
 Note that this comparison changes two things at once, the coordinate system and the source of |B|, so on its own it does not say which is responsible. The field is not: comparing the 40-coil Biot-Savart field against the equilibrium at the same physical points, over flux surfaces from s=0.1 to the LCFS, they agree to 2e-4 rms rising to 6.5e-4 at the boundary, worst case 2.4e-3. The coil ripple is visible and sits where 10 coils per field period put it, around toroidal mode n=40, but its amplitude is only 3e-4 of |B| and the equilibrium's own |B| representation reaches n=72, so it carries that ripple rather than missing it. A 0.03% ripple does not move alpha losses elevenfold.
 
-What is left is the Cartesian machinery, which is cruder here than its Boozer counterpart in three ways: the field interpolant is a degree-3 grid of only (16, 32, 8) cells in (r, phi, z) spanning the whole LCFS bounding box and is not aligned with flux surfaces, whereas the Boozer interpolant is 16 cubed in coordinates that are; the boundary is a SurfaceClassifier level set with h=0.1 rather than an exact s=1 stop; and the flux label is a nearest-neighbour lookup, so the s the collision operator sees is piecewise constant. The interpolant is the first thing to rule in or out, by raising its resolution and watching whether the loss fraction falls toward the Boozer value.
+Nor is it any of the numerical approximations this path makes. Each was refined in turn, everything else held fixed, at 10000 particles throughout:
+
+    baseline                                     88 lost, 8.800e-03 +/- 9.4e-04
+    field interpolant   (16,32,8) -> (32,64,16)  86 lost, 8.600e-03 +/- 9.3e-04
+    boundary classifier h=0.1     -> h=0.05      89 lost, 8.900e-03 +/- 9.4e-04
+    flux label grid     48        -> 96          84 lost, 8.400e-03 +/- 9.2e-04
+    ODE tolerance       1e-8      -> 1e-10       95 lost, 9.500e-03 +/- 9.7e-04
+
+Every one of them lands inside the counting error of the baseline. The Cartesian answer is converged: it does not depend on the field representation, the interpolant resolution, the boundary level set, the granularity of the flux label, or the integrator tolerance. It is a well-converged 8.4e-03 to 9.5e-03, and the Boozer answer is a well-converged 8.0e-04.
+
+So the two tracers disagree by an order of magnitude on the same physical problem, with the same equilibrium, the same birth distribution, the same backgrounds and the same integration window. That is a defect in one of them rather than a resolution question, and it is unresolved. Which one is wrong is not established here, though it is worth noting that the Boozer answer has independent corroboration from a separate CPU campaign using cross-entropy importance sampling, and the Cartesian answer has none.
+
+Until it is resolved, do not treat agreement between the Boozer and Cartesian collisional paths as a check on either, and prefer the Boozer examples for loss-fraction work. The next step that would localise it is to repeat the comparison collisionlessly over the same 2e-1 second window: if the gap survives without collisions, it is in the orbit integration or the field handling rather than in how the profiles reach the collision operator.
 
 End-to-end wallclock, interpolant and flux-label construction included, is about 10 minutes using the attached slurm script -- about twice the 5 minutes it took at 1000 particles, so it still fits the debug qos comfortably.
