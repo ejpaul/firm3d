@@ -33,7 +33,8 @@ from firm3d.util.constants import (
 degree = 3  # degree of interpolant
 n = 16  # resolution of interpolant
 order = 12  # order of coil curves
-nparticles = 1000
+# 10000 rather than 1000 so the loss fraction is not Poisson-limited.
+nparticles = 10000
 tmax = 2e-1
 tol = 1e-8
 
@@ -50,7 +51,9 @@ for _i, coil in enumerate(coils):
     curves.append(coil.curve)
     currents.append(coil.current)
 
-coils_full = coils_via_symmetries(curves, currents, surf.nfp, True)
+# coils.curves_22_7_21 holds the stellarator-symmetric half of a full-torus
+# 40-coil set, so only stellsym is applied here.
+coils_full = coils_via_symmetries(curves, currents, 1, True)
 bs = BiotSavart(coils_full)
 
 sc_particle = SurfaceClassifier(surf, h=0.1, p=2)
