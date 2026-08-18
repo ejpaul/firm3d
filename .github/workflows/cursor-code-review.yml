@@ -4,6 +4,12 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
+# Only review the latest commit on a PR. Pushing again cancels the in-flight
+# review instead of paying for a full model run on a diff that is already stale.
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   pull-requests: write
   contents: read
