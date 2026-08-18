@@ -19,16 +19,25 @@ First, the Cartesian example applied the coil symmetries once too often and ran
 with |B| about 4x too strong. That has been fixed, and it now asserts the mean
 LCFS |B| against the equilibrium before tracing.
 
-Second, and not fixed, the two do not agree even with the correct field. At
-1000 particles a 0.2% loss is two events, so the old comparison could not
-resolve anything; run both at 10000 particles and the picture is unambiguous:
+Second, the two still do not agree with the correct field, and are not
+expected to. At 1000 particles a 0.2% loss is two events, so the old
+comparison could not resolve anything; run both at 10000 particles and the
+difference is clear:
 
     Boozer,    equilibrium |B|:  8 lost, 8.000e-04 +/- 2.8e-04, retained 0.2356
     Cartesian, coil |B|:        88 lost, 8.800e-03 +/- 9.4e-04, retained 0.2380
 
-An eleven-fold difference in the loss fraction at 8 events against 88 is not
-counting noise. The retained energy still agrees, as expected for a quantity
-the collision profiles set rather than the field. Treat the CPU and GPU Boozer
-examples as the pair that cross-checks the tracer, and see
-gpu_cartesian_collisional_tracing/README.txt for what is known about the
-remaining difference.
+Both numbers are converged, so this is not a resolution question. The coils do
+not exactly reproduce the equilibrium, and alpha confinement is sensitive to
+differences much smaller than they look against |B|: measured against the
+symmetry-breaking content that actually drives the transport, the coil field
+differs by a few percent, and it is the dominant source of structure at the
+high toroidal mode numbers where its ripple sits. A loss fraction of a few
+parts in a thousand is a tail quantity besides, so an order of magnitude is an
+ordinary response to that. The retained energy still agrees, as expected for a
+quantity the collision profiles set rather than the field.
+
+So the two answer different questions: this example and the GPU Boozer one give
+the equilibrium's own confinement and cross-check the tracer against each
+other, while the Cartesian example gives what a particular coil set does to it.
+See gpu_cartesian_collisional_tracing/README.txt for the numbers behind that.
