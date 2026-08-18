@@ -25,14 +25,7 @@ void SymplField::eval_field(double s, double theta, double zeta)
     double Btheta, Bzeta, dBtheta, dBzeta, modB2;
 
     // The implicit step may probe s < 0 while an orbit passes through the
-    // magnetic axis. There is no flux surface there and no smooth extension of
-    // |B| to s < 0 (its m = 0 part is even, its m = 1 part odd, in sqrt(s)),
-    // so the flux-surface quantities are evaluated at |s|, floored off the
-    // singular point, at unchanged theta. What keeps the root solve
-    // well-posed across the axis is the vector potential: Atheta = s*psi0
-    // retains the signed s, so ptheta stays linear in s through zero and the
-    // residual keeps its gradient. A converged s < 0 is committed as an axis
-    // crossing by the caller.
+    // magnetic axis.
     double s_eval = std::max(std::abs(s), 1e-8);
 
     stz[0, 0] = s_eval; stz[0, 1] = theta; stz[0, 2] = zeta;
