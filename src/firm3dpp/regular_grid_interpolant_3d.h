@@ -114,7 +114,9 @@ class RegularGridInterpolant3D {
         // dofs ordered by idx_dof_local, values contiguous per dof). Block
         // lengths are rounded up to a multiple of the simd width so every
         // block starts aligned. cell_offsets maps a cell index to the offset
-        // of its block within local_vals_flat, or -1 for skipped cells.
+        // of its block within local_vals_flat, or -1 for skipped cells. It is
+        // sized nx*ny*nz from construction, and evaluate_inplace() clamps or
+        // rejects out-of-range cell indices, so lookups index it directly.
         AlignedPaddedVec local_vals_flat;
         std::vector<int64_t> cell_offsets;
         std::vector<bool> skip_cell; // whether to skip each cell or not
@@ -145,15 +147,6 @@ class RegularGridInterpolant3D {
         inline int idx_dof_local(int i, int j, int k) const {
             int degree = rule.degree;
             return i*(degree+1)*(degree+1) + j*(degree+1) + k;
-        }
-
-        // Offset of cell_idx's block in local_vals_flat, or -1 if that cell is
-        // skipped or the index is out of range. Callers may pass an index
-        // outside [0, nx*ny*nz) - see the clamping in evaluate_inplace().
-        inline int64_t cell_lookup(int cell_idx) const {
-            if(cell_idx < 0 || (size_t)cell_idx >= cell_offsets.size())
-                return -1;
-            return cell_offsets[cell_idx];
         }
 
         int locate_unsafe(double x, double y, double z);

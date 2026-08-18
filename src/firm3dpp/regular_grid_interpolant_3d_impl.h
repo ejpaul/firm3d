@@ -211,11 +211,11 @@ void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double y, doubl
     int zidx = int(nz*(z-zmin)/(zmax-zmin));
     if(!out_of_bounds_ok){
         if(xidx < 0 || xidx >= nx)
-            throw std::runtime_error((boost::format("xidxs={} not within [0, {}]") % xidx % (nx-1)).str());
+            throw std::runtime_error((boost::format("xidx=%d not within [0, %d]") % xidx % (nx-1)).str());
         if(yidx < 0 || yidx >= ny)
-            throw std::runtime_error((boost::format("yidxs={} not within [0, {}]") % yidx % (ny-1)).str());
+            throw std::runtime_error((boost::format("yidx=%d not within [0, %d]") % yidx % (ny-1)).str());
         if(zidx < 0 || zidx >= nz)
-            throw std::runtime_error((boost::format("zidxs={} not within [0, {}]") % zidx % (nz-1)).str());
+            throw std::runtime_error((boost::format("zidx=%d not within [0, %d]") % zidx % (nz-1)).str());
     } else {
         // Clamp cell indices to match CUDA kernel convention (cuda_kernel.cu:700-704).
         xidx = std::max(0, std::min(nx-1, xidx));
@@ -240,7 +240,7 @@ void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double* res){
 
     if(!out_of_bounds_ok){
         if(xidx < 0 || xidx >= nx)
-            throw std::runtime_error((boost::format("xidxs={} not within [0, {}]") % xidx % (nx-1)).str());
+            throw std::runtime_error((boost::format("xidx=%d not within [0, %d]") % xidx % (nx-1)).str());
     } else {
         // Clamp cell index (matching CUDA kernel behaviour): extrapolate from
         // last cell rather than returning zero.
@@ -293,10 +293,11 @@ template<class Array>
 void RegularGridInterpolant3D<Array>::evaluate_local(double x, double y, double z, int cell_idx, double* res)
 {
     int degree = rule.degree;
-    // cell_idx can be out of range: evaluate_inplace() clamps theta/zeta cell
-    // indices only from above, so a point below those ranges yields a negative
-    // index. Treat that like a skipped cell rather than indexing out of bounds.
-    int64_t flat_offset = cell_lookup(cell_idx);
+    // evaluate_inplace() clamps the cell indices into range when
+    // out_of_bounds_ok is set and throws otherwise, so cell_idx is always a
+    // valid index here. -1 marks a skipped cell (or an interpolant whose
+    // values have not been computed yet).
+    int64_t flat_offset = cell_offsets[cell_idx];
     if (flat_offset < 0) {
         if(out_of_bounds_ok)
             return;
@@ -332,8 +333,10 @@ void RegularGridInterpolant3D<Array>::evaluate_local(double x, double y, double 
         case 3: interp_cell_accumulate<3>(val_ptr, pkxs, pkys, pkzs, degree, res); return;
         case 4: interp_cell_accumulate<4>(val_ptr, pkxs, pkys, pkzs, degree, res); return;
     }
-    // general case: same nesting as above, with heap-free scratch sized at
-    // runtime from the caller's value_size
+    // general case (value_size > 4): same nesting as above, with scratch
+    // sized at runtime. The scratch vectors allocate on every call, which is
+    // acceptable because no field interpolant takes this path: everything in
+    // boozermagneticfield_interpolated.h has value_size <= 3.
     const double* __restrict vp = val_ptr;
     double* __restrict out = res;
     std::vector<double> sumj(value_size), sumk(value_size);
@@ -367,7 +370,7 @@ template<class Array>
 void RegularGridInterpolant3D<Array>::evaluate_local(double x, int cell_idx, double* res)
 {
     int degree = rule.degree;
-    int64_t flat_offset = cell_lookup(cell_idx);
+    int64_t flat_offset = cell_offsets[cell_idx];
     if (flat_offset < 0) {
         if(out_of_bounds_ok)
             return;

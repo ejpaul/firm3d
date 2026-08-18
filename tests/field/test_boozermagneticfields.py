@@ -1013,21 +1013,29 @@ class TestingRegularGridInterpolantStorage(unittest.TestCase):
     The values of every cell live in one flat array indexed through
     cell_offsets, and the dof-ordered ``vals`` array is released once that has
     been built. These check the paths that depend on the layout: evaluation for
-    each value_size that selects a different kernel, and the serialisation
-    round-trip, which has to rebuild ``vals`` from the per-cell storage.
+    each value_size that selects a different kernel, out-of-domain lookups,
+    the compaction of the flat array when cells are skipped, and the
+    serialisation round-trip, which has to rebuild ``vals`` from the per-cell
+    storage.
     """
 
     RANGE = (0.0, 1.0, 8)
 
-    def _build(self, f, value_size, degree=3, out_of_bounds_ok=True):
-        interp = RegularGridInterpolant3D(
+    def _build(
+        self, f, value_size, degree=3, out_of_bounds_ok=True, skip=None, grid=None
+    ):
+        grid = self.RANGE if grid is None else grid
+        args = [
             UniformInterpolationRule(degree),
-            self.RANGE,
-            self.RANGE,
-            self.RANGE,
+            grid,
+            grid,
+            grid,
             value_size,
             out_of_bounds_ok,
-        )
+        ]
+        if skip is not None:
+            args.append(skip)
+        interp = RegularGridInterpolant3D(*args)
         interp.interpolate_batch(
             lambda x, y, z: (
                 f(np.asarray(x), np.asarray(y), np.asarray(z)).flatten().tolist()
@@ -1085,11 +1093,147 @@ class TestingRegularGridInterpolantStorage(unittest.TestCase):
                 src.evaluate_batch(pts, a)
                 dst.evaluate_batch(pts, b)
                 np.testing.assert_array_equal(a, b)
+                np.testing.assert_array_equal(
+                    src.get_interpolant_data()["vals"],
+                    dst.get_interpolant_data()["vals"],
+                )
+
+    def test_out_of_domain_clamped_to_boundary_cell(self):
+        """
+        With out_of_bounds_ok=True, evaluate_inplace clamps all three cell
+        indices into range while keeping the true local coordinate, so a point
+        outside the grid extrapolates the boundary cell's polynomial. The
+        clamping is what lets the flat storage be indexed without a bounds
+        check, so this locks the path that would otherwise read out of range.
+        The test function is linear and extrapolation of it is exact.
+        """
+        value_size = 2
+        f = self._f(value_size)
+        interp = self._build(f, value_size)
+        pts = np.ascontiguousarray(
+            [
+                [-0.4, 0.5, 0.5],
+                [1.4, 0.5, 0.5],
+                [0.5, -0.4, 0.5],
+                [0.5, 1.4, 0.5],
+                [0.5, 0.5, -0.4],
+                [0.5, 0.5, 1.4],
+                [-0.4, -0.4, -0.4],
+                [1.4, 1.4, 1.4],
+            ]
+        )
+        out = np.zeros((pts.shape[0], value_size))
+        interp.evaluate_batch(pts, out)
+        # extrapolation of a linear function is exact analytically, but the
+        # Lagrange basis several cells outside a corner cancels catastrophically,
+        # which limits the achievable precision to ~1e-7 here
+        np.testing.assert_allclose(
+            out, f(pts[:, 0], pts[:, 1], pts[:, 2]), rtol=0.0, atol=1e-5
+        )
+
+    def test_out_of_domain_raises_when_not_ok(self):
+        """With out_of_bounds_ok=False an out-of-range point is an error."""
+        f = self._f(1)
+        interp = self._build(f, 1, out_of_bounds_ok=False)
+        out = np.zeros((1, 1))
+        interp.evaluate_batch(np.ascontiguousarray([[0.5, 0.5, 0.5]]), out)
+        np.testing.assert_allclose(out[0], f(0.5, 0.5, 0.5), atol=1e-10)
+        for bad in ([-0.5, 0.5, 0.5], [0.5, 1.5, 0.5], [0.5, 0.5, -0.5]):
+            with self.assertRaisesRegex(RuntimeError, "not within", msg=str(bad)):
+                interp.evaluate_batch(np.ascontiguousarray([bad]), np.zeros((1, 1)))
+
+    def test_skipped_cells(self):
+        """
+        Cells whose corners all satisfy the skip function get no block in the
+        flat storage, so the kept blocks are compacted and cell_offsets holds
+        -1 for the skipped cells. Points in kept cells must evaluate exactly,
+        points in skipped cells must leave the output untouched
+        (out_of_bounds_ok=True) or raise (out_of_bounds_ok=False), and the
+        serialisation round-trip must survive the compaction, since vals then
+        covers only the kept dofs.
+        """
+        value_size = 2
+        f = self._f(value_size)
+
+        def skip(xs, ys, zs):
+            return [x > 0.5 for x in xs]
+
+        # with RANGE's 8 cells, the cells [0.625, 0.75], [0.75, 0.875] and
+        # [0.875, 1.0] have all corners at x > 0.5 and are skipped
+        interp = self._build(f, value_size, skip=skip)
+        rng = np.random.default_rng(5)
+        kept = np.ascontiguousarray(
+            np.stack(
+                [
+                    rng.uniform(0.02, 0.60, 100),
+                    rng.uniform(0.02, 0.98, 100),
+                    rng.uniform(0.02, 0.98, 100),
+                ],
+                axis=-1,
+            )
+        )
+        out = np.zeros((kept.shape[0], value_size))
+        interp.evaluate_batch(kept, out)
+        np.testing.assert_allclose(
+            out, f(kept[:, 0], kept[:, 1], kept[:, 2]), atol=1e-10
+        )
+
+        skipped = kept.copy()
+        skipped[:, 0] = rng.uniform(0.65, 0.98, kept.shape[0])
+        sentinel = np.full((skipped.shape[0], value_size), 7.0)
+        interp.evaluate_batch(skipped, sentinel)
+        np.testing.assert_array_equal(sentinel, 7.0)
+
+        strict = self._build(f, value_size, out_of_bounds_ok=False, skip=skip)
+        with self.assertRaisesRegex(RuntimeError, "outside the interpolation domain"):
+            strict.evaluate_batch(
+                np.ascontiguousarray([[0.7, 0.5, 0.5]]),
+                np.zeros((1, value_size)),
+            )
+
+        dst = RegularGridInterpolant3D(
+            UniformInterpolationRule(3),
+            self.RANGE,
+            self.RANGE,
+            self.RANGE,
+            value_size,
+            True,
+            skip,
+        )
+        dst.set_interpolant_data(interp.get_interpolant_data())
+        out_dst = np.zeros_like(out)
+        dst.evaluate_batch(kept, out_dst)
+        np.testing.assert_array_equal(out, out_dst)
+
+    def test_degree_cap(self):
+        """
+        Basis-function values live in stack buffers of MAX_NODES = 16 entries,
+        so the constructor accepts degree 15 and rejects degree 16.
+        """
+        tiny = (0.0, 1.0, 2)
+        f = self._f(1)
+        interp = self._build(f, 1, degree=15, grid=tiny)
+        pts = np.ascontiguousarray(
+            np.random.default_rng(7).uniform(0.02, 0.98, (50, 3))
+        )
+        out = np.zeros((pts.shape[0], 1))
+        interp.evaluate_batch(pts, out)
+        np.testing.assert_allclose(out, f(pts[:, 0], pts[:, 1], pts[:, 2]), atol=1e-8)
+
+        with self.assertRaises(ValueError):
+            RegularGridInterpolant3D(
+                UniformInterpolationRule(16), tiny, tiny, tiny, 1, True
+            )
 
     def test_set_interpolant_data_rejects_wrong_size(self):
         interp = self._build(self._f(1), 1)
-        with self.assertRaises(RuntimeError):
+        with self.assertRaisesRegex(RuntimeError, "'vals' has size"):
             interp.set_interpolant_data({"vals": [1.0, 2.0]})
+
+    def test_set_interpolant_data_requires_vals(self):
+        interp = self._build(self._f(1), 1)
+        with self.assertRaisesRegex(RuntimeError, "no 'vals' entry"):
+            interp.set_interpolant_data({"nx": [8.0]})
 
 
 class TestingInverseFourier(unittest.TestCase):
