@@ -26,7 +26,7 @@ void SymplField::eval_field(double s, double theta, double zeta)
 
     // The implicit step may probe s < 0 while an orbit passes through the
     // magnetic axis.
-    double s_eval = std::max(std::abs(s), 1e-8);
+    double s_eval = std::abs(s);
 
     stz[0, 0] = s_eval; stz[0, 1] = theta; stz[0, 2] = zeta;
     field->set_points(stz);
