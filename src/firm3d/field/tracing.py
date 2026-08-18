@@ -413,7 +413,7 @@ def trace_particles_boozer(
             Option 2 (default) is recommended.
         dt: time step for the symplectic solver. Only used if `ODE_solver` is
             "symplectic".
-        ODE_solver: Choice of ODE_solver: "boost", "dormand_prince" or "symplectic".
+        ODE_solver: Choice of ODE_solver: "boost", "dormand_prince" or "symplectic"
         roottol: root solver tolerance for the symplectic solver. Only used if
             `ODE_solver` is "symplectic". If None, defaults to `tol`.
         predictor_step: provide better initial guess for the next time step
