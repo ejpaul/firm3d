@@ -24,7 +24,18 @@ void SymplField::eval_field(double s, double theta, double zeta)
 {
     double Btheta, Bzeta, dBtheta, dBzeta, modB2;
 
-    stz[0, 0] = s; stz[0, 1] = theta; stz[0, 2] = zeta;
+    // The implicit step may probe s < 0 while an orbit passes through the
+    // magnetic axis. There is no flux surface there and no smooth extension of
+    // |B| to s < 0 (its m = 0 part is even, its m = 1 part odd, in sqrt(s)),
+    // so the flux-surface quantities are evaluated at |s|, floored off the
+    // singular point, at unchanged theta. What keeps the root solve
+    // well-posed across the axis is the vector potential: Atheta = s*psi0
+    // retains the signed s, so ptheta stays linear in s through zero and the
+    // residual keeps its gradient. A converged s < 0 is committed as an axis
+    // crossing by the caller.
+    double s_eval = std::max(std::abs(s), 1e-8);
+
+    stz[0, 0] = s_eval; stz[0, 1] = theta; stz[0, 2] = zeta;
     field->set_points(stz);
     // A = psi \nabla \theta - psip \nabla \zeta
     Atheta = s*field->psi0;
@@ -201,6 +212,13 @@ public:
         assert (tau_last <= eval_tau && eval_tau <= tau_current);
         temp.resize(4);
         temp[0] = cubic_hermite_interp(tau_last, tau_current, bracket_s[0], bracket_s[1], bracket_dsdtau[0], bracket_dsdtau[1], eval_tau);
+        // Across a step in which the orbit crossed the axis, s turns around at
+        // zero while the cubic through the two endpoints can undershoot past
+        // it. Negative s is not a coordinate any consumer of the dense output
+        // can use, and would spuriously trip an inner stopping criterion.
+        if (temp[0] < 0.0) {
+            temp[0] = 0.0;
+        }
         temp[1] = cubic_hermite_interp(tau_last, tau_current, bracket_theta[0], bracket_theta[1], bracket_dthdtau[0], bracket_dthdtau[1], eval_tau);
         temp[2] = cubic_hermite_interp(tau_last, tau_current, bracket_zeta[0], bracket_zeta[1], bracket_dzedtau[0], bracket_dzedtau[1], eval_tau);
         temp[3] = cubic_hermite_interp(tau_last, tau_current, bracket_vpar[0], bracket_vpar[1], bracket_dvpardtau[0], bracket_dvpardtau[1], eval_tau);
@@ -226,10 +244,11 @@ int f_euler_quasi_func_vector(const gsl_vector* x, void* p, gsl_vector* f)
     const double x0 = gsl_vector_get(x,0);
     const double x1 = gsl_vector_get(x,1);
 
-    // The field is only defined for s > 0. Signal a domain error rather than
-    // evaluating the interpolant at or beyond the axis, which reads outside
-    // the interpolation grid.
-    if (!std::isfinite(x0) || !std::isfinite(x1) || x0 <= 0.0) {
+    // s < 0 is handled by eval_field as a reflection through the axis, and a
+    // trial point just outside s = 1 is how the solver walks a particle up to
+    // the loss boundary, so neither may be rejected here. Only a non-finite
+    // trial point is unusable.
+    if (!std::isfinite(x0) || !std::isfinite(x1)) {
         return GSL_EDOM;
     }
 
@@ -406,13 +425,10 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
         double pzeta_trial = gsl_vector_get(s_euler->x, 1);
 
         // An unconverged root must not be used as though it were a completed
-        // step, and a state at or inside the axis cannot be handed to the
-        // field. Both are hard failures; raise rather than silently recording
-        // a stopping-criterion hit, which would report a confined orbit as a
-        // spurious loss.
+        // step. Raise rather than silently recording a stopping-criterion hit,
+        // which would report a confined orbit as a spurious loss.
         bool solver_failed = (status != GSL_SUCCESS && status != GSL_CONTINUE);
-        bool state_invalid = !std::isfinite(s_trial) || !std::isfinite(pzeta_trial)
-            || s_trial <= 0.0;
+        bool state_invalid = !std::isfinite(s_trial) || !std::isfinite(pzeta_trial);
         if (solver_failed || state_invalid) {
             gsl_multiroot_fsolver_free(s_euler);
             gsl_vector_free(xvec_quasi);
@@ -423,11 +439,17 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
             throw std::runtime_error(
                 "Symplectic solver: " + reason + " at t = "
                 + std::to_string(tau * f.tnorm) + " s. If s is small, roottol may be "
-                "too tight to be achievable in double precision there; try loosening "
-                "it. Note also that this solver integrates in (s, theta, zeta) and "
-                "cannot continue an orbit through the magnetic axis: use "
-                "ODE_solver='boost' or 'dormand_prince' with axis=1 or 2 for orbits "
-                "that reach s = 0.");
+                "too tight to be achievable in double precision there; try loosening it.");
+        }
+
+        // Axis chart switch. A converged s < 0 means the orbit passed through
+        // the magnetic axis during this step: (s, theta) and (-s, theta + pi)
+        // are the same physical point, so commit the crossing by reflecting.
+        // pzeta and hence vpar carry across unchanged, so the physical state
+        // is continuous; ptheta is re-derived from the reflected state below.
+        if (s_trial < 0.0) {
+            s_trial = -s_trial;
+            z[1] += M_PI;
         }
 
         z[0] = s_trial;      // s
@@ -461,8 +483,9 @@ tuple<vector<vector<double>>, vector<vector<double>>> solve_sympl_vector(
         if (predictor_step) {
             s_guess = z[0] + dtau*(-f.dH[1] + f.dptheta[3]*f.dH[2] - f.dptheta[2]*f.dH[3])/f.dptheta[0];
             pzeta_guess = z[3] + dtau*(- f.dH[2] + f.dH[0]*f.dptheta[2]/f.dptheta[0]); // corresponds with (2.7s) in JPP 2020
-            // Keep the initial guess inside the domain of the field.
-            if (!std::isfinite(s_guess) || s_guess <= 0.0) {
+            // A guess with s < 0 is legitimate for an orbit approaching the
+            // axis; only a non-finite guess is unusable.
+            if (!std::isfinite(s_guess)) {
                 s_guess = z[0];
             }
             if (!std::isfinite(pzeta_guess)) {
