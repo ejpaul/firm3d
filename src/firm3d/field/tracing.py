@@ -414,16 +414,8 @@ def trace_particles_boozer(
         dt: time step for the symplectic solver. Only used if `ODE_solver` is
             "symplectic".
         ODE_solver: Choice of ODE_solver: "boost", "dormand_prince" or "symplectic".
-            Note that the symplectic solver integrates in (s, theta, zeta) and
-            cannot continue an orbit through the magnetic axis; use "boost" or
-            "dormand_prince" with axis=1 or 2 for orbits that reach s = 0.
         roottol: root solver tolerance for the symplectic solver. Only used if
-            `ODE_solver` is "symplectic". If None, defaults to `tol`. This is an
-            absolute tolerance on the residual of the implicit step, so it
-            cannot be made arbitrarily small: for orbits that reach small s the
-            achievable residual is limited by double precision roundoff, and an
-            over-tight roottol makes the root solve fail to converge there. If
-            tracing raises a convergence error at small s, loosen it.
+            `ODE_solver` is "symplectic". If None, defaults to `tol`.
         predictor_step: provide better initial guess for the next time step
             using predictor steps. Defaults to True if `ODE_solver` is "symplectic".
         DP_hmin: Minimal timestep to enforce during numerical integration with adaptive
