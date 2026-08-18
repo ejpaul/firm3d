@@ -1,11 +1,14 @@
 name: Code Review
 
+# Reviews once when a PR is opened. Every push used to re-review the whole
+# diff, which meant ~7 full model runs per PR re-flagging the same lines; add
+# the "Code Review" label to request a fresh look after addressing comments.
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, reopened, ready_for_review, labeled]
 
-# Only review the latest commit on a PR. Pushing again cancels the in-flight
-# review instead of paying for a full model run on a diff that is already stale.
+# Guards against reopen/relabel churn, and stops a hung run from occupying the
+# PR indefinitely the way a 145-minute run once did.
 concurrency:
   group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -18,8 +21,12 @@ permissions:
 jobs:
   code-review:
     runs-on: ubuntu-latest
-    # Skip automated code review for draft PRs
-    if: github.event.pull_request.draft == false
+    # Skip drafts. Adding any other label must not trigger a review, so a
+    # labeled event only counts when the label is the one we gate on.
+    if: >
+      github.event.pull_request.draft == false &&
+      (github.event.action != 'labeled' ||
+       github.event.label.name == 'Code Review')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
