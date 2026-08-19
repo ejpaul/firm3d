@@ -102,20 +102,15 @@ class RegularGridInterpolant3D {
         // has size nx*degree + 1, ny*degree + 1, and nz*degree + 1 respectively
         Vec xdof, ydof, zdof;
 
-        // values of the function to be interpolated at the dofs, of size
-        // dofs_to_keep * value_size. This array is transient: it is filled
-        // during interpolate_batch()/set_interpolant_data() and freed again
-        // once the per-cell storage below has been built from it.
-        // get_interpolant_data() reconstructs it on demand.
+        // dof-ordered function values, of size dofs_to_keep * value_size.
+        // Transient: freed once the per-cell storage below is built from it,
+        // rebuilt on demand by get_interpolant_data().
         Vec vals;
-        // Per-cell storage used for evaluation. For each kept cell,
-        // local_vals_flat holds a contiguous block of
-        // (degree+1)^3 * value_size values (one entry per dof of the cell,
-        // dofs ordered by idx_dof_local, values contiguous per dof).
-        // cell_offsets maps a cell index to the offset of its block within
-        // local_vals_flat, or -1 for skipped cells. It is sized nx*ny*nz from
-        // construction, and evaluate_inplace() clamps or rejects out-of-range
-        // cell indices, so lookups index it directly.
+        // Evaluation storage: one contiguous block of (degree+1)^3 * value_size
+        // values per kept cell (dofs in idx_dof_local order, values contiguous
+        // per dof). cell_offsets[cell] is the block's offset, or -1 for skipped
+        // cells; it is sized nx*ny*nz from construction and evaluate_inplace()
+        // keeps cell indices in range, so lookups index it directly.
         Vec local_vals_flat;
         std::vector<int64_t> cell_offsets;
         std::vector<bool> skip_cell; // whether to skip each cell or not
