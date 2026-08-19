@@ -286,10 +286,6 @@ template<class Array>
 void RegularGridInterpolant3D<Array>::evaluate_local(double x, double y, double z, int cell_idx, double* res)
 {
     int degree = rule.degree;
-    // evaluate_inplace() clamps the cell indices into range when
-    // out_of_bounds_ok is set and throws otherwise, so cell_idx is always a
-    // valid index here. -1 marks a skipped cell (or an interpolant whose
-    // values have not been computed yet).
     int64_t flat_offset = cell_offsets[cell_idx];
     if (flat_offset < 0) {
         if(out_of_bounds_ok)
