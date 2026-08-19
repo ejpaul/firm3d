@@ -249,11 +249,7 @@ void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double* res){
 
 // Evaluate one cell: res[l] = sum_i p_i(x) [ sum_j p_j(y) [ sum_k p_k(z)
 // v[i,j,k,l] ] ], over the (degree+1)^3 dofs of the cell, whose values are
-// stored contiguously (VS per dof) at vp. The sum is nested in this order to
-// match what the previous SIMD implementation computed, so results stay
-// bit-for-bit identical; it also costs fewer multiplies than forming the
-// product p_i p_j p_k per dof. Compile-time VS lets the compiler unroll the
-// innermost loop and hold the accumulators in registers.
+// stored contiguously (VS per dof) at vp.
 template<int VS>
 static inline void interp_cell_accumulate(const double* __restrict vp, const double* pkxs, const double* pkys, const double* pkzs, int degree, double* __restrict res)
 {
