@@ -142,11 +142,8 @@ class RegularGridInterpolant3D {
             return i*(degree+1)*(degree+1) + j*(degree+1) + k;
         }
 
-        int locate_unsafe(double x, double y, double z);
         void evaluate_inplace(double x, double y, double z, double* res);
-        void evaluate_inplace(double x, double *res);
         void evaluate_local(double x, double y, double z, int cell_idx, double *res);
-        void evaluate_local(double x, int cell_idx, double *res);
         void build_local_vals(); // build local_vals_flat/cell_offsets from vals, then free vals
         Vec reconstruct_vals() const; // rebuild the dof-ordered vals array from local_vals_flat
 
@@ -305,7 +302,6 @@ class RegularGridInterpolant3D {
 
         Vec evaluate(double x, double y, double z); // evaluate the interpolant at one location
         void evaluate_batch(Array& xyz, Array& fxyz); // evluate the interpolant at multiple locations
-        void evaluate_batch_1D(Array &xyz, Array &fxyz);
 
         std::pair<double, double> estimate_error(std::function<Vec(Vec, Vec, Vec)> &f, int samples);
 
