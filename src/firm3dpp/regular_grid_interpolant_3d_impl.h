@@ -166,29 +166,11 @@ void RegularGridInterpolant3D<Array>::evaluate_batch(Array& xyz, Array& fxyz){
 }
 
 template<class Array>
-void RegularGridInterpolant3D<Array>::evaluate_batch_1D(Array& xyz, Array& fxyz){
-    if(fxyz.layout() != xt::layout_type::row_major)
-          throw std::runtime_error("fxyz needs to be in row-major storage order");
-    int npoints = xyz.shape(0);
-    for (int i = 0; i < npoints; ++i) {
-        evaluate_inplace(xyz(i, 0), fxyz.data() + value_size*i);
-    }
-}
-
-template<class Array>
 Vec RegularGridInterpolant3D<Array>::evaluate(double x, double y, double z){
     Vec fxyz(value_size, 0.);
     evaluate_inplace(x, y, z, fxyz.data());
     return fxyz;
 
-}
-
-template<class Array>
-int RegularGridInterpolant3D<Array>::locate_unsafe(double x, double y, double z){
-    int xidx = int(nx*(x-xmin)/(xmax-xmin)); // find idx so that xmesh[xidx] <= x <= xs[xidx+1]
-    int yidx = int(ny*(y-ymin)/(ymax-ymin));
-    int zidx = int(nz*(z-zmin)/(zmax-zmin));
-    return idx_cell(xidx, yidx, zidx);
 }
 
 template<class Array>
@@ -223,28 +205,6 @@ void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double y, doubl
     double ylocal = (y-ymesh[yidx])/hy;
     double zlocal = (z-zmesh[zidx])/hz;
     return evaluate_local(xlocal, ylocal, zlocal, idx_cell(xidx, yidx, zidx), res);
-}
-
-template<class Array>
-void RegularGridInterpolant3D<Array>::evaluate_inplace(double x, double* res){
-
-    // to avoid funny business when the data is just a tiny bit out of bounds
-    // due to machine precision, we perform this check and shift
-    if(x >= xmax) x -= _EPS_;
-    else if (x <= xmin) x += _EPS_;
-
-    int xidx = int(nx*(x-xmin)/(xmax-xmin)); // find idx so that xmesh[xidx] <= x <= xs[xidx+1]
-
-    if(!out_of_bounds_ok){
-        if(xidx < 0 || xidx >= nx)
-            throw std::runtime_error((boost::format("xidx=%d not within [0, %d]") % xidx % (nx-1)).str());
-    } else {
-        // Clamp cell index (matching CUDA kernel behaviour): extrapolate from
-        // last cell rather than returning zero.
-        xidx = std::max(0, std::min(nx-1, xidx));
-    }
-    double xlocal = (x-xmesh[xidx])/hx;
-    return evaluate_local(xlocal, idx_cell(xidx, 0, 0), res);
 }
 
 // Evaluate one cell: res[l] = sum_i p_i(x) [ sum_j p_j(y) [ sum_k p_k(z)
@@ -352,38 +312,6 @@ void RegularGridInterpolant3D<Array>::evaluate_local(double x, double y, double 
         for (int l = 0; l < value_size; ++l) {
             out[l] += sumj[l] * pix;
         }
-    }
-}
-
-template<class Array>
-void RegularGridInterpolant3D<Array>::evaluate_local(double x, int cell_idx, double* res)
-{
-    int degree = rule.degree;
-    int64_t flat_offset = cell_offsets[cell_idx];
-    if (flat_offset < 0) {
-        if(out_of_bounds_ok)
-            return;
-        else
-            throw std::runtime_error((boost::format("cell_idx=%d is outside the interpolation domain") % cell_idx).str());
-    }
-
-    double pkxs[MAX_NODES];
-    for (int k = 0; k < degree+1; ++k) {
-        pkxs[k] = this->rule.basis_fun(k, x);
-    }
-
-    // 1D interpolation along x through the (j=0, k=0) dofs of the cell block
-    const double* val_ptr = local_vals_flat.data() + flat_offset;
-    int stride = (degree+1)*(degree+1)*value_size;
-    for (int l = 0; l < value_size; ++l) {
-        res[l] = 0.;
-    }
-    for (int i = 0; i < degree+1; ++i) {
-        double pkx = pkxs[i];
-        for (int l = 0; l < value_size; ++l) {
-            res[l] += pkx * val_ptr[l];
-        }
-        val_ptr += stride;
     }
 }
 
