@@ -466,3 +466,53 @@ last closed flux surface are clamped by the profile lookup.
 
    # (nparticles, 7): [t, x, y, z, v_par, v, dt]
    v_final = final_states[:, 5]
+
+Cross-Code Benchmark: ARIES-CS
+------------------------------
+
+The collision operator is benchmarked against ASCOT5 on a shared birth
+ensemble, so results compare marker by marker and not only
+statistically.
+
+The case is the ARIES-CS reactor equilibrium (``n3are_R7.75B5.7``, NFP = 3,
+:math:`R_0 \approx 7.75` m, :math:`|B| \approx 5.7` T), with 10\ :sup:`4`
+fusion-born 3.52 MeV alphas traced for 0.15 s against the D--T--electron
+background
+
+.. math::
+
+   n_D(s) = n_T(s) = 10^{20}\,(1 - s^5)\ \mathrm{m^{-3}},
+   \qquad
+   T(s) = 11.5\,(1 - s) + 0.1\ \mathrm{keV}.
+
+FIRM3D uses a Boozer spline resolution ``ns = ntheta = nzeta = 96`` and orbit
+tolerance ``tol = 1e-10``, with the loss boundary at :math:`s = 1`. Both were
+converged by scanning resolution 32--96 and tolerance
+10\ :sup:`-8`--10\ :sup:`-10`: the loss fraction varies by a few markers
+across that range, less than its own binomial uncertainty.
+
+.. image:: figures/acs_collisional_timetraces.png
+   :width: 100%
+   :alt: Cumulative particle and energy loss against time, FIRM3D CPU and GPU against ASCOT5
+
+.. list-table:: ARIES-CS collisional, N = 10\ :sup:`4`
+   :header-rows: 1
+   :widths: 40 30 30
+
+   * -
+     - Particle loss
+     - Energy loss
+   * - FIRM3D CPU
+     - 29.00 %
+     - 20.25 %
+   * - FIRM3D GPU
+     - 29.20 %
+     - 20.30 %
+   * - ASCOT5
+     - 29.47 %
+     - 20.46 %
+
+The CPU and GPU entry points agree to 0.31 :math:`\sigma`. They are comparable
+only statistically, never element by element, because the two draw from
+different generators (Philox against mt19937_64) and take different step
+sequences.
