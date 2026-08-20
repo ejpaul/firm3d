@@ -453,7 +453,7 @@ class GuidingCenterBoozerRHS : public BaseRHS {
         }
 };
 
-// Create the adaptive ODE solver selected by `ode_solver`. 
+// Create the adaptive ODE solver selected by `ode_solver`.
 static std::unique_ptr<ODESolver> make_ode_solver(
     const string& ode_solver,
     double abstol,
@@ -488,12 +488,12 @@ solve(
     double dtau,
     double dtau_max,
     double abstol,
-    double reltol, 
+    double reltol,
     vector<double> phases,
     vector<double> n_zetas,
     vector<double> m_thetas,
     vector<double> omegas,
-    vector<shared_ptr<StoppingCriterion>> stopping_criteria, 
+    vector<shared_ptr<StoppingCriterion>> stopping_criteria,
     double dtau_save,
     vector<double> vpars,
     bool phases_stop,
@@ -509,14 +509,14 @@ solve(
     }
 
     int state_size = rhs.get_state_size();
-    
+
     vector<vector<double>> res = {};
     vector<vector<double>> res_hits = {};
     vector<double> y(state_size), temp(state_size);
-    
+
     std::unique_ptr<ODESolver> solver = make_ode_solver(
         ode_solver, abstol, reltol, dtau_max, DP_hmin, tnorm);
-    
+
     double tau = 0;
     int iter = 0;
     bool stop = false;
@@ -908,13 +908,13 @@ solve_sympl_wrapper(
     vector<double> m_thetas,
     vector<double> omegas,
     vector<shared_ptr<StoppingCriterion>> stopping_criteria,
-    vector<double> vpars, 
+    vector<double> vpars,
     bool phases_stop=false,
     bool vpars_stop=false,
-    bool forget_exact_path=false, 
+    bool forget_exact_path=false,
     bool predictor_step=true,
     double dtau_save=1e-6
-) {  
+) {
     // Call the vector-based symplectic solver directly
     return solve_sympl_vector(
         f,
@@ -929,7 +929,7 @@ solve_sympl_wrapper(
         stopping_criteria,
         vpars,
         phases_stop,
-        vpars_stop, 
+        vpars_stop,
         forget_exact_path,
         predictor_step,
         dtau_save
@@ -1389,7 +1389,7 @@ void particle_guiding_center_saw_derivs(
     double t = stz_init[1];
 
     vector<double> y = {s*cos(t), s*sin(t), stz_init[2], vtang, time};
-    
+
     if(rhs == "vacuum_saw"){
         auto rhs_class = GuidingCenterVacuumBoozerPerturbedRHS(perturbed_field, m, q, mu, 2);
         rhs_class(y, out, time);
