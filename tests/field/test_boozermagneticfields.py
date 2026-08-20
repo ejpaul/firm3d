@@ -17,7 +17,12 @@ from firm3d.field.boozermagneticfield import (
     ShearAlfvenWavesSuperposition,
 )
 from firm3d.saw.ae3d import AE3DEigenvector
-from firm3dpp import inverse_fourier_transform_even, inverse_fourier_transform_odd
+from firm3dpp import (
+    RegularGridInterpolant3D,
+    UniformInterpolationRule,
+    inverse_fourier_transform_even,
+    inverse_fourier_transform_odd,
+)
 
 TEST_DIR = (Path(__file__).parent / ".." / "test_files").resolve()
 filename_vac = str((TEST_DIR / "boozmn_LandremanPaul2021_QA_lowres.nc").resolve())
@@ -1001,6 +1006,142 @@ class TestingFiniteBeta(unittest.TestCase):
             old_err_K = err_K
 
 
+class TestingRegularGridInterpolantStorage(unittest.TestCase):
+    """
+    Tests for the flat per-cell storage of RegularGridInterpolant3D: kernel
+    dispatch per value_size, out-of-domain lookups, skip-cell compaction, and
+    the serialisation round-trip that rebuilds the transient ``vals`` array.
+    """
+
+    RANGE = (0.0, 1.0, 8)
+
+    def _build(
+        self, f, value_size, degree=3, out_of_bounds_ok=True, skip=None, grid=None
+    ):
+        grid = self.RANGE if grid is None else grid
+        skip = skip or (lambda xs, ys, zs: [False] * len(xs))
+        interp = RegularGridInterpolant3D(
+            UniformInterpolationRule(degree),
+            grid,
+            grid,
+            grid,
+            value_size,
+            out_of_bounds_ok,
+            skip,
+        )
+        interp.interpolate_batch(
+            lambda x, y, z: (
+                f(np.asarray(x), np.asarray(y), np.asarray(z)).flatten().tolist()
+            )
+        )
+        return interp
+
+    @staticmethod
+    def _f(value_size):
+        # linear in each argument, so every rule reproduces it exactly
+        def f(x, y, z):
+            return np.stack([(l + 1) * (x + y + z) + l for l in range(value_size)], -1)
+
+        return f
+
+    def test_evaluate_exact_for_each_value_size(self):
+        """value_size 1-4 use per-size kernels and 5+ the general one."""
+        pts = np.random.default_rng(3).uniform(0.02, 0.98, (200, 3))
+        for value_size in (1, 2, 3, 4, 5):
+            with self.subTest(value_size=value_size):
+                f = self._f(value_size)
+                interp = self._build(f, value_size)
+                out = np.zeros((200, value_size))
+                interp.evaluate_batch(pts, out)
+                np.testing.assert_allclose(
+                    out, f(pts[:, 0], pts[:, 1], pts[:, 2]), atol=1e-10
+                )
+
+    def test_out_of_domain(self):
+        """
+        out_of_bounds_ok=True clamps the cell indices into range and keeps the
+        true local coordinate, extrapolating the boundary cell's polynomial -
+        exact for the linear test function, and what lets the flat storage be
+        indexed unchecked. out_of_bounds_ok=False raises instead.
+        """
+        f = self._f(2)
+        interp = self._build(f, 2)
+        pts = np.array([[-0.4] * 3, [1.4] * 3, [-0.4, 1.4, 0.5]])
+        out = np.zeros((3, 2))
+        interp.evaluate_batch(pts, out)
+        # far-corner extrapolation cancels catastrophically: ~1e-7 attainable
+        np.testing.assert_allclose(
+            out, f(pts[:, 0], pts[:, 1], pts[:, 2]), rtol=0.0, atol=1e-5
+        )
+        strict = self._build(self._f(1), 1, out_of_bounds_ok=False)
+        strict.evaluate_batch(np.array([[0.5] * 3]), np.zeros((1, 1)))  # in range: fine
+        for bad in ([-0.5, 0.5, 0.5], [0.5, 1.5, 0.5], [0.5, 0.5, -0.5]):
+            with self.assertRaisesRegex(RuntimeError, "not within", msg=str(bad)):
+                strict.evaluate_batch(np.array([bad]), np.zeros((1, 1)))
+
+    def test_skipped_cells_and_roundtrip(self):
+        """
+        Cells whose corners all satisfy skip get no block: kept blocks are
+        compacted and cell_offsets holds -1 for them. The round-trip has to
+        rebuild the reduced ``vals`` from that compacted storage.
+        """
+        vs, R = 2, self.RANGE
+        f = self._f(vs)
+
+        def skip(xs, ys, zs):
+            # with R's 8 cells this skips the three cells with x >= 0.625
+            return [x > 0.5 for x in xs]
+
+        interp = self._build(f, vs, skip=skip)
+        kept = np.random.default_rng(5).uniform(
+            [0.02] * 3, [0.60, 0.98, 0.98], (100, 3)
+        )
+        out = np.zeros((100, vs))
+        interp.evaluate_batch(kept, out)
+        np.testing.assert_allclose(
+            out, f(kept[:, 0], kept[:, 1], kept[:, 2]), atol=1e-10
+        )
+
+        # a skipped cell leaves the output untouched, or raises in strict mode
+        skipped = np.array([[0.7, 0.5, 0.5]])
+        sentinel = np.full((1, vs), 7.0)
+        interp.evaluate_batch(skipped, sentinel)
+        np.testing.assert_array_equal(sentinel, 7.0)
+        strict = self._build(f, vs, out_of_bounds_ok=False, skip=skip)
+        with self.assertRaisesRegex(RuntimeError, "outside the interpolation domain"):
+            strict.evaluate_batch(skipped, np.zeros((1, vs)))
+
+        dst = RegularGridInterpolant3D(
+            UniformInterpolationRule(3), R, R, R, vs, True, skip
+        )
+        data = interp.get_interpolant_data()
+        dst.set_interpolant_data(data)
+        np.testing.assert_array_equal(data["vals"], dst.get_interpolant_data()["vals"])
+        out_dst = np.zeros_like(out)
+        dst.evaluate_batch(kept, out_dst)
+        np.testing.assert_array_equal(out, out_dst)
+
+    def test_degree_cap(self):
+        """MAX_NODES = 16 stack buffers: degree 15 works, degree 16 throws."""
+        tiny = (0.0, 1.0, 2)
+        interp = self._build(self._f(1), 1, degree=15, grid=tiny)
+        pts = np.random.default_rng(7).uniform(0.02, 0.98, (20, 3))
+        out = np.zeros((20, 1))
+        interp.evaluate_batch(pts, out)
+        np.testing.assert_allclose(out[:, 0], pts.sum(axis=1), atol=1e-8)
+        with self.assertRaises(ValueError):
+            RegularGridInterpolant3D(
+                UniformInterpolationRule(16), tiny, tiny, tiny, 1, True
+            )
+
+    def test_set_interpolant_data_validates_input(self):
+        interp = self._build(self._f(1), 1)
+        with self.assertRaisesRegex(RuntimeError, "no 'vals' entry"):
+            interp.set_interpolant_data({"nx": [8.0]})
+        with self.assertRaisesRegex(RuntimeError, "'vals' has size"):
+            interp.set_interpolant_data({"vals": [1.0, 2.0]})
+
+
 class TestingInverseFourier(unittest.TestCase):
     def test_inverse_fourier(self):
         thetas = np.linspace(0, 2 * np.pi, 131)
@@ -1142,6 +1283,70 @@ class TestingInverseFourier(unittest.TestCase):
                         even_K[i], even_output[0], rtol=1e-12, atol=1e-11
                     )
                     assert np.allclose(odd_K[i], odd_output[0], rtol=1e-12, atol=1e-11)
+
+
+class TestingBoozerRadialInterpolantSums(unittest.TestCase):
+    """
+    Check the inverse Fourier sum of BoozerRadialInterpolant against a direct
+    evaluation of the harmonic series, for point sets that exercise each of the
+    evaluation paths: a single point, a repeated small point set, scattered
+    points, and a tensor-product lattice.
+    """
+
+    @staticmethod
+    def _scattered(rng, npoints):
+        return np.column_stack(
+            [
+                rng.uniform(0.1, 0.9, npoints),
+                rng.uniform(0, 2 * np.pi, npoints),
+                rng.uniform(0, 2 * np.pi, npoints),
+            ]
+        )
+
+    @staticmethod
+    def _modB_directly(bri, points):
+        """|B| summed one point and one mode at a time."""
+        modB = np.zeros(len(points))
+        for i, (s, theta, zeta) in enumerate(points):
+            angle = bri.xm_b * theta - bri.xn_b * zeta
+            modB[i] = np.sum(bri.bmnc_splines(np.array([s]))[0] * np.cos(angle))
+            if bri.asym:
+                modB[i] += np.sum(bri.bmns_splines(np.array([s]))[0] * np.sin(angle))
+        return modB
+
+    def test_modB_matches_direct_sum(self):
+        for asym in [True, False]:
+            if asym:
+                bri = BoozerRadialInterpolant(
+                    filename_mhd_lasym, 3, mpol=20, ntor=18, no_K=True, comm=comm
+                )
+            else:
+                bri = BoozerRadialInterpolant(filename_vac, 3, no_K=True, comm=comm)
+            self.assertEqual(bri.asym, asym)
+
+            rng = np.random.default_rng(17)
+            scattered = functools.partial(self._scattered, rng)
+
+            # A lattice of (s, theta, zeta) values, the shape used when
+            # building an InterpolatedBoozerField.
+            thetas = np.linspace(0, 2 * np.pi, 21)
+            zetas = np.linspace(0, 2 * np.pi / bri.nfp, 23)
+            grid = np.meshgrid(np.array([0.3, 0.7]), thetas, zetas, indexing="ij")
+            lattice = np.column_stack([g.ravel() for g in grid])
+
+            point_sets = [scattered(n) for n in (1, 2, 3, 200)]
+            # Evaluate each point set twice, at slightly shifted positions the
+            # second time, so that any state cached from the first call has to
+            # be invalidated.
+            point_sets += [p + 0.01 for p in point_sets]
+            point_sets.append(lattice)
+
+            for points in point_sets:
+                bri.set_points(points)
+                modB = np.asarray(bri.modB()).ravel()
+                assert np.allclose(
+                    modB, self._modB_directly(bri, points), rtol=1e-12, atol=1e-11
+                )
 
 
 class TestingBoozerSplineField(unittest.TestCase):

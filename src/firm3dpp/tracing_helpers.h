@@ -1,6 +1,7 @@
 #pragma once
 
 #include <boost/math/tools/roots.hpp>
+#include <boost/math/tools/toms748_solve.hpp>
 #include "tracing_helpers.h"
 #include <array>
 #include <vector>
