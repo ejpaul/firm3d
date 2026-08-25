@@ -694,7 +694,7 @@ class PassingPoincare:
                 ScalarMappable(norm=norm, cmap=cmap_radial),
                 ax=ax2,
                 orientation="vertical",
-                label=r"$s$" if plot_fluxsurface else r"$p_\eta$",
+                label=r"$s$" if plot_fluxsurface else r"$P_\eta$",
             )
 
             fig_convergence.tight_layout()
