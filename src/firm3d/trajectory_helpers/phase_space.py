@@ -22,6 +22,48 @@ from ._utils import (
 )
 
 
+def _resolve_heatmap_bins(nx, ny, nlambda_points, ns_points, npoints, randomize):
+    r"""
+    Determine the number of (pitch, radial) bins used by plot_heatmap.
+
+    Values supplied by the user are always used as given. A value of None is
+    replaced by a default taken from the sampling grid if the initial
+    conditions were generated on a structured (mu, s) grid: nlambda_points bins
+    along the pitch axis and ns_points bins along the radial axis. Since the
+    bins span the range of the data, one bin per grid point places each grid
+    value in its own bin. If the initial conditions were randomized, or the
+    grid resolution is unknown, the defaults are instead set from the cube root
+    of the number of particles.
+
+    Args:
+        nx : Requested number of pitch bins, or None to use the default.
+        ny : Requested number of radial bins, or None to use the default.
+        nlambda_points : Number of magnetic-moment values in the sampling grid,
+            or None if unknown.
+        ns_points : Number of flux surfaces in the sampling grid, or None if
+            unknown.
+        npoints : Number of traced particles.
+        randomize : If True, the initial conditions were sampled randomly
+            rather than on a structured grid.
+
+    Returns:
+        nx : Number of pitch bins.
+        ny : Number of radial bins.
+    """
+    npoints_default = max(int(np.cbrt(npoints)), 1)
+    if nx is None:
+        if randomize or nlambda_points is None:
+            nx = npoints_default
+        else:
+            nx = max(int(nlambda_points), 1)
+    if ny is None:
+        if randomize or ns_points is None:
+            ny = npoints_default
+        else:
+            ny = max(int(ns_points), 1)
+    return nx, ny
+
+
 class MapEquilibrium:
     def __init__(
         self,
@@ -552,12 +594,12 @@ class MapEquilibrium:
 
     def plot_heatmap(
         self,
-        nx=25,
-        ny=25,
+        nx=None,
+        ny=None,
         savepath="heatmap_digit_accuracy.pdf",
         DA_at_loss=True,
         ax=None,
-        DA_max=None,
+        DA_max=7,
         peta_exp=None,
         statistic="mean",
         plot_losses=False,
@@ -568,8 +610,14 @@ class MapEquilibrium:
         boundary overlaid as a fitted curve.
 
         Args:
-            nx          : Number of bins along the pitch-angle axis (default: 25).
-            ny          : Number of bins along the radial axis (default: 25).
+            nx          : Number of bins along the pitch-angle axis. If None,
+                        defaults to nlambda_points for a structured grid of
+                        initial conditions, or the cube root of the number of
+                        particles if they were randomized (default: None).
+            ny          : Number of bins along the radial axis. If None,
+                        defaults to ns_points for a structured grid of
+                        initial conditions, or the cube root of the number of
+                        particles if they were randomized (default: None).
             savepath    : File path for the output heatmap image
                         (default: 'heatmap_digit_accuracy.pdf').
             DA_at_loss : If True, use the digit accuracy value at the time of
@@ -578,7 +626,8 @@ class MapEquilibrium:
             ax          : Matplotlib axis to plot on. If None, a new figure and
                         axis are created.
             DA_max      : Maximum digit accuracy value shown on the colorbar. If
-                        None, defaults to the maximum DA in the data.
+                        None, the maximum DA in the data is used instead
+                        (default: 7).
             statistic   : Aggregation statistic passed to binned_statistic_2d
                         (default: 'mean').
             plot_losses : If True, overlay loss-fraction markers per bin
@@ -611,9 +660,14 @@ class MapEquilibrium:
         else:
             fig = ax.get_figure()
 
-        if not self.randomize:
-            nx = int(self.ns_points - 1)
-            ny = int(self.nlambda_points - 1)
+        nx, ny = _resolve_heatmap_bins(
+            nx,
+            ny,
+            self.nlambda_points,
+            self.ns_points,
+            len(self.pitch),
+            self.randomize,
+        )
 
         def trapped_passing_function(s, pitch):
             # pitch not weighted by modB
@@ -1044,6 +1098,13 @@ class MapPhaseSpace:
             }
 
         self.randomize = randomize_particles
+        if randomize_particles:
+            xy_pts = int(np.sqrt(number_of_particles / particles_per_surface))
+            self.ns_points = xy_pts
+            self.nlambda_points = xy_pts
+        else:
+            self.ns_points = ns_points
+            self.nlambda_points = nlambda_points
 
         load_files = False
         if savedata and exists(self.final_filepaths["ICs"]):
@@ -1059,14 +1120,6 @@ class MapPhaseSpace:
                 initial_conditions[:, 4],
             )
         else:
-            if randomize_particles:
-                xy_pts = int(np.sqrt(number_of_particles / particles_per_surface))
-                self.ns_points = xy_pts
-                self.nlambda_points = xy_pts
-            else:
-                self.ns_points = ns_points
-                self.nlambda_points = nlambda_points
-
             self.particles_per_surface = particles_per_surface
 
             s, thetas, zetas, vpar, mu_per_mass = self.initialize_particles()
@@ -1765,11 +1818,18 @@ class MapPhaseSpace:
         fractions as triangle markers per bin.
 
         Args:
-            nx : Number of pitch bins.
-            ny : Number of radial bins.
+            nx : Number of bins along the pitch axis. If None, defaults to
+                nlambda_points for a structured grid of initial conditions, or
+                the cube root of the number of particles if they were
+                randomized (default: None).
+            ny : Number of bins along the radial axis. If None, defaults to
+                ns_points for a structured grid of initial conditions, or the
+                cube root of the number of particles if they were randomized
+                (default: None).
             savepath : Output file path for the heatmap.
             ax : Matplotlib axis. If None, a new figure and axis are created.
-            DA_max : Maximum DA value shown on the colorbar.
+            DA_max : Maximum DA value shown on the colorbar. If None, the
+                maximum DA in the data is used instead (default: 7).
             statistic : Aggregation statistic passed to binned_statistic_2d.
             DA_at_loss : If True, use the DA value at loss; otherwise the final
                 integration DA.
@@ -1799,12 +1859,19 @@ class MapPhaseSpace:
         except ImportError:
             cmap = "viridis"
 
-        if nx is None:
-            nx = int(np.cbrt(len(self.pitch)))
-        if ny is None:
-            ny = int(np.cbrt(len(self.pitch)))
+        nx, ny = _resolve_heatmap_bins(
+            nx,
+            ny,
+            self.nlambda_points,
+            self.ns_points,
+            len(self.pitch),
+            self.randomize,
+        )
 
         DA_values = self.DAs_at_loss if DA_at_loss else self.DA_at_tfinal
+
+        if DA_max is None:
+            DA_max = np.nanmax(np.array(DA_values))
 
         norm = mpl.colors.Normalize(vmin=0, vmax=DA_max)
 
