@@ -1452,6 +1452,70 @@ class TestingShearAlfvenWavesSuperposition(unittest.TestCase):
                     err_msg=f"{q} (retains_K={retains_K})",
                 )
 
+    def test_add_wave_refreshes_stored_quantities(self):
+        """
+        The superposition accumulates its harmonics into one set of arrays when
+        set_points is called, and every accessor hands back one of those arrays
+        directly. Adding a harmonic afterwards therefore has to re-evaluate
+        them: without that, a read taken after add_wave silently reports the
+        total from before the addition.
+        """
+        s = np.linspace(0.0, 1.0, 32)
+        field = BoozerAnalytic(
+            etabar=1.2, B0=5.0, N=0, G0=3.0, psi0=0.8, iota0=0.4, I0=0.3, I1=0.05
+        )
+        field.field_type = "nok"
+        points = np.ascontiguousarray(np.array([[0.5, 0.3, 0.7, 1e-5]]))
+
+        def harmonic(i):
+            return ShearAlfvenHarmonic(
+                (s.tolist(), (-1.5e3 * (1 - s**2) / (i + 1)).tolist()),
+                1 + (i % 5),
+                1 + (i % 3),
+                136041.0 * (1 + 0.01 * i),
+                0.1 * i,
+                field,
+            )
+
+        quantities = [
+            "Phi",
+            "dPhidpsi",
+            "dPhidtheta",
+            "dPhidzeta",
+            "Phidot",
+            "alpha",
+            "alphadot",
+            "dalphadpsi",
+            "dalphadtheta",
+            "dalphadzeta",
+        ]
+
+        first, second = harmonic(0), harmonic(1)
+        saw = ShearAlfvenWavesSuperposition([first])
+        saw.set_points(points)
+        before = {q: np.asarray(getattr(saw, q)()).copy() for q in quantities}
+
+        # No set_points between the addition and the reads below.
+        saw.add_wave(second)
+        after = {q: np.asarray(getattr(saw, q)()).copy() for q in quantities}
+
+        expected = dict.fromkeys(quantities, 0.0)
+        for h in (first, second):
+            h.set_points(points)
+            for q in quantities:
+                expected[q] = expected[q] + np.asarray(getattr(h, q)())
+
+        for q in quantities:
+            np.testing.assert_allclose(
+                after[q], expected[q], rtol=1e-12, atol=0, err_msg=q
+            )
+            # Guard against the assertion above passing on a quantity that the
+            # second harmonic happens not to move.
+            assert not np.array_equal(after[q], before[q]), (
+                f"{q} is unchanged by add_wave, so it cannot distinguish a "
+                f"refreshed total from a stale one"
+            )
+
 
 class TestInterpolatedShearAlfvenWave(unittest.TestCase):
     """

@@ -544,6 +544,9 @@ public:
   *  The superposition evaluates its harmonics together in a single pass
   *  (see evaluate_harmonics), which is why only harmonics are accepted.
   *
+  *  If points have already been set, the stored quantities are re-evaluated
+  *  so that they describe the superposition including the new harmonic.
+  *
   * @param wave Shared pointer to a ShearAlfvenHarmonic to be added.
   * @throws std::invalid_argument if the wave's `B0` field does not
   * match the superposition's `B0`, or if it is not a ShearAlfvenHarmonic.
@@ -563,6 +566,7 @@ public:
     }
     waves.push_back(wave);
     harmonics.push_back(harmonic);
+    reevaluate();
   }
 
   /**
@@ -619,6 +623,20 @@ private:
   Array2 total_Phi, total_dPhidpsi, total_dPhidtheta, total_dPhidzeta,
       total_Phidot, total_alpha, total_alphadot, total_dalphadpsi,
       total_dalphadtheta, total_dalphadzeta;
+
+  /* Re-runs the evaluation at the points already stored, if there are any.
+   */
+  void reevaluate() {
+    if (points.size() == 0) {
+      return;
+    }
+    // set_points copies into `points`, so hand it a copy rather than alias it.
+    Array2 p = points;
+    // B0 is shared with the harmonics and may have been moved since, so put it
+    // back on these points before reading its flux functions.
+    ShearAlfvenWave::set_points(p);
+    evaluate_harmonics(p);
+  }
 
   void evaluate_harmonics(Array2& p) {
     // retains_K mirrors the branch in ShearAlfvenHarmonic::set_points
