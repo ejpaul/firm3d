@@ -1370,6 +1370,30 @@ class TestingBoozerSplineField(unittest.TestCase):
 
 
 class TestingShearAlfvenWavesSuperposition(unittest.TestCase):
+    @staticmethod
+    def _harmonics(field, n):
+        """
+        A set of n harmonics on `field`, differing in mode numbers, frequency,
+        phase and amplitude.
+
+        """
+        s = np.linspace(0.0, 1.0, 32)
+        harmonics = []
+        for i in range(n):
+            m = 1 + (i % 5)
+            phihat = 1e3 * s ** (m / 2) * (1 - s) / (i + 1)
+            harmonics.append(
+                ShearAlfvenHarmonic(
+                    (s.tolist(), phihat.tolist()),
+                    m,
+                    1 + (i % 3),
+                    136041.0 * (1 + 0.01 * i),
+                    0.1 * i,
+                    field,
+                )
+            )
+        return harmonics
+
     def test_superposition_equals_sum_of_harmonics(self):
         """
         A superposition evaluates all of its harmonics in one pass rather than
@@ -1388,7 +1412,6 @@ class TestingShearAlfvenWavesSuperposition(unittest.TestCase):
                 ]
             )
         )
-        s = np.linspace(0.0, 1.0, 32)
 
         for vacuum in (True, False):
             kw = {
@@ -1405,17 +1428,7 @@ class TestingShearAlfvenWavesSuperposition(unittest.TestCase):
             if not vacuum:
                 field.field_type = "nok"
 
-            harmonics = [
-                ShearAlfvenHarmonic(
-                    (s.tolist(), (-1.5e3 * (1 - s**2) / (i + 1)).tolist()),
-                    1 + (i % 5),
-                    1 + (i % 3),
-                    136041.0 * (1 + 0.01 * i),
-                    0.1 * i,
-                    field,
-                )
-                for i in range(6)
-            ]
+            harmonics = self._harmonics(field, 6)
             saw = ShearAlfvenWavesSuperposition(harmonics)
 
             quantities = [
@@ -1457,22 +1470,11 @@ class TestingShearAlfvenWavesSuperposition(unittest.TestCase):
         them: without that, a read taken after add_wave silently reports the
         total from before the addition.
         """
-        s = np.linspace(0.0, 1.0, 32)
         field = BoozerAnalytic(
             etabar=1.2, B0=5.0, N=0, G0=3.0, psi0=0.8, iota0=0.4, I0=0.3, I1=0.05
         )
         field.field_type = "nok"
-        points = np.ascontiguousarray(np.array([[0.5, 0.3, 0.7, 1e-5]]))
-
-        def harmonic(i):
-            return ShearAlfvenHarmonic(
-                (s.tolist(), (-1.5e3 * (1 - s**2) / (i + 1)).tolist()),
-                1 + (i % 5),
-                1 + (i % 3),
-                136041.0 * (1 + 0.01 * i),
-                0.1 * i,
-                field,
-            )
+        points = np.ascontiguousarray(np.array([[0.62, 0.3, 0.7, 1e-5]]))
 
         quantities = [
             "Phi",
@@ -1487,7 +1489,7 @@ class TestingShearAlfvenWavesSuperposition(unittest.TestCase):
             "dalphadzeta",
         ]
 
-        first, second = harmonic(0), harmonic(1)
+        first, second = self._harmonics(field, 2)
         saw = ShearAlfvenWavesSuperposition([first])
         saw.set_points(points)
         before = {q: np.asarray(getattr(saw, q)()).copy() for q in quantities}
