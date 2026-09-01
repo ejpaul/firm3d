@@ -3736,11 +3736,9 @@ class ShearAlfvenWavesSuperposition(
 ):
     r"""
     Class representing a superposition of multiple Shear Alfvén Waves (SAWs).
-
-    This class models the superposition of multiple Shear Alfvén waves,
-    combining their scalar
-    potential `Phi`, vector potential `alpha`, and their respective derivatives
-    to represent a more
+    This class models the superposition of :class:`ShearAlfvenHarmonic` instances
+    in the same equilibrium field, combining their scalar potential `Phi`,
+    vector potential `alpha`, and their respective derivatives to represent a more
     complex wave structure in the equilibrium field `B0`.
 
     The superposition of waves is initialized with a base wave, which defines
@@ -3754,9 +3752,9 @@ class ShearAlfvenWavesSuperposition(
 
     Parameters
     ----------
-    SAWs : list of ShearAlfvenWave
-        A list of ShearAlfvenWave objects to be superposed. The first wave in
-        the list is used
+    SAWs : list of ShearAlfvenHarmonic
+        A list of ShearAlfvenHarmonic objects to be superposed. The first wave
+        in the list is used
         as the base wave and defines the reference `B0` field for the
         superposition. All other
         waves in the list must have the same `B0`.
@@ -3766,6 +3764,8 @@ class ShearAlfvenWavesSuperposition(
     TypeError
         If `SAWs` is not a list of `ShearAlfvenWave` objects.
         If the base wave is not provided or if the waves have different `B0` fields.
+    ValueError
+        If any wave is not a `ShearAlfvenHarmonic`.
 
     Examples
     --------
