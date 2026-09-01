@@ -689,7 +689,6 @@ private:
             (iota * h->Phim - h->Phin) / (h->omega * denom);
         double d_alpha_fac_dpsi = (diotadpsi * h->Phim) / (h->omega * denom);
         if (!vacuum) {
-          // Only away from vacuum do G and I themselves vary with psi.
           d_alpha_fac_dpsi -=
               alpha_fac / denom * (dGdpsi + diotadpsi * I + iota * dIdpsi);
         }
