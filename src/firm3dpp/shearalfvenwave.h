@@ -639,7 +639,7 @@ private:
   }
 
   void evaluate_harmonics(Array2& p) {
-    const bool retains_K = (B0->field_type == "nok" || B0->field_type == "");
+    const bool vacuum = (B0->field_type == "vac");
     const double psi0 = B0->psi0;
 
     // Flux functions are read once here rather than once per harmonic.
@@ -647,9 +647,9 @@ private:
     auto& data_G = B0->G_ref();
     auto& data_diotads = B0->diotads_ref();
     Array2 empty;
-    auto& data_I = retains_K ? B0->I_ref() : empty;
-    auto& data_dGds = retains_K ? B0->dGds_ref() : empty;
-    auto& data_dIds = retains_K ? B0->dIds_ref() : empty;
+    auto& data_I = vacuum ? empty : B0->I_ref();
+    auto& data_dGds = vacuum ? empty : B0->dGds_ref();
+    auto& data_dIds = vacuum ? empty : B0->dIds_ref();
 
     total_Phi.resize({npoints, 1});
     total_dPhidpsi.resize({npoints, 1});
@@ -672,7 +672,7 @@ private:
       const double G = data_G(i, 0);
       const double diotadpsi = data_diotads(i, 0) / psi0;
       double I = 0., dGdpsi = 0., dIdpsi = 0.;
-      if (retains_K) {
+      if (!vacuum) {
         I = data_I(i, 0);
         dGdpsi = data_dGds(i, 0) / psi0;
         dIdpsi = data_dIds(i, 0) / psi0;
@@ -685,7 +685,7 @@ private:
 
       for (const auto* h : harmonics) {
         double alpha_fac, d_alpha_fac_dpsi;
-        if (retains_K) {
+        if (!vacuum) {
           const double denom = G + iota * I;
           alpha_fac = (iota * h->Phim - h->Phin) / (h->omega * denom);
           d_alpha_fac_dpsi = (diotadpsi * h->Phim) / (h->omega * denom) -

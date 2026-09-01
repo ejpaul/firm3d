@@ -1390,7 +1390,7 @@ class TestingShearAlfvenWavesSuperposition(unittest.TestCase):
         )
         s = np.linspace(0.0, 1.0, 32)
 
-        for retains_K in (False, True):
+        for vacuum in (True, False):
             kw = {
                 "etabar": 1.2,
                 "B0": 5.0,
@@ -1399,10 +1399,10 @@ class TestingShearAlfvenWavesSuperposition(unittest.TestCase):
                 "psi0": 0.8,
                 "iota0": 0.4,
             }
-            if retains_K:
+            if not vacuum:
                 kw.update(I0=0.3, I1=0.05)
             field = BoozerAnalytic(**kw)
-            if retains_K:
+            if not vacuum:
                 field.field_type = "nok"
 
             harmonics = [
@@ -1446,7 +1446,7 @@ class TestingShearAlfvenWavesSuperposition(unittest.TestCase):
                     expected[q],
                     rtol=1e-12,
                     atol=0,
-                    err_msg=f"{q} (retains_K={retains_K})",
+                    err_msg=f"{q} (vacuum={vacuum})",
                 )
 
     def test_add_wave_refreshes_stored_quantities(self):
