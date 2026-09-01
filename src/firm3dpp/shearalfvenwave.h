@@ -677,6 +677,7 @@ private:
         dGdpsi = data_dGds(i, 0) / psi0;
         dIdpsi = data_dIds(i, 0) / psi0;
       }
+      const double denom = G + iota * I;
 
       double sum_Phi = 0., sum_dPhidpsi = 0., sum_dPhidtheta = 0.,
              sum_dPhidzeta = 0., sum_Phidot = 0., sum_alpha = 0.,
@@ -684,16 +685,13 @@ private:
              sum_dalphadzeta = 0.;
 
       for (const auto* h : harmonics) {
-        double alpha_fac, d_alpha_fac_dpsi;
+        const double alpha_fac =
+            (iota * h->Phim - h->Phin) / (h->omega * denom);
+        double d_alpha_fac_dpsi = (diotadpsi * h->Phim) / (h->omega * denom);
         if (!vacuum) {
-          const double denom = G + iota * I;
-          alpha_fac = (iota * h->Phim - h->Phin) / (h->omega * denom);
-          d_alpha_fac_dpsi = (diotadpsi * h->Phim) / (h->omega * denom) -
-                             alpha_fac / denom *
-                                 (dGdpsi + diotadpsi * I + iota * dIdpsi);
-        } else {
-          alpha_fac = (iota * h->Phim - h->Phin) / (h->omega * G);
-          d_alpha_fac_dpsi = diotadpsi * h->Phim / (h->omega * G);
+          // Only away from vacuum do G and I themselves vary with psi.
+          d_alpha_fac_dpsi -=
+              alpha_fac / denom * (dGdpsi + diotadpsi * I + iota * dIdpsi);
         }
 
         const double arg =
