@@ -1374,10 +1374,7 @@ class TestingShearAlfvenWavesSuperposition(unittest.TestCase):
         """
         A superposition evaluates all of its harmonics in one pass rather than
         wave by wave, so check the result against summing the harmonics
-        individually. Both field types are covered, since the vacuum branch and
-        the one that retains K build the alpha factors differently. alpha and
-        dalphadzeta are only assigned when K is retained, so they are only
-        comparable in that case.
+        individually.
         """
         rng = np.random.default_rng(0)
         npts = 64
@@ -1427,12 +1424,12 @@ class TestingShearAlfvenWavesSuperposition(unittest.TestCase):
                 "dPhidtheta",
                 "dPhidzeta",
                 "Phidot",
+                "alpha",
                 "alphadot",
                 "dalphadpsi",
                 "dalphadtheta",
+                "dalphadzeta",
             ]
-            if retains_K:
-                quantities += ["alpha", "dalphadzeta"]
 
             saw.set_points(points)
             fused = {q: np.asarray(getattr(saw, q)()).copy() for q in quantities}

@@ -639,7 +639,6 @@ private:
   }
 
   void evaluate_harmonics(Array2& p) {
-    // retains_K mirrors the branch in ShearAlfvenHarmonic::set_points
     const bool retains_K = (B0->field_type == "nok" || B0->field_type == "");
     const double psi0 = B0->psi0;
 
@@ -715,10 +714,8 @@ private:
         sum_Phidot += Phidot;
         sum_dPhidtheta += dPhidtheta;
         sum_dPhidzeta += dPhidzeta;
-        if (retains_K) {
-          sum_alpha += -Phi * alpha_fac;
-          sum_dalphadzeta += -dPhidzeta * alpha_fac;
-        }
+        sum_alpha += -Phi * alpha_fac;
+        sum_dalphadzeta += -dPhidzeta * alpha_fac;
         sum_alphadot += -Phidot * alpha_fac;
         sum_dalphadpsi += -dPhidpsi * alpha_fac - Phi * d_alpha_fac_dpsi;
         sum_dalphadtheta += -dPhidtheta * alpha_fac;
