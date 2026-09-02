@@ -23,6 +23,7 @@ def trace_particles_boozer_gpu(
     ntheta,
     nzeta,
     dt=None,
+    mu=None,
     in_boozer=True, # if in Boozer coordinates, otherwise in pseudo-Cartesian coordinates
 ):
     """
@@ -49,7 +50,12 @@ def trace_particles_boozer_gpu(
         stz_inits[:, 0] = x1
         stz_inits[:, 1] = x2
 
+    # if only one tmax value is provided, use it for all particles
+    if np.ndim(tmax) == 0:
+        tmax = np.full(nparticles, tmax, dtype=np.float64)
+
     if isinstance(field, ShearAlfvenWavesSuperposition):
+        print("it's a shear alfven wave")
         B0 = field.B0
         srange, trange, zrange, quad_info, maxJ = boozer_saw_interpolant(
             B0, B0.nfp, ns, ntheta, nzeta, dtype=stz_inits.dtype
@@ -89,6 +95,7 @@ def trace_particles_boozer_gpu(
                 tmax=tmax,
                 tol=tol,
                 dt_in=dt if dt is not None else -np.ones(nparticles).astype(stz_inits.dtype),
+                mu_in = mu if mu is not None else -np.ones(nparticles).astype(stz_inits.dtype),
                 psi0=B0.psi0,
                 nparticles=nparticles,
             )
@@ -112,6 +119,7 @@ def trace_particles_boozer_gpu(
                 tmax=tmax,
                 tol=tol,
                 dt_in=dt if dt is not None else -np.ones(nparticles).astype(stz_inits.dtype),
+                mu_in = mu if mu is not None else -np.ones(nparticles).astype(stz_inits.dtype),
                 psi0=B0.psi0,
                 nparticles=nparticles,
             )
@@ -141,12 +149,13 @@ def trace_particles_boozer_gpu(
             tmax=tmax,
             tol=tol,
             dt_in=-np.ones(nparticles).astype(stz_inits.dtype),
+            mu_in = mu if mu is not None else -np.ones(nparticles).astype(stz_inits.dtype),
             psi0=psi0,
             nparticles=nparticles,
             vacuum=vacuum,
         )
 
-    last_time = np.reshape(last_time, (nparticles, 6))
+    last_time = np.reshape(last_time, (nparticles, 7))
 
     if in_boozer:
         x1 = last_time[:, 1]
@@ -170,6 +179,7 @@ def trace_particles_cartesian_gpu(
     vtotal,
     tol,
     dt=None,
+    mu=None
 ):
     """
     Trace particles in Cartesian coordinates using CATAPULT
@@ -201,6 +211,7 @@ def trace_particles_cartesian_gpu(
         tmax=tmax,
         tol=tol,
         dt_in=dt if dt is not None else -np.ones(nparticles).astype(xyz_inits.dtype),
+        mu_in = mu if mu is not None else -np.ones(nparticles).astype(xyz_inits.dtype),
         nparticles=nparticles,
     )
     last_time = np.reshape(last_time, (nparticles, 6))
