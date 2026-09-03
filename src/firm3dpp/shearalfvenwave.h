@@ -289,15 +289,18 @@ public:
       return Phihat_values.back();
     }
 
-    size_t i_left = 0;
-    size_t i_right = s_values.size() - 1;
-    for (int i = s_values.size() - 1; i >= 0; --i) {
-      if (s_values[i] <= s && (i + 1 < s_values.size())) {
-        i_left = i;
-        i_right = i + 1;
-        break;
-      }
+    // Binary search for the bracketing interval (O(log n) vs O(n) linear scan).
+    // upper_bound gives the first point strictly greater than s, so the point
+    // before it is the left bracket. Clamp so that i_right stays in range when
+    // s lands exactly on s_values.back().
+    auto it = std::upper_bound(s_values.begin(), s_values.end(), s);
+    size_t i_left = (it == s_values.begin())
+                        ? 0
+                        : std::distance(s_values.begin(), it) - 1;
+    if (i_left + 1 >= s_values.size()) {
+      i_left = s_values.size() - 2;
     }
+    size_t i_right = i_left + 1;
 
     double slope = (Phihat_values[i_right] - Phihat_values[i_left]) /
                    (s_values[i_right] - s_values[i_left]);
@@ -322,15 +325,18 @@ public:
       return 0.0;
     }
 
-    size_t i_left = 0;
-    size_t i_right = s_values.size() - 1;
-    for (int i = s_values.size() - 1; i >= 0; --i) {
-      if (s_values[i] <= s && (i + 1 < s_values.size())) {
-        i_left = i;
-        i_right = i + 1;
-        break;
-      }
+    // Binary search for the bracketing interval (O(log n) vs O(n) linear scan).
+    // upper_bound gives the first point strictly greater than s, so the point
+    // before it is the left bracket. Clamp so that i_right stays in range when
+    // s lands exactly on s_values.back().
+    auto it = std::upper_bound(s_values.begin(), s_values.end(), s);
+    size_t i_left = (it == s_values.begin())
+                        ? 0
+                        : std::distance(s_values.begin(), it) - 1;
+    if (i_left + 1 >= s_values.size()) {
+      i_left = s_values.size() - 2;
     }
+    size_t i_right = i_left + 1;
 
     return (Phihat_values[i_right] - Phihat_values[i_left]) /
            (s_values[i_right] - s_values[i_left]);
