@@ -289,11 +289,15 @@ public:
       return Phihat_values.back();
     }
 
-    // Binary search for the bracketing interval (O(log n) vs O(n) linear scan).
-    auto it = std::lower_bound(s_values.begin(), s_values.end(), s);
-    if (it != s_values.begin() && (*it > s || it == s_values.end())) --it;
-    size_t i_left = std::distance(s_values.begin(), it);
-    size_t i_right = i_left + 1;
+    size_t i_left = 0;
+    size_t i_right = s_values.size() - 1;
+    for (int i = s_values.size() - 1; i >= 0; --i) {
+      if (s_values[i] <= s && (i + 1 < s_values.size())) {
+        i_left = i;
+        i_right = i + 1;
+        break;
+      }
+    }
 
     double slope = (Phihat_values[i_right] - Phihat_values[i_left]) /
                    (s_values[i_right] - s_values[i_left]);
@@ -318,11 +322,15 @@ public:
       return 0.0;
     }
 
-    // Binary search for the bracketing interval (O(log n) vs O(n) linear scan).
-    auto it = std::lower_bound(s_values.begin(), s_values.end(), s);
-    if (it != s_values.begin() && (*it > s || it == s_values.end())) --it;
-    size_t i_left = std::distance(s_values.begin(), it);
-    size_t i_right = i_left + 1;
+    size_t i_left = 0;
+    size_t i_right = s_values.size() - 1;
+    for (int i = s_values.size() - 1; i >= 0; --i) {
+      if (s_values[i] <= s && (i + 1 < s_values.size())) {
+        i_left = i;
+        i_right = i + 1;
+        break;
+      }
+    }
 
     return (Phihat_values[i_right] - Phihat_values[i_left]) /
            (s_values[i_right] - s_values[i_left]);
@@ -597,70 +605,70 @@ protected:
   void _Phi_impl(Array2& Phi) override {
     Phi.fill(0.0);
     for (const auto& wave : waves) {
-      xt::noalias(Phi) += wave->Phi();
+      Phi += wave->Phi();
     }
   }
 
   void _dPhidpsi_impl(Array2& dPhidpsi) override {
     dPhidpsi.fill(0.0);
     for (const auto& wave : waves) {
-      xt::noalias(dPhidpsi) += wave->dPhidpsi();
+      dPhidpsi += wave->dPhidpsi();
     }
   }
 
   void _dPhidtheta_impl(Array2& dPhidtheta) override {
     dPhidtheta.fill(0.0);
     for (const auto& wave : waves) {
-      xt::noalias(dPhidtheta) += wave->dPhidtheta();
+      dPhidtheta += wave->dPhidtheta();
     }
   }
 
   void _dPhidzeta_impl(Array2& dPhidzeta) override {
     dPhidzeta.fill(0.0);
     for (const auto& wave : waves) {
-      xt::noalias(dPhidzeta) += wave->dPhidzeta();
+      dPhidzeta += wave->dPhidzeta();
     }
   }
 
   void _Phidot_impl(Array2& Phidot) override {
     Phidot.fill(0.0);
-    for (const auto& wave : waves) {
-      xt::noalias(Phidot) += wave->Phidot();
+      for (const auto& wave : waves) {
+      Phidot += wave->Phidot();
     }
   }
 
   void _alpha_impl(Array2& alpha) override {
     alpha.fill(0.0);
     for (const auto& wave : waves) {
-      xt::noalias(alpha) += wave->alpha();
+      alpha += wave->alpha();
     }
   }
 
   void _dalphadpsi_impl(Array2& dalphadpsi) override {
     dalphadpsi.fill(0.0);
     for (const auto& wave : waves) {
-      xt::noalias(dalphadpsi) += wave->dalphadpsi();
+      dalphadpsi += wave->dalphadpsi();
     }
   }
 
   void _dalphadtheta_impl(Array2& dalphadtheta) override {
     dalphadtheta.fill(0.0);
     for (const auto& wave : waves) {
-      xt::noalias(dalphadtheta) += wave->dalphadtheta();
+      dalphadtheta += wave->dalphadtheta();
     }
   }
 
   void _dalphadzeta_impl(Array2& dalphadzeta) override {
     dalphadzeta.fill(0.0);
     for (const auto& wave : waves) {
-      xt::noalias(dalphadzeta) += wave->dalphadzeta();
+      dalphadzeta += wave->dalphadzeta();
     }
   }
 
   void _alphadot_impl(Array2& alphadot) override {
     alphadot.fill(0.0);
     for (const auto& wave : waves) {
-      xt::noalias(alphadot) += wave->alphadot();
+      alphadot += wave->alphadot();
     }
   }
 };
