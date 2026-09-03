@@ -14,6 +14,7 @@ from firm3d.field.boozermagneticfield import (
     BoozerSplineField,
     InterpolatedBoozerField,
     InterpolatedShearAlfvenWave,
+    ShearAlfvenHarmonic,
     ShearAlfvenWavesSuperposition,
 )
 from firm3d.saw.ae3d import AE3DEigenvector
@@ -1571,6 +1572,153 @@ class TestingBoozerSplineField(unittest.TestCase):
         assert np.allclose(nu_derivs[:, 0], bsf.dnuds()[:, 0])
         assert np.allclose(nu_derivs[:, 1], bsf.dnudtheta()[:, 0])
         assert np.allclose(nu_derivs[:, 2], bsf.dnudzeta()[:, 0])
+
+
+class TestingShearAlfvenWavesSuperposition(unittest.TestCase):
+    @staticmethod
+    def _harmonics(field, n):
+        """
+        A set of n harmonics on `field`, differing in mode numbers, frequency,
+        phase and amplitude.
+
+        """
+        s = np.linspace(0.0, 1.0, 32)
+        harmonics = []
+        for i in range(n):
+            m = 1 + (i % 5)
+            phihat = 1e3 * s ** (m / 2) * (1 - s) / (i + 1)
+            harmonics.append(
+                ShearAlfvenHarmonic(
+                    (s.tolist(), phihat.tolist()),
+                    m,
+                    1 + (i % 3),
+                    136041.0 * (1 + 0.01 * i),
+                    0.1 * i,
+                    field,
+                )
+            )
+        return harmonics
+
+    def test_superposition_equals_sum_of_harmonics(self):
+        """
+        A superposition evaluates all of its harmonics in one pass rather than
+        wave by wave, so check the result against summing the harmonics
+        individually.
+        """
+        rng = np.random.default_rng(0)
+        npts = 64
+        points = np.ascontiguousarray(
+            np.column_stack(
+                [
+                    rng.uniform(0.05, 0.95, npts),
+                    rng.uniform(0.0, 2 * np.pi, npts),
+                    rng.uniform(0.0, 2 * np.pi, npts),
+                    rng.uniform(0.0, 1e-4, npts),
+                ]
+            )
+        )
+
+        for vacuum in (True, False):
+            kw = {
+                "etabar": 1.2,
+                "B0": 5.0,
+                "N": 0,
+                "G0": 3.0,
+                "psi0": 0.8,
+                "iota0": 0.4,
+            }
+            if not vacuum:
+                kw.update(I0=0.3, I1=0.05)
+            field = BoozerAnalytic(**kw)
+            if not vacuum:
+                field.field_type = "nok"
+
+            harmonics = self._harmonics(field, 6)
+            saw = ShearAlfvenWavesSuperposition(harmonics)
+
+            quantities = [
+                "Phi",
+                "dPhidpsi",
+                "dPhidtheta",
+                "dPhidzeta",
+                "Phidot",
+                "alpha",
+                "alphadot",
+                "dalphadpsi",
+                "dalphadtheta",
+                "dalphadzeta",
+            ]
+
+            saw.set_points(points)
+            fused = {q: np.asarray(getattr(saw, q)()).copy() for q in quantities}
+
+            expected = dict.fromkeys(quantities, 0.0)
+            for harmonic in harmonics:
+                harmonic.set_points(points)
+                for q in quantities:
+                    expected[q] = expected[q] + np.asarray(getattr(harmonic, q)())
+
+            for q in quantities:
+                np.testing.assert_allclose(
+                    fused[q],
+                    expected[q],
+                    rtol=1e-12,
+                    atol=0,
+                    err_msg=f"{q} (vacuum={vacuum})",
+                )
+
+    def test_add_wave_refreshes_stored_quantities(self):
+        """
+        The superposition accumulates its harmonics into one set of arrays when
+        set_points is called, and every accessor hands back one of those arrays
+        directly. Adding a harmonic afterwards therefore has to re-evaluate
+        them: without that, a read taken after add_wave silently reports the
+        total from before the addition.
+        """
+        field = BoozerAnalytic(
+            etabar=1.2, B0=5.0, N=0, G0=3.0, psi0=0.8, iota0=0.4, I0=0.3, I1=0.05
+        )
+        field.field_type = "nok"
+        points = np.ascontiguousarray(np.array([[0.62, 0.3, 0.7, 1e-5]]))
+
+        quantities = [
+            "Phi",
+            "dPhidpsi",
+            "dPhidtheta",
+            "dPhidzeta",
+            "Phidot",
+            "alpha",
+            "alphadot",
+            "dalphadpsi",
+            "dalphadtheta",
+            "dalphadzeta",
+        ]
+
+        first, second = self._harmonics(field, 2)
+        saw = ShearAlfvenWavesSuperposition([first])
+        saw.set_points(points)
+        before = {q: np.asarray(getattr(saw, q)()).copy() for q in quantities}
+
+        # No set_points between the addition and the reads below.
+        saw.add_wave(second)
+        after = {q: np.asarray(getattr(saw, q)()).copy() for q in quantities}
+
+        expected = dict.fromkeys(quantities, 0.0)
+        for h in (first, second):
+            h.set_points(points)
+            for q in quantities:
+                expected[q] = expected[q] + np.asarray(getattr(h, q)())
+
+        for q in quantities:
+            np.testing.assert_allclose(
+                after[q], expected[q], rtol=1e-12, atol=0, err_msg=q
+            )
+            # Guard against the assertion above passing on a quantity that the
+            # second harmonic happens not to move.
+            assert not np.array_equal(after[q], before[q]), (
+                f"{q} is unchanged by add_wave, so it cannot distinguish a "
+                f"refreshed total from a stale one"
+            )
 
 
 class TestInterpolatedShearAlfvenWave(unittest.TestCase):
