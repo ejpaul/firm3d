@@ -154,8 +154,8 @@ xyz = np.column_stack(
     ]
 )
 
-vpar0 = np.sqrt(2 * FUSION_ALPHA_PARTICLE_ENERGY / ALPHA_PARTICLE_MASS)
-vpar_inits = initialize_velocity_uniform(vpar0, nparticles)
+v0 = np.sqrt(2 * FUSION_ALPHA_PARTICLE_ENERGY / ALPHA_PARTICLE_MASS)
+vpar_inits = initialize_velocity_uniform(v0, nparticles)
 
 last_time = trace_particles_cartesian_with_collisions_gpu(
     bsh,
@@ -167,7 +167,7 @@ last_time = trace_particles_cartesian_with_collisions_gpu(
     tmax=tmax,
     mass=ALPHA_PARTICLE_MASS,
     charge=ALPHA_PARTICLE_CHARGE,
-    vtotal=vpar0,
+    vtotal=v0,
     tol=tol,
     rng_seed=0,
 )
@@ -194,9 +194,9 @@ v_end = last_time[:, 5]
 lost = t_end < tmax
 
 particle_loss = lost.sum() / nparticles
-energy_loss = np.sum((v_end[lost] / vpar0) ** 2) / nparticles
+energy_loss = np.sum((v_end[lost] / v0) ** 2) / nparticles
 
 print(f"Number of particles= {nparticles}")
 print(f"Particle loss fraction: {particle_loss:.3f}")
 print(f"Energy loss fraction: {energy_loss:.3f}")
-print(f"Mean energy fraction of confined: {np.mean((v_end[~lost] / vpar0) ** 2):.4f}")
+print(f"Mean energy fraction of confined: {np.mean((v_end[~lost] / v0) ** 2):.4f}")

@@ -84,8 +84,8 @@ Ekin = FUSION_ALPHA_PARTICLE_ENERGY
 mass = ALPHA_PARTICLE_MASS
 charge = ALPHA_PARTICLE_CHARGE
 # Isotropic pitch angle: v_par/v drawn uniformly in [-1, 1] at fixed birth energy
-vpar0 = np.sqrt(2 * Ekin / mass)
-vpar_init = initialize_velocity_uniform(vpar0, nParticles, comm=comm_world)
+v0 = np.sqrt(2 * Ekin / mass)
+vpar_init = initialize_velocity_uniform(v0, nParticles, comm=comm_world)
 
 n_ref = 1e20  # m^-3
 ne = lambda s: n_ref * nD(s)
@@ -139,12 +139,11 @@ v_end = np.array([traj[-1, 5] for traj in res_tys])
 lost = np.array([len(hits) > 0 for hits in res_zeta_hits])
 
 particle_loss = lost.sum() / nParticles
-energy_loss = np.sum((v_end[lost] / vpar0) ** 2) / nParticles
+energy_loss = np.sum((v_end[lost] / v0) ** 2) / nParticles
 
 proc0_print(f"Number of particles = {nParticles}")
 proc0_print(f"Particle loss fraction: {particle_loss:.3f}")
 proc0_print(f"Energy loss fraction: {energy_loss:.3f}")
 proc0_print(
-    f"Mean energy fraction of confined alphas: "
-    f"{np.mean((v_end[~lost] / vpar0) ** 2):.3f}"
+    f"Mean energy fraction of confined alphas: {np.mean((v_end[~lost] / v0) ** 2):.3f}"
 )

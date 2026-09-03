@@ -66,8 +66,8 @@ Ekin = FUSION_ALPHA_PARTICLE_ENERGY
 mass = ALPHA_PARTICLE_MASS
 charge = ALPHA_PARTICLE_CHARGE
 # Isotropic pitch angle: v_par/v drawn uniformly in [-1, 1] at fixed birth energy
-vpar0 = np.sqrt(2 * Ekin / mass)
-vpar_inits = initialize_velocity_uniform(vpar0, nparticles)
+v0 = np.sqrt(2 * Ekin / mass)
+vpar_inits = initialize_velocity_uniform(v0, nparticles)
 
 # Background plasma the alphas collide with: a 50/50 DT fuel mix and the
 # electrons that neutralize it, on the same profiles that set the birth
@@ -106,7 +106,7 @@ last_time = trace_particles_boozer_with_collisions_gpu(
     tmax=tmax,
     mass=mass,
     charge=charge,
-    vtotal=vpar0,
+    vtotal=v0,
     tol=tol,
     ns=resolution,
     ntheta=resolution,
@@ -138,9 +138,9 @@ v_end = last_time[:, 5]
 lost = t_end < tmax
 
 particle_loss = lost.sum() / nparticles
-energy_loss = np.sum((v_end[lost] / vpar0) ** 2) / nparticles
+energy_loss = np.sum((v_end[lost] / v0) ** 2) / nparticles
 
 print(f"Number of particles= {nparticles}")
 print(f"Particle loss fraction: {particle_loss:.3f}")
 print(f"Energy loss fraction: {energy_loss:.3f}")
-print(f"Mean energy fraction of confined: {np.mean((v_end[~lost] / vpar0) ** 2):.4f}")
+print(f"Mean energy fraction of confined: {np.mean((v_end[~lost] / v0) ** 2):.4f}")

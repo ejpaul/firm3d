@@ -62,9 +62,9 @@ stz_inits = initialize_position_profile(field, nparticles, reactivity, comm=comm
 Ekin = FUSION_ALPHA_PARTICLE_ENERGY
 mass = ALPHA_PARTICLE_MASS
 charge = ALPHA_PARTICLE_CHARGE
-# Initialize uniformly distributed parallel velocities
-vpar0 = np.sqrt(2 * Ekin / mass)
-vpar_inits = initialize_velocity_uniform(vpar0, nparticles)
+# Isotropic pitch angle: v_par/v drawn uniformly in [-1, 1] at fixed birth energy
+v0 = np.sqrt(2 * Ekin / mass)
+vpar_inits = initialize_velocity_uniform(v0, nparticles)
 
 
 tmax = 1e-5
@@ -75,7 +75,7 @@ last_time = trace_particles_boozer_gpu(
     tmax=tmax,
     mass=mass,
     charge=charge,
-    vtotal=vpar0,
+    vtotal=v0,
     tol=tol,
     ns=resolution,
     ntheta=resolution,

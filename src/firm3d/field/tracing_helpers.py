@@ -285,11 +285,12 @@ def initialize_position_uniform_vol(
     )
 
 
-def initialize_velocity_uniform(vpar0, nParticles, comm=None, seed=None):
+def initialize_velocity_uniform(v0, nParticles, comm=None, seed=None):
     r"""
-    Initialize parallel velocities uniformly distributed in the range [-vpar0, vpar0].
+    Initialize parallel velocities uniformly distributed in the range [-v0, v0].
     Args:
-        vpar0: Maximum parallel velocity magnitude.
+        v0: Total speed. Drawing the parallel velocity uniformly in
+            [-v0, v0] at fixed energy gives an isotropic pitch angle.
         nParticles: Number of particles to initialize.
         comm: MPI communicator (default: None).
         seed: Random seed for reproducibility (default: None, uses random seed
@@ -305,7 +306,7 @@ def initialize_velocity_uniform(vpar0, nParticles, comm=None, seed=None):
         np.random.seed(seed)
 
     # Initialize uniformly distributed parallel velocities
-    vpar_init = np.random.uniform(-vpar0, vpar0, (nParticles,)) if verbose else None
+    vpar_init = np.random.uniform(-v0, v0, (nParticles,)) if verbose else None
     if comm is not None:
         vpar_init = comm.bcast(vpar_init, root=0)
 
