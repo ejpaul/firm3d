@@ -147,6 +147,64 @@ class TestThermalBackground(unittest.TestCase):
             with self.subTest(profile=label), self.assertRaises(ValueError):
                 ThermalBackground(mass=PROTON_MASS, charge=ELEMENTARY_CHARGE, **kw)
 
+    def test_profiles_returning_non_scalars_are_refused(self):
+        """A profile must return something convertible to a real scalar."""
+        for label, bad in (
+            ("array", lambda s: np.array([1e20, 2e20])),
+            ("none", lambda s: None),
+            ("string", lambda s: "1e20"),
+        ):
+            with self.subTest(returns=label):
+                with self.assertRaises(ValueError) as cm:
+                    ThermalBackground(
+                        n_profile=bad,
+                        T_profile=lambda s: 1e3,
+                        mass=PROTON_MASS,
+                        charge=ELEMENTARY_CHARGE,
+                    )
+                self.assertIn("real scalar", str(cm.exception))
+
+    def test_non_finite_profiles_are_refused(self):
+        for label, bad in (("nan", np.nan), ("inf", np.inf)):
+            with self.subTest(returns=label):
+                with self.assertRaises(ValueError) as cm:
+                    ThermalBackground(
+                        n_profile=lambda s, v=bad: v,
+                        T_profile=lambda s: 1e3,
+                        mass=PROTON_MASS,
+                        charge=ELEMENTARY_CHARGE,
+                    )
+                self.assertIn("finite", str(cm.exception))
+
+    def test_negative_profiles_are_refused(self):
+        """Negative density or temperature is unphysical."""
+        for label, kw in (
+            ("n", {"n_profile": lambda s: -1e20, "T_profile": lambda s: 1e3}),
+            ("T", {"n_profile": lambda s: 1e20, "T_profile": lambda s: -1e3}),
+        ):
+            with self.subTest(profile=label):
+                with self.assertRaises(ValueError) as cm:
+                    ThermalBackground(mass=PROTON_MASS, charge=ELEMENTARY_CHARGE, **kw)
+                self.assertIn("non-negative", str(cm.exception))
+
+    def test_profiles_vanishing_at_the_edge_are_allowed(self):
+        """
+        Zero is not an error: it marks the species inactive there.
+
+        The shipped collisional_slowing_down example uses n ~ 1 - s**5 and
+        T ~ 1 - s, both of which are exactly zero at s = 1, and s = 1 is a
+        node of the grid.
+        """
+        bg = ThermalBackground(
+            n_profile=lambda s: 1e20 * (1 - s**5),
+            T_profile=lambda s: 11.5e3 * (1 - s),
+            mass=2 * PROTON_MASS,
+            charge=ELEMENTARY_CHARGE,
+        )
+        cpp = bg._to_cpp()
+        self.assertEqual(cpp.n_grid[-1], 0.0)
+        self.assertEqual(cpp.T_grid[-1], 0.0)
+
     def test_to_cpp_preserves_the_profiles(self):
         """The grids handed to C++ have the requested length and endpoints."""
         bg = ThermalBackground(

@@ -1,3 +1,4 @@
+import numbers
 import warnings
 
 import numpy as np
@@ -19,6 +20,46 @@ __all__ = [
     "trace_particles_boozer_perturbed_with_collisions",
     "trace_particles_boozer_with_collisions",
 ]
+
+
+def _eval_profile_on_grid(profile, s_grid, name):
+    r"""
+    Evaluate ``profile`` at every node of ``s_grid``, checking what it returns.
+
+    The C++ layer stores one number per node, so each call must return
+    something convertible to a real scalar; an array-valued or non-numeric
+    profile is refused here rather than failing confusingly further down.
+    Values must be finite and non-negative.
+
+    Zero is allowed.  A species with :math:`n = 0` or :math:`T = 0` is simply
+    inactive at that ``s`` -- the C++ collision operator skips species with
+    ``n <= 0`` or ``T <= 0`` -- which is how the edge of a profile such as
+    ``1 - s**5`` is meant to behave.  Only negative values are unphysical.
+    """
+    vals = np.empty(s_grid.size, dtype=float)
+    for i, s in enumerate(s_grid):
+        raw = profile(float(s))
+        # numbers.Real admits int, float and the numpy scalar types, and
+        # rejects arrays, None, complex and numeric strings such as "1e20".
+        if not isinstance(raw, numbers.Real):
+            raise ValueError(
+                f"{name} must return a real scalar, but returned {raw!r} "
+                f"at s = {float(s):.4f}."
+            )
+        vals[i] = float(raw)
+
+    for label, bad in (
+        ("finite", ~np.isfinite(vals)),
+        ("non-negative", vals < 0.0),
+    ):
+        if bad.any():
+            i = int(np.argmax(bad))
+            raise ValueError(
+                f"{name} must be {label} on the grid, but returned "
+                f"{float(vals[i])!r} at s = {float(s_grid[i]):.4f}."
+            )
+
+    return vals
 
 
 class ThermalBackground:
@@ -55,7 +96,10 @@ class ThermalBackground:
 
     Args:
         n_profile: Callable ``n(s)`` returning number density in m\ :sup:`-3`.
-        T_profile: Callable ``T(s)`` returning temperature in eV.
+            Must return a finite, non-negative real scalar at every grid
+            point; zero marks the species inactive there.
+        T_profile: Callable ``T(s)`` returning temperature in eV, under the
+            same requirements as ``n_profile``.
         mass: Species mass in kg.
         charge: Species charge in C (signed).
         n_grid_points: Number of uniformly-spaced points in ``s`` on which
@@ -99,11 +143,21 @@ class ThermalBackground:
         self.charge = float(charge)
         self._n_grid_points = n_grid_points
 
+        # Evaluate both profiles now so that a profile returning the wrong
+        # kind of value, or a negative one, is reported here rather than
+        # part-way into a trace.
+        s_grid = self._s_grid()
+        _eval_profile_on_grid(self.n_profile, s_grid, "n_profile")
+        _eval_profile_on_grid(self.T_profile, s_grid, "T_profile")
+
+    def _s_grid(self):
+        return np.linspace(0.0, 1.0, self._n_grid_points)
+
     def _to_cpp(self):
         """Return a sopp.ThermalBackground struct with pre-evaluated grids."""
-        s_grid = np.linspace(0.0, 1.0, self._n_grid_points)
-        n_vals = np.array([self.n_profile(s) for s in s_grid], dtype=float)
-        T_vals = np.array([self.T_profile(s) for s in s_grid], dtype=float)
+        s_grid = self._s_grid()
+        n_vals = _eval_profile_on_grid(self.n_profile, s_grid, "n_profile")
+        T_vals = _eval_profile_on_grid(self.T_profile, s_grid, "T_profile")
 
         bg = sopp.ThermalBackground()
         bg.s_grid = s_grid.tolist()
