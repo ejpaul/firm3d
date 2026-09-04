@@ -75,5 +75,9 @@ jobs:
       - name: Run GPU examples
         run: |
           (cd examples/gpu_boozer_tracing && python gpu_boozer_tracing.py)
+          (cd examples/gpu_boozer_trajectories && python gpu_boozer_trajectories.py)
+
           (cd examples/gpu_saw_tracing && python gpu_saw_tracing.py)
+
           (cd examples/gpu_cartesian_tracing && python gpu_cartesian_tracing.py)
+          (cd examples/gpu_cartesian_trajectories && python gpu_cartesian_trajectories.py)
