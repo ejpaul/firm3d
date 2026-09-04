@@ -22,7 +22,6 @@ from firm3d.util.constants import (
     FUSION_ALPHA_PARTICLE_ENERGY,
 )
 from firm3d.util.functions import in_github_actions
-from firm3d.util.mpi import comm_world
 
 resolution = 5 if in_github_actions else 15  # Resolution for field interpolation
 nparticles = 100 if in_github_actions else 10000  # Number of particles to trace
@@ -30,7 +29,7 @@ tol = 1e-4 if in_github_actions else 1e-8  # Tolerance for ODE solver
 
 ### CREATE A FIELD FOR TRACING
 boozmn_filename = "../inputs/boozmn_aten_rescaled.nc"
-bri = BoozerRadialInterpolant(boozmn_filename, 3, comm=comm_world, enforce_vacuum=True)
+bri = BoozerRadialInterpolant(boozmn_filename, 3, enforce_vacuum=True)
 
 field = InterpolatedBoozerField(
     bri,
@@ -60,7 +59,7 @@ def sigmav(T):
 
 # Reactivity profile
 reactivity = lambda s: nD(s) * nT(s) * sigmav(T(s))
-stz_inits = initialize_position_profile(field, nparticles, reactivity, comm=comm_world)
+stz_inits = initialize_position_profile(field, nparticles, reactivity)
 
 Ekin = FUSION_ALPHA_PARTICLE_ENERGY
 mass = ALPHA_PARTICLE_MASS
@@ -154,7 +153,6 @@ def save_trajectories_boozer_gpu(
             nparticles=n_particles,
             vacuum=True
         )
-        print("finished tracing")
         step_data = np.reshape(step_data, (n_particles, 7))
 
         dt = step_data[:, 5].copy()
@@ -183,9 +181,7 @@ def save_trajectories_boozer_gpu(
 
         n_particles = stz_inits.shape[0]
 
-        if n_particles > 0:
-            print(f"Saved trajectories up to time {current_time.min():.3e}")
-        else:
+        if n_particles == 0:
             print(f"All particles finished")
             break
 

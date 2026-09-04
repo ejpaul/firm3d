@@ -55,7 +55,6 @@ def trace_particles_boozer_gpu(
         tmax = np.full(nparticles, tmax, dtype=np.float64)
 
     if isinstance(field, ShearAlfvenWavesSuperposition):
-        print("it's a shear alfven wave")
         B0 = field.B0
         srange, trange, zrange, quad_info, maxJ = boozer_saw_interpolant(
             B0, B0.nfp, ns, ntheta, nzeta, dtype=stz_inits.dtype
@@ -195,12 +194,12 @@ def trace_particles_cartesian_gpu(
     dt: the initial time step size for the solver (optional)
     """
 
+    nparticles = xyz_inits.shape[0]
 
     # if only one tmax value is provided, use it for all particles
     if np.ndim(tmax) == 0:
         tmax = np.full(nparticles, tmax, dtype=np.float64)
 
-    nparticles = xyz_inits.shape[0]
     r_range, phi_range, z_range, quad_info = cartesian_interpolant(
         field, surface_classifier, dtype=xyz_inits.dtype
     )
@@ -220,5 +219,5 @@ def trace_particles_cartesian_gpu(
         mu_in = mu if mu is not None else -np.ones(nparticles).astype(xyz_inits.dtype),
         nparticles=nparticles,
     )
-    last_time = np.reshape(last_time, (nparticles, 6))
+    last_time = np.reshape(last_time, (nparticles, 7))
     return last_time
