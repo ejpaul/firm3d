@@ -847,7 +847,7 @@ def test_timestep(
         cpu_positions = np.array([x[-1] for x in gc_tys])
         cpu_positions = np.array(
             [
-                [x[0], x[1] * np.cos(x[2]), x[1] * np.sin(x[2]), x[3], x[4]]
+                [x[0], x[1] * np.cos(x[2]), x[1] * np.sin(x[2]), np.fmod(x[3], zrange[1]), x[4]]
                 for x in cpu_positions
             ]
         )
@@ -868,6 +868,7 @@ def test_timestep(
         print("cpu:", cpu_positions[row_idx, :])
         print("gpu:", gpu_final_positions[row_idx, :])
         print("error:", error[row_idx, :])
+        print("zrange:", zrange)
 
     return error_is_small
 
