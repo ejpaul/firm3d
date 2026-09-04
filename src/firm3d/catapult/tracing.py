@@ -194,6 +194,12 @@ def trace_particles_cartesian_gpu(
     tol: tolerance for the ODE solver
     dt: the initial time step size for the solver (optional)
     """
+
+
+    # if only one tmax value is provided, use it for all particles
+    if np.ndim(tmax) == 0:
+        tmax = np.full(nparticles, tmax, dtype=np.float64)
+
     nparticles = xyz_inits.shape[0]
     r_range, phi_range, z_range, quad_info = cartesian_interpolant(
         field, surface_classifier, dtype=xyz_inits.dtype

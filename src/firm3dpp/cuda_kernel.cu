@@ -934,6 +934,16 @@ __device__ void adjust_time(T* t, T* dt, double* tmax, T* state, T* __restrict__
     const bool accept = active && (max_err <= 1.0);
     if(accept){
         state[state_id*PARTICLES_PER_BLOCK + p] = x_temp[(state_id+1)*PARTICLES_PER_BLOCK + p];
+
+        // if accepting a state in Boozer coordinates, wrap zeta to [0, 2pi/nfp] to avoid numerical issues with large values of zeta 
+        if constexpr (map_rhs_to_coord<id>() == CoordSys::Boozer){
+            if (state_id == 2) { // zeta
+                T period = T(grid_ranges_d[9]);
+                state[state_id*PARTICLES_PER_BLOCK + p] = fmod(state[state_id*PARTICLES_PER_BLOCK + p], period);
+                state[state_id*PARTICLES_PER_BLOCK + p] += grid_ranges_d[9]*(state[state_id*PARTICLES_PER_BLOCK + p] < 0);
+            }
+        }
+
         constexpr int n_deriv_outputs = map_rhs_to_n_deriv_outputs<id>();
         // copy derivatives to the first slot for the next step
         derivs[(n_deriv_outputs*0 + state_id)*PARTICLES_PER_BLOCK + p] = derivs[(n_deriv_outputs*6 + state_id)*PARTICLES_PER_BLOCK + p]; 
